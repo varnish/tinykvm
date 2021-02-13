@@ -1,4 +1,4 @@
-[BITS 64]
+[BITS 32]
 global vm64_entry
 global vm64_end
 

@@ -12,4 +12,4 @@ set (SOURCES
 	)
 
 add_executable(tinykvm ${SOURCES})
-
+target_link_libraries(tinykvm jemalloc)

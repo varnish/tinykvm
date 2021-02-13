@@ -73,10 +73,18 @@ struct vCPU {
 	struct kvm_run *kvm_run;
 };
 struct VM {
-	int fd;
+	int fd = 0;
 	char*  mem_ptr;
 	size_t mem_size;
 	vCPU vcpu;
+
+
+	~VM() {
+		if (fd > 0) {
+			close(fd);
+			close(vcpu.fd);
+		}
+	}
 };
 
 static int run_vm(VM& vm);
@@ -253,10 +261,12 @@ int run_vm(VM& vm)
 		case KVM_EXIT_IO:
 			if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT
 			    && vcpu.kvm_run->io.port == 0xE9) {
-				//char *p = (char *) vcpu.kvm_run;
-				//fwrite(p + vcpu->kvm_run->io.data_offset,
-				//       vcpu->kvm_run->io.size, 1, stdout);
-				//fflush(stdout);
+#ifdef ENABLE_GUEST_STDOUT
+				char *p = (char *) vcpu.kvm_run;
+				fwrite(p + vcpu.kvm_run->io.data_offset,
+				       vcpu.kvm_run->io.size, 1, stdout);
+				fflush(stdout);
+#endif
 				continue;
 			}
 			fprintf(stderr,	"Unknown IO port %d\n",
@@ -276,9 +286,13 @@ std::vector<uint8_t> load_file(const std::string& filename);
 inline timespec time_now();
 inline long nanodiff(timespec start_time, timespec end_time);
 
-int main()
+int main(int argc, char** argv)
 {
-	const auto binary = load_file("vm64.bin");
+	if (argc < 2) {
+		fprintf(stderr, "Missing argument: VM64.bin\n");
+		exit(1);
+	}
+	const auto binary = load_file(argv[1]);
 
 	const size_t mem_size = 0x200000;
 	auto* mem_ptr = (char*) mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
@@ -295,21 +309,28 @@ int main()
 	auto t0 = time_now();
 	asm("" : : : "memory");
 
-	for (int i = 0; i < 100000; i++)
+	static constexpr size_t NUM_GUESTS = 13000;
+	std::vector<VM*> vms;
+
+	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
+		//vms.push_back(new VM);
+		//auto& vm = *vms.back();
 		VM vm;
 		vm_init(vm, mem_ptr, mem_size);
 		vcpu_init(vm);
 
 		assert( run_long_mode(vm) == 0 );
-
-		close(vm.vcpu.fd);
-		close(vm.fd);
 	}
 
 	asm("" : : : "memory");
 	auto t1 = time_now();
-	printf("Time spent: %ld ns\n", nanodiff(t0, t1) / 100000);
+	printf("Time spent: %ldns (%ld micros)\n",
+		nanodiff(t0, t1) / NUM_GUESTS, nanodiff(t0, t1) / NUM_GUESTS / 1000);
+
+	for (auto* vm : vms) {
+		delete vm;
+	}
 	close(kvm_fd);
 }
 
@@ -336,11 +357,7 @@ std::vector<uint8_t> load_file(const std::string& filename)
 timespec time_now()
 {
 	timespec t;
-#ifdef __linux__
-	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
-#else
 	clock_gettime(CLOCK_MONOTONIC, &t);
-#endif
 	return t;
 }
 long nanodiff(timespec start_time, timespec end_time)
