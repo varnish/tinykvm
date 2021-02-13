@@ -59,3 +59,5 @@ VMs     Time
 ```
 
 The time spent creating VMs is linear in time.
+
+![KVM virtual machine instantiation time](https://user-images.githubusercontent.com/3758947/107860895-f22a9400-6e39-11eb-86c4-8ef775d879b1.png)
