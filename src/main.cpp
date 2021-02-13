@@ -142,13 +142,13 @@ void vcpu_init(VM& vm)
 {
 	auto& vcpu = vm.vcpu;
 	vcpu.fd = ioctl(vm.fd, KVM_CREATE_VCPU, 0);
-    if (vcpu.fd < 0) {
+	if (vcpu.fd < 0) {
 		perror("KVM_CREATE_VCPU");
 		exit(1);
 	}
 
 	const int vcpu_mmap_size = ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
-    if (vcpu_mmap_size <= 0) {
+	if (vcpu_mmap_size <= 0) {
 		perror("KVM_GET_VCPU_MMAP_SIZE");
 		exit(1);
 	}
@@ -260,11 +260,11 @@ int run_vm(VM& vm)
 
 		case KVM_EXIT_IO:
 			if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT
-			    && vcpu.kvm_run->io.port == 0xE9) {
+				&& vcpu.kvm_run->io.port == 0xE9) {
 #ifdef ENABLE_GUEST_STDOUT
 				char *p = (char *) vcpu.kvm_run;
 				fwrite(p + vcpu.kvm_run->io.data_offset,
-				       vcpu.kvm_run->io.size, 1, stdout);
+					   vcpu.kvm_run->io.size, 1, stdout);
 				fflush(stdout);
 #endif
 				continue;
@@ -314,9 +314,8 @@ int main(int argc, char** argv)
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
-		//vms.push_back(new VM);
-		//auto& vm = *vms.back();
-		VM vm;
+		vms.push_back(new VM);
+		auto& vm = *vms.back();
 		vm_init(vm, mem_ptr, mem_size);
 		vcpu_init(vm);
 
