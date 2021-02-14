@@ -14,7 +14,7 @@
 #include <vector>
 
 //#define ENABLE_GUEST_STDOUT
-//#define ENABLE_GUEST_CLEAR_MEMORY
+#define ENABLE_GUEST_CLEAR_MEMORY
 #define NUM_ROUNDS   400
 #define NUM_GUESTS   1000
 #define GUEST_MEMORY 0x200000
@@ -392,7 +392,6 @@ int main(int argc, char** argv)
 		auto& vm = *vms[i];
 #ifdef ENABLE_GUEST_CLEAR_MEMORY
 		vm.reset();
-		memcpy(vm.romem.ptr, binary.data(), binary.size());
 #endif
 
 		assert( run_long_mode(vm) == 0 );

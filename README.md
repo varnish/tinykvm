@@ -103,3 +103,13 @@ Time spent: 23850ns (23 micros)
 Time spent: 23672ns (23 micros)
 Time spent: 23753ns (23 micros)
 ```
+
+
+By creating separate memory ranges for all the various uses, and then re-enabling clearing of the write-enabled guest memory, we get these numbers:
+
+```
+Time spent: 175764ns (175 micros)
+Time spent: 178411ns (178 micros)
+```
+
+It's clear that we have to execute for a substantial amount of time before the hardware-accelerated virtual machines will have a performance benefit. These are also synthetic benchmarks, and we can fairly reasonably expect these trivial one-page programs to use 5-10x the amount of run-time in a production environment. That is, the run-time should be somewhere around 1.22ms +/- 0.25ms in production based on experience. With these numbers we need to have programs that run complex calculations for at least 1.5ms to have a chance to compete with low-latency IS emulators.
