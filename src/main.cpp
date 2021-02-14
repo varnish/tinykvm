@@ -13,6 +13,12 @@
 #include <stdexcept>
 #include <vector>
 
+//#define ENABLE_GUEST_STDOUT
+//#define ENABLE_GUEST_CLEAR_MEMORY
+#define NUM_ROUNDS   400
+#define NUM_GUESTS   1000
+#define GUEST_MEMORY 0x200000
+
 /* CR0 bits */
 #define CR0_PE 1u
 #define CR0_MP (1U << 1)
@@ -72,12 +78,36 @@ struct vCPU {
 	int fd;
 	struct kvm_run *kvm_run;
 };
+struct vMemory {
+	uint64_t physbase;
+	char*  ptr;
+	size_t size;
+
+	void reset() {
+		std::memset(this->ptr, 0, this->size);
+	}
+};
 struct VM {
 	int fd = 0;
-	char*  mem_ptr;
-	size_t mem_size;
 	vCPU vcpu;
+	vMemory ptmem; // page tables
+	vMemory romem; // binary + rodata
+	vMemory rwmem; // stack + heap
 
+	void reset() {
+		rwmem.reset();
+	}
+	int install_memory(uint32_t idx, vMemory mem)
+	{
+		const struct kvm_userspace_memory_region memreg {
+			.slot = idx,
+			.flags = 0,
+			.guest_phys_addr = mem.physbase,
+			.memory_size = mem.size,
+			.userspace_addr = (uintptr_t) mem.ptr,
+		};
+		return ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg);
+	}
 
 	~VM() {
 		if (fd > 0) {
@@ -90,7 +120,7 @@ struct VM {
 static int run_vm(VM& vm);
 static int kvm_fd = 0;
 
-void vm_init(VM& vm, char* mem_ptr, size_t mem_size)
+void vm_init(VM& vm, vMemory pt, vMemory ro, vMemory rw)
 {
 	if (kvm_fd == 0)
 	{
@@ -122,18 +152,20 @@ void vm_init(VM& vm, char* mem_ptr, size_t mem_size)
 		perror("KVM_SET_TSS_ADDR");
 		exit(1);
 	}
-	vm.mem_ptr  = mem_ptr;
-	vm.mem_size = mem_size;
 
-	const struct kvm_userspace_memory_region memreg {
-		.slot = 0,
-		.flags = 0,
-		.guest_phys_addr = 0,
-		.memory_size = vm.mem_size,
-		.userspace_addr = (uintptr_t) vm.mem_ptr,
-	};
-	if (ioctl(vm.fd, KVM_SET_USER_MEMORY_REGION, &memreg) < 0) {
-		perror("KVM_SET_USER_MEMORY_REGION");
+	vm.ptmem = pt;
+	vm.romem = ro;
+	vm.rwmem = rw;
+	if (vm.install_memory(0, vm.ptmem) < 0) {
+		perror("romem failed: KVM_SET_USER_MEMORY_REGION");
+		exit(1);
+	}
+	if (vm.install_memory(1, vm.romem) < 0) {
+		perror("romem failed: KVM_SET_USER_MEMORY_REGION");
+		exit(1);
+	}
+	if (vm.install_memory(2, vm.rwmem) < 0) {
+		perror("rwmem failed: KVM_SET_USER_MEMORY_REGION");
 		exit(1);
 	}
 }
@@ -186,14 +218,15 @@ static void setup_64bit_code_segment(struct kvm_sregs *sregs)
 
 static void setup_long_mode(VM& vm, struct kvm_sregs *sregs)
 {
-	uint64_t pml4_addr = 0x2000;
-	auto* pml4 = (uint64_t*) (vm.mem_ptr + pml4_addr);
-
-	uint64_t pdpt_addr = 0x3000;
-	auto* pdpt = (uint64_t*) (vm.mem_ptr + pdpt_addr);
-
-	uint64_t pd_addr = 0x4000;
-	auto* pd = (uint64_t*) (vm.mem_ptr + pd_addr);
+	// guest physical
+	const uint64_t pml4_addr = vm.ptmem.physbase;
+	const uint64_t pdpt_addr = pml4_addr + 0x1000;
+	const uint64_t pd_addr   = pml4_addr + 0x2000;
+	// userspace
+	char* pagetable = vm.ptmem.ptr;
+	auto* pml4 = (uint64_t*) (pagetable + 0x0);
+	auto* pdpt = (uint64_t*) (pagetable + 0x1000);
+	auto* pd = (uint64_t*) (pagetable + 0x2000);
 
 	pml4[0] = PDE64_PRESENT | PDE64_RW | PDE64_USER | pdpt_addr;
 	pdpt[0] = PDE64_PRESENT | PDE64_RW | PDE64_USER | pd_addr;
@@ -233,7 +266,7 @@ int run_long_mode(VM& vm)
 	memset(&regs, 0, sizeof(regs));
 	/* Clear all FLAGS bits, except bit 1 which is always set. */
 	regs.rflags = 2;
-	regs.rip = 0;
+	regs.rip = vm.romem.physbase;
 	/* Create stack at top of 2 MB page and grow down. */
 	regs.rsp = 2 << 20;
 
@@ -293,39 +326,83 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 	const auto binary = load_file(argv[1]);
-
-	const size_t mem_size = 0x200000;
-	auto* mem_ptr = (char*) mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
-		   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-	if (mem_ptr == MAP_FAILED) {
-		perror("mmap mem");
-		exit(1);
-	}
-	madvise(mem_ptr, mem_size, MADV_MERGEABLE);
-
-	memcpy(mem_ptr, binary.data(), binary.size());
-
-	asm("" : : : "memory");
-	auto t0 = time_now();
-	asm("" : : : "memory");
-
-	static constexpr size_t NUM_GUESTS = 13000;
 	std::vector<VM*> vms;
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
 		vms.push_back(new VM);
 		auto& vm = *vms.back();
-		vm_init(vm, mem_ptr, mem_size);
+
+		size_t pt_size = 0x8000;
+		auto* pt_ptr = (char*) mmap(NULL, pt_size, PROT_READ | PROT_WRITE,
+			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+		if (pt_ptr == MAP_FAILED) {
+			perror("mmap ptmem");
+			exit(1);
+		}
+		madvise(pt_ptr, pt_size, MADV_MERGEABLE);
+		const vMemory ptmem {
+			.physbase = 0x2000,
+			.ptr = pt_ptr,
+			.size = pt_size
+		};
+
+		auto binsize = (binary.size() + 0xFFF) & ~0xFFF;
+		binsize += 0x8000;
+		auto binaddr = 0x0;
+
+		auto* bin_ptr = (char*) mmap(NULL, binsize, PROT_READ | PROT_WRITE,
+			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+		if (bin_ptr == MAP_FAILED) {
+			perror("mmap romem");
+			exit(1);
+		}
+		madvise(bin_ptr, binsize, MADV_MERGEABLE);
+		const vMemory romem {
+			.physbase = 0x100000,
+			.ptr = bin_ptr,
+			.size = binsize
+		};
+		memcpy(bin_ptr, binary.data(), binary.size());
+
+		auto* mem_ptr = (char*) mmap(NULL, GUEST_MEMORY, PROT_READ | PROT_WRITE,
+			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+		if (mem_ptr == MAP_FAILED) {
+			perror("mmap rwmem");
+			exit(1);
+		}
+		madvise(mem_ptr, GUEST_MEMORY, MADV_MERGEABLE);
+		const vMemory rwmem {
+			.physbase = 0x200000,
+			.ptr = mem_ptr,
+			.size = GUEST_MEMORY
+		};
+
+		vm_init(vm, ptmem, romem, rwmem);
 		vcpu_init(vm);
+	}
+
+	asm("" : : : "memory");
+	auto t0 = time_now();
+	asm("" : : : "memory");
+
+	for (unsigned rounds = 0; rounds < NUM_ROUNDS; rounds++)
+	for (unsigned i = 0; i < NUM_GUESTS; i++)
+	{
+		auto& vm = *vms[i];
+#ifdef ENABLE_GUEST_CLEAR_MEMORY
+		vm.reset();
+		memcpy(vm.romem.ptr, binary.data(), binary.size());
+#endif
 
 		assert( run_long_mode(vm) == 0 );
 	}
 
 	asm("" : : : "memory");
 	auto t1 = time_now();
+	auto nanos_per_gr = nanodiff(t0, t1) / NUM_GUESTS / NUM_ROUNDS;
 	printf("Time spent: %ldns (%ld micros)\n",
-		nanodiff(t0, t1) / NUM_GUESTS, nanodiff(t0, t1) / NUM_GUESTS / 1000);
+		nanos_per_gr, nanos_per_gr / 1000);
 
 	for (auto* vm : vms) {
 		delete vm;

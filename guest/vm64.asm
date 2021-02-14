@@ -1,8 +1,8 @@
-[BITS 32]
+[BITS 64]
 global vm64_entry
 global vm64_end
 
-org 0x0
+org 0x100000
 .vm64_entry:
 	mov ax, 'H'
 	out 0xe9, ax
@@ -19,20 +19,20 @@ org 0x0
 	hlt
 
 _strlen:
-	push ebx
-	push ecx
+	push rbx
+	push rcx
 
-	mov   ebx, edi
+	mov   rbx, rdi
 	xor   al,  al
-	mov   ecx, 0xffffffff
+	mov   rcx, 0xffffffff
 
 	repne scasb               ; REPeat while Not Equal [edi] != al
 
-	sub   edi, ebx            ; length = offset of (edi - ebx)
-	mov   eax, edi
+	sub   rdi, rbx            ; length = offset of (edi - ebx)
+	mov   rax, rdi
 
-	pop ebx
-	pop ecx
+	pop rbx
+	pop rcx
 	ret
 
 section .data

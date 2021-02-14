@@ -4,6 +4,11 @@ Tiny KVM virtual machine
 This repository is hosting the smallest possible KVM virtual machine.
 It prints hello using an I/O port.
 
+```
+0x2000   - Page tables
+0x100000 - Binary, rodata
+0x200000 - Stack, heap
+```
 
 High single-use cost
 ==============
@@ -15,7 +20,7 @@ Time spent: 236555ns (236 micros)
 Time spent: 238876ns (238 micros)
 Time spent: 241880ns (241 micros)
 ```
-Creating and closing a single VM 2k times shows that there is an overhead of 240 microseconds.
+Creating and closing a single VM 2k times shows that there is an overhead of 240 microseconds. These VMs are sharing memory.
 
 
 Scaling cost of concurrency
@@ -35,7 +40,7 @@ Time spent: 268407ns (268 micros)
 
 Creating 1000 guests without taking any of them down shows that the time is increasing when there are more virtual machines active, instead of just creating and destroying a single machine. Not particularly surprising.
 
-The memory usage is not particularly high, nor does the kernel create extra threads for these virtual machines.
+The memory usage is not particularly high, nor does the kernel create extra threads for these virtual machines. These VMs are sharing memory.
 
 
 Time spent creating new VMs
@@ -58,6 +63,43 @@ VMs     Time
 13000:  5,957s
 ```
 
-The time spent creating VMs is linear in time.
+The time spent creating VMs is linear in time. These VMs are sharing memory.
 
 ![KVM virtual machine instantiation time](https://user-images.githubusercontent.com/3758947/107860895-f22a9400-6e39-11eb-86c4-8ef775d879b1.png)
+
+
+High single-use cost, individual memory
+==============
+
+```
+Time spent: 417366ns (417 micros)
+Time spent: 425040ns (425 micros)
+Time spent: 421876ns (421 micros)
+Time spent: 422632ns (422 micros)
+Time spent: 429785ns (429 micros)
+Time spent: 418654ns (418 micros)
+Time spent: 421359ns (421 micros)
+```
+
+Creating and closing 2000 VMs shows that there is an overhead of 420 microseconds. These VMs each have their own memory, but is still sharing pagetables.
+
+
+Multiple rounds of 1000 machines, individual memory
+===============
+
+By running 1000 machines (single-threaded) in rounds of 400, and taking the average time per guest round, we get a fairly low number. However, in this experiment the resetting of each guest is not happening. That is, no memory is zeroed between each guest program execution.
+
+It is of course not kosher to avoid resetting guest memory between executions. However, it's clear that clearing *all* guest memory between rounds without considering what was actually used, is really bad for performance.
+
+```
+Time spent: 24035ns (24 micros)
+Time spent: 24008ns (24 micros)
+Time spent: 23143ns (23 micros)
+Time spent: 23566ns (23 micros)
+Time spent: 23443ns (23 micros)
+Time spent: 22710ns (22 micros)
+Time spent: 23013ns (23 micros)
+Time spent: 23850ns (23 micros)
+Time spent: 23672ns (23 micros)
+Time spent: 23753ns (23 micros)
+```

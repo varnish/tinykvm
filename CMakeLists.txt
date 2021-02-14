@@ -13,3 +13,7 @@ set (SOURCES
 
 add_executable(tinykvm ${SOURCES})
 target_link_libraries(tinykvm jemalloc)
+
+if (KVM_DEBUG)
+	target_compile_options(tinykvm PUBLIC -O0 -g)
+endif()
