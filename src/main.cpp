@@ -1,5 +1,4 @@
 #include "machine.hpp"
-#include <sys/mman.h>
 #include <cassert>
 #include <cstring>
 #include <string>
@@ -26,47 +25,17 @@ int main(int argc, char** argv)
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
-		const size_t pt_size = 0x8000;
-		auto* pt_ptr = (char*) mmap(NULL, pt_size, PROT_READ | PROT_WRITE,
-			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-		if (pt_ptr == MAP_FAILED) {
-			perror("mmap ptmem");
-			exit(1);
-		}
-		madvise(pt_ptr, pt_size, MADV_MERGEABLE);
-		const vMemory ptmem {
-			.physbase = 0x2000,
-			.ptr = pt_ptr,
-			.size = pt_size
-		};
+		using tinykvm::vMemory;
+		const auto ptmem =
+			vMemory::New("Page tables", 0x2000, 0x8000);
 
 		const size_t binsize = (binary.size() + 0xFFF) & ~0xFFF;
-		auto* bin_ptr = (char*) mmap(NULL, binsize, PROT_READ | PROT_WRITE,
-			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-		if (bin_ptr == MAP_FAILED) {
-			perror("mmap romem");
-			exit(1);
-		}
-		madvise(bin_ptr, binsize, MADV_MERGEABLE);
-		const vMemory romem {
-			.physbase = 0x100000,
-			.ptr = bin_ptr,
-			.size = binsize
-		};
-		std::memcpy(bin_ptr, binary.data(), binary.size());
+		auto romem =
+			vMemory::New("Binary", 0x100000, binsize);
+		std::memcpy(romem.ptr, binary.data(), binary.size());
 
-		auto* mem_ptr = (char*) mmap(NULL, GUEST_MEMORY, PROT_READ | PROT_WRITE,
-			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-		if (mem_ptr == MAP_FAILED) {
-			perror("mmap rwmem");
-			exit(1);
-		}
-		madvise(mem_ptr, GUEST_MEMORY, MADV_MERGEABLE);
-		const vMemory rwmem {
-			.physbase = 0x200000,
-			.ptr = mem_ptr,
-			.size = GUEST_MEMORY
-		};
+		const auto rwmem =
+			vMemory::New("Heap/stack", 0x200000, GUEST_MEMORY);
 
 		vms.push_back(new tinykvm::Machine {
 			{binary.begin(), binary.end()},
