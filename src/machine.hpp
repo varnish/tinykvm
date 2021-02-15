@@ -11,8 +11,7 @@ struct Machine
 	long run(double timeout = 10.0);
 	void reset();
 
-	Machine(std::span<const uint8_t> binary,
-		const vMemory&, const vMemory&, const vMemory&);
+	Machine(std::span<const uint8_t> binary, uint64_t max_mem);
 	~Machine();
 
 private:

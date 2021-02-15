@@ -1,6 +1,5 @@
 #include "machine.hpp"
 #include <cassert>
-#include <cstring>
 #include <string>
 #include <stdexcept>
 #include <vector>
@@ -25,21 +24,8 @@ int main(int argc, char** argv)
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
-		using tinykvm::vMemory;
-		const auto ptmem =
-			vMemory::New("Page tables", 0x2000, 0x8000);
-
-		const size_t binsize = (binary.size() + 0xFFF) & ~0xFFF;
-		auto romem =
-			vMemory::New("Binary", 0x100000, binsize);
-		std::memcpy(romem.ptr, binary.data(), binary.size());
-
-		const auto rwmem =
-			vMemory::New("Heap/stack", 0x200000, GUEST_MEMORY);
-
 		vms.push_back(new tinykvm::Machine {
-			{binary.begin(), binary.end()},
-			ptmem, romem, rwmem
+			{binary.begin(), binary.end()}, GUEST_MEMORY
 		});
 	}
 
