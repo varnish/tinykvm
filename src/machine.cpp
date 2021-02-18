@@ -13,7 +13,7 @@ namespace tinykvm {
 	int Machine::kvm_fd = -1;
 	static int kvm_open();
 
-Machine::Machine(std::span<const uint8_t> binary, uint64_t max_mem)
+Machine::Machine(std::string_view binary, uint64_t max_mem)
 {
 	if (UNLIKELY(kvm_fd == -1)) {
 		kvm_fd = kvm_open();
@@ -24,40 +24,40 @@ Machine::Machine(std::span<const uint8_t> binary, uint64_t max_mem)
 		throw std::runtime_error("Failed to KVM_CREATE_VM");
 	}
 
-	if (ioctl(this->fd, KVM_SET_TSS_ADDR, 0xfffbd000) < 0) {
+	if (ioctl(this->fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
 		throw std::runtime_error("Failed to KVM_SET_TSS_ADDR");
 	}
 
 	/* TODO: Needs improvements */
-	this->ptmem = vMemory::New("Page tables", 0x2000, 0x8000);
+	this->ptmem = MemRange::New("Page tables", PT_ADDR, 0x8000);
 
 	const size_t binsize = (binary.size() + 0xFFF) & ~0xFFF;
-	this->romem =
-		vMemory::New("Binary", 0x100000, binsize);
-	std::memcpy(romem.ptr, binary.data(), binary.size());
+	this->romem = MemRange::New("Binary", 0x100000, binsize);
+	this->rwmem = MemRange::New("Heap/stack", 0x200000, max_mem - 0x200000);
 
-	this->rwmem =
-		vMemory::New("Heap/stack", 0x200000, max_mem);
+	this->memory = vMemory::New(0x0, max_mem);
+	std::memcpy(memory.at(romem.physbase), binary.data(), binary.size());
 
-	if (UNLIKELY(install_memory(0, this->ptmem) < 0)) {
-		throw std::runtime_error("Failed to install memory region");
+	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
+
+	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
+		throw std::runtime_error("Failed to install guest memory region");
 	}
-	if (UNLIKELY(install_memory(1, this->romem) < 0)) {
-		throw std::runtime_error("Failed to install memory region");
-	}
-	if (UNLIKELY(install_memory(2, this->rwmem) < 0)) {
-		throw std::runtime_error("Failed to install memory region");
-	}
+//	if (UNLIKELY(install_memory(1, this->mmio_scall) < 0)) {
+//		throw std::runtime_error("Failed to install syscall MMIO memory region");
+//	}
 
 	this->vcpu.init(*this);
 	this->setup_long_mode();
 }
+Machine::Machine(const std::vector<uint8_t>& binary, uint64_t max_mem)
+	: Machine(std::string_view{(const char*)&binary[0], binary.size()}, max_mem) {}
 
 int Machine::install_memory(uint32_t idx, vMemory mem)
 {
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
-		.flags = 0,
+		.flags = (mem.ptr) ? 0u : (uint32_t) KVM_MEM_READONLY,
 		.guest_phys_addr = mem.physbase,
 		.memory_size = mem.size,
 		.userspace_addr = (uintptr_t) mem.ptr,
@@ -67,7 +67,7 @@ int Machine::install_memory(uint32_t idx, vMemory mem)
 
 void Machine::reset()
 {
-	rwmem.reset();
+	memory.reset();
 }
 
 Machine::~Machine()

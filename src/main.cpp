@@ -5,9 +5,9 @@
 #include <vector>
 
 //#define ENABLE_GUEST_CLEAR_MEMORY
-#define NUM_ROUNDS   4000
-#define NUM_GUESTS   8
-#define GUEST_MEMORY 0x200000
+#define NUM_ROUNDS   1
+#define NUM_GUESTS   1
+#define GUEST_MEMORY 0x800000
 
 std::vector<uint8_t> load_file(const std::string& filename);
 inline timespec time_now();
@@ -24,9 +24,7 @@ int main(int argc, char** argv)
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
-		vms.push_back(new tinykvm::Machine {
-			{binary.begin(), binary.end()}, GUEST_MEMORY
-		});
+		vms.push_back(new tinykvm::Machine {binary, GUEST_MEMORY});
 	}
 
 	asm("" : : : "memory");
@@ -44,7 +42,7 @@ int main(int argc, char** argv)
 			/* RIP at start of binary */
 			0x100000,
 			/* Create stack at top of 2 MB page and grow down. */
-			0x200000
+			0x400000
 		);
 
 		assert( vm.run() == 0 );

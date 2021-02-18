@@ -12,6 +12,7 @@ set (SOURCES
 	src/machine.cpp
 	src/memory.cpp
 	src/vcpu.cpp
+	src/kernel/idt.cpp
 	)
 
 add_executable(tinykvm ${SOURCES})
