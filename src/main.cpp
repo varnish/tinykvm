@@ -25,6 +25,10 @@ int main(int argc, char** argv)
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
 		vms.push_back(new tinykvm::Machine {binary, GUEST_MEMORY});
+		vms.back()->set_unhandled_syscall_handler(
+			[] (auto&, unsigned scall) {
+				fprintf(stderr,	"System call: %u\n", scall);
+			});
 	}
 
 	asm("" : : : "memory");
@@ -40,9 +44,9 @@ int main(int argc, char** argv)
 #endif
 		vm.setup_call(
 			/* RIP at start of binary */
-			0x100000,
-			/* Create stack at top of 2 MB page and grow down. */
-			0x400000
+			0x200000,
+			/* Create stack at top of 2 MB page and grow down */
+			0x200000
 		);
 
 		assert( vm.run() == 0 );

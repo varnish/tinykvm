@@ -28,12 +28,17 @@ Machine::Machine(std::string_view binary, uint64_t max_mem)
 		throw std::runtime_error("Failed to KVM_SET_TSS_ADDR");
 	}
 
+	__u64 map_addr = 0xffffc000;
+	if (ioctl(this->fd, KVM_SET_IDENTITY_MAP_ADDR, &map_addr) < 0) {
+		throw std::runtime_error("Failed KVM_SET_IDENTITY_MAP_ADDR");
+	}
+
 	/* TODO: Needs improvements */
 	this->ptmem = MemRange::New("Page tables", PT_ADDR, 0x8000);
 
 	const size_t binsize = (binary.size() + 0xFFF) & ~0xFFF;
-	this->romem = MemRange::New("Binary", 0x100000, binsize);
-	this->rwmem = MemRange::New("Heap/stack", 0x200000, max_mem - 0x200000);
+	this->romem = MemRange::New("Binary", 0x200000, binsize);
+	this->rwmem = MemRange::New("Heap", 0x400000, max_mem - 0x400000);
 
 	this->memory = vMemory::New(0x0, max_mem);
 	std::memcpy(memory.at(romem.physbase), binary.data(), binary.size());
@@ -76,6 +81,18 @@ Machine::~Machine()
 		close(fd);
 		close(vcpu.fd);
 	}
+}
+
+void Machine::system_call(unsigned idx)
+{
+	if (idx < m_syscalls.size()) {
+		const auto handler = m_syscalls[idx];
+		if (handler != nullptr) {
+			handler(*this);
+			return;
+		}
+	}
+	m_unhandled_syscall(*this, idx);
 }
 
 __attribute__ ((cold))

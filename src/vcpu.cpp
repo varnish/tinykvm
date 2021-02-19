@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include "amd64.hpp"
 #include "kernel/idt.hpp"
+#include "kernel/gdt.hpp"
 #define ENABLE_GUEST_STDOUT
 #define SYSCALL_ADDRESS_BEG   0xffffa000
 #define SYSCALL_ADDRESS_END   0xffffb000
@@ -30,6 +31,15 @@ void Machine::vCPU::init(Machine& machine)
 	if (this->kvm_run == MAP_FAILED) {
 		throw std::runtime_error("Failed to create KVM run-time mapped memory");
 	}
+}
+void Machine::vCPU::print_address_info(uint64_t addr)
+{
+	struct kvm_translation tr;
+	tr.linear_address = addr;
+	ioctl(this->fd, KVM_TRANSLATE, &tr);
+	printf("0x%llX translates to 0x%llX\n",
+		tr.linear_address, tr.physical_address);
+	printf("* %s\n", tr.valid ? "Valid" : "Invalid");
 }
 
 void Machine::setup_call(uint64_t rip, uint64_t rsp)
@@ -74,6 +84,12 @@ long Machine::run(double timeout)
 #endif
 				continue;
 			}
+			if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT
+				&& vcpu.kvm_run->io.port < 32) {
+				/* CPU Exception */
+				this->handle_exception(vcpu.kvm_run->io.port);
+				return -1;
+			}
 			fprintf(stderr,	"Unknown IO port %d\n",
 				vcpu.kvm_run->io.port);
 			continue;
@@ -81,7 +97,7 @@ long Machine::run(double timeout)
 			if (vcpu.kvm_run->mmio.phys_addr >= SYSCALL_ADDRESS_BEG
 				&& vcpu.kvm_run->mmio.phys_addr < SYSCALL_ADDRESS_END) {
 				unsigned scall = vcpu.kvm_run->mmio.phys_addr - SYSCALL_ADDRESS_BEG;
-				fprintf(stderr,	"System call: %u\n", scall);
+				system_call(scall);
 				continue;
 			}
 			printf("Unknown MMIO write at 0x%llX\n",
@@ -111,29 +127,41 @@ void Machine::setup_long_mode()
 	auto sregs = master_sregs;
 
 	// guest physical
-	const uint64_t pml4_addr = this->ptmem.physbase;
+	const uint64_t pml4_addr = PT_ADDR;
 	const uint64_t pdpt_addr = pml4_addr + 0x1000;
 	const uint64_t pd_addr   = pml4_addr + 0x2000;
 	const uint64_t mmio_addr = pml4_addr + 0x4000;
+	const uint64_t low1_addr = pml4_addr + 0x5000;
 	// userspace
-	char* pagetable = memory.at(ptmem.physbase);
+	char* pagetable = memory.at(PT_ADDR);
 	auto* pml4 = (uint64_t*) (pagetable + 0x0);
 	auto* pdpt = (uint64_t*) (pagetable + 0x1000);
 	auto* pd   = (uint64_t*) (pagetable + 0x2000);
 	auto* mmio = (uint64_t*) (pagetable + 0x4000);
+	auto* lowpage = (uint64_t*) (pagetable + 0x5000);
 
-	pml4[0] = PDE64_PRESENT | PDE64_RW | PDE64_USER | pdpt_addr;
-	pdpt[0] = PDE64_PRESENT | PDE64_RW | PDE64_USER | pd_addr;
-	pdpt[3] = PDE64_PRESENT | PDE64_RW | PDE64_USER | mmio_addr;
-	pd[0] = PDE64_PRESENT | PDE64_PS | PDE64_USER | 0x000000;
-	pd[1] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | 0x200000;
-	for (unsigned i = 2; i < 512; i++) {
-		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | (i << 21);
+	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
+	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd_addr;
+	pdpt[3] = PDE64_PRESENT | PDE64_USER | PDE64_RW | mmio_addr;
+	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | low1_addr;
+
+	lowpage[0] = 0; /* Null-page at 0x0 */
+	for (unsigned i = 1; i < 256; i++) {
+		/* Kernel area < 1MB */
+		lowpage[i] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (i << 12);
 	}
+	for (unsigned i = 256; i < 512; i++) {
+		/* Stack area 1MB -> 2MB */
+		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | (i << 12);
+	}
+
+	/* ELF executable area */
+	for (unsigned i = 1; i < 512; i++) {
+		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | (i << 21);
+	}
+
 	// MMIO system calls
-	for (unsigned i = 0; i < 512; i++) {
-		mmio[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | 0xff000000 | (i << 21);
-	}
+	mmio[511] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | 0xff000000 | (511 << 21);
 
 	sregs.cr3 = pml4_addr;
 	sregs.cr4 = CR4_PAE;
@@ -141,35 +169,12 @@ void Machine::setup_long_mode()
 		= CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
 	sregs.efer = EFER_LME | EFER_LMA | EFER_NXE;
 
-	setup_amd64_segments(sregs);
-	setup_amd64_exceptions(sregs, 0x100050);
+	setup_amd64_segments(sregs, GDT_ADDR, memory.at(GDT_ADDR));
+	setup_amd64_exceptions(sregs, 0x200060);
 
 	if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
 		throw std::runtime_error("KVM_SET_SREGS failed");
 	}
-}
-
-void Machine::setup_amd64_segments(struct kvm_sregs& sregs)
-{
-	/* Code segment */
-	struct kvm_segment seg = {
-		.base = 0,
-		.limit = 0xffffffff,
-		.selector = 1 << 3,
-		.type = 11, /* Code: execute, read, accessed */
-		.present = 1,
-		.dpl = 0, /* User-mode */
-		.db = 0,
-		.s = 1, /* Code/data */
-		.l = 1,
-		.g = 1, /* 4KB granularity */
-	};
-	sregs.cs = seg;
-
-	/* Data segment */
-	seg.type = 3; /* Data: read/write, accessed */
-	seg.selector = 2 << 3;
-	sregs.ds = sregs.es = sregs.fs = sregs.gs = sregs.ss = seg;
 }
 
 void Machine::setup_amd64_exceptions(struct kvm_sregs& sregs, uint64_t ehandler)
@@ -177,10 +182,30 @@ void Machine::setup_amd64_exceptions(struct kvm_sregs& sregs, uint64_t ehandler)
 	char* idt = memory.at(IDT_ADDR);
 	sregs.idt.base  = IDT_ADDR;
 	sregs.idt.limit = sizeof_idt() - 1;
-	for (int i = 0; i < NUM_IDT_ENTRIES; i++) {
-		printf("Exception handler %d at 0x%lX\n", i, ehandler + i * 16);
+	for (int i = 0; i <= 20; i++) {
+		if (i == 15) continue;
+		//printf("Exception handler %d at 0x%lX\n", i, ehandler + i * 16);
 		set_exception_handler(idt, i, ehandler + i * 16);
 	}
+}
+
+void Machine::print_registers()
+{
+	struct kvm_sregs sregs;
+	if (ioctl(this->vcpu.fd, KVM_GET_SREGS, &sregs) < 0) {
+		throw std::runtime_error("KVM_GET_SREGS failed");
+	}
+
+	printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
+	//print_exception_handlers(memory.at(IDT_ADDR));
+	print_gdt_entries(memory.at(GDT_ADDR), 3);
+}
+
+void Machine::handle_exception(uint8_t exception)
+{
+	fprintf(stderr, "*** CPU EXCEPTION: %s\n",
+		exception_name(exception));
+	this->print_registers();
 }
 
 }

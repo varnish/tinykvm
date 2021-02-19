@@ -5,18 +5,14 @@ global vm64_end
 
 %macro CPU_EXCEPT 1
 ALIGN 0x10
-	push rax
-	mov rax, 0xffffa000 + %1
-	mov DWORD [rax], 0
+	out %1, ax
 %endmacro
 %macro CPU_EXCEPT_CODE 1
 ALIGN 0x10
-	push rax
-	mov rax, 0xffffa000 + %1
-	mov DWORD [rax], 0
+	out %1, ax
 %endmacro
 
-org 0x100000
+org 0x200000
 .vm64_entry:
 	;; Test syscall 0 via MMIO
 	mov rax, 0xffffa000

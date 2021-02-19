@@ -12,6 +12,7 @@ set (SOURCES
 	src/machine.cpp
 	src/memory.cpp
 	src/vcpu.cpp
+	src/kernel/gdt.cpp
 	src/kernel/idt.cpp
 	)
 
@@ -25,3 +26,5 @@ if (KVM_DEBUG)
 else()
 	target_compile_options(tinykvm PUBLIC -O2 -g)
 endif()
+
+target_compile_definitions(tinykvm PUBLIC TINYKVM_MAX_SYSCALLS=64)
