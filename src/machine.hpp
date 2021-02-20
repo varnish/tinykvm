@@ -13,11 +13,18 @@ struct Machine
 	using syscall_t = void(*)(Machine&);
 	using unhandled_syscall_t = void(*)(Machine&, unsigned);
 
+	template <typename... Args>
+	long vmcall(const char*, Args&&...);
 	template <typename... Args> constexpr
 	long vmcall(uint64_t addr, Args&&...);
 	long run(unsigned timeout = 10);
 	void stop();
 	void reset();
+
+	template <typename T>
+	uint64_t stack_push(uint64_t& sp, const T&);
+	uint64_t stack_push(uint64_t& sp, const void*, size_t);
+	uint64_t stack_push(uint64_t& sp, const std::string&);
 
 	tinykvm_x86regs registers() const;
 	std::string_view io_data() const;
@@ -30,7 +37,7 @@ struct Machine
 	uint64_t start_address() const noexcept { return this->m_start_address; }
 	uint64_t stack_address() const noexcept { return this->m_stack_address; }
 
-	uint64_t resolve_symbol(const char*) const;
+	uint64_t address_of(const char*) const;
 
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);

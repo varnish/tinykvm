@@ -28,8 +28,9 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 	/* Set IOPL=3 to allow I/O instructions */
 	regs.rflags = 2 | (3 << 12);
 	regs.rip = addr;
-	/* Create stack at top of 2 MB page and grow down */
-	regs.rsp = 0x200000;
+	auto rsp = this->stack_address();
+	stack_push<uint64_t> (rsp, this->m_exit_address);
+	regs.rsp = rsp;
 	[[maybe_unused]] unsigned iargs = 0;
 	([&] {
 		if constexpr (std::is_integral_v<Args>) {
@@ -64,4 +65,21 @@ long Machine::vmcall(uint64_t addr, Args&&... args)
 	auto regs = this->setup_call(addr, std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
 	return this->run();
+}
+
+template <typename... Args> inline
+long Machine::vmcall(const char* function, Args&&... args)
+{
+	auto address = address_of(function);
+	return vmcall(address, std::forward<Args> (args)...);
+}
+
+inline uint64_t Machine::stack_push(uint64_t& sp, const std::string& string)
+{
+	return stack_push(sp, string.data(), string.size()+1); /* zero */
+}
+template <typename T>
+inline uint64_t Machine::stack_push(uint64_t& sp, const T& type)
+{
+	return stack_push(sp, &type, sizeof(T));
 }

@@ -17,6 +17,12 @@ char* vMemory::at(uint64_t addr)
 		return &ptr[addr - physbase];
 	throw std::runtime_error("Memory::at() invalid addr:size pair");
 }
+char* vMemory::safely_at(uint64_t addr, size_t asize)
+{
+	if (safely_within(addr, asize))
+		return &ptr[addr - physbase];
+	throw std::runtime_error("Memory::safely_at() invalid addr:size pair");
+}
 
 vMemory vMemory::New(uint64_t phys, uint64_t safe, size_t size)
 {

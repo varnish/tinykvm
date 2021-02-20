@@ -1,5 +1,6 @@
 #include "machine.hpp"
 
+#include <cassert>
 #include <cstring>
 #include "util/elf.h"
 
@@ -89,7 +90,7 @@ void Machine::elf_loader(const MachineOptions& options)
 	}
 
 	// the default exit function is simply 'exit'
-	this->m_exit_address = this->resolve_symbol("exit");
+	this->m_exit_address = this->address_of("exit");
 
 	if (options.verbose_loader) {
 	printf("* Entry is at %p\n", (void*) m_start_address);
@@ -128,9 +129,54 @@ void Machine::elf_load_ph(const MachineOptions& options, const void* vphdr)
 	}
 }
 
-uint64_t Machine::resolve_symbol(const char* symname) const
+static const Elf64_Shdr* section_by_name(std::string_view binary, const char* name)
 {
-	return 0;
+	const auto* ehdr = elf_header(binary);
+	const auto* shdr = elf_offset<Elf64_Shdr> (binary, ehdr->e_shoff);
+	const auto& shstrtab = shdr[ehdr->e_shstrndx];
+	const char* strings = elf_offset<char>(binary, shstrtab.sh_offset);
+
+	for (auto i = 0; i < ehdr->e_shnum; i++)
+	{
+		const char* shname = &strings[shdr[i].sh_name];
+		if (strcmp(shname, name) == 0) {
+			return &shdr[i];
+		}
+	}
+	return nullptr;
+}
+static const Elf64_Sym* elf_sym_index(std::string_view binary, const Elf64_Shdr* shdr, uint32_t symidx)
+{
+	assert(symidx < shdr->sh_size / sizeof(Elf64_Sym));
+	auto* symtab = elf_offset<Elf64_Sym>(binary, shdr->sh_offset);
+	return &symtab[symidx];
+}
+static const Elf64_Sym* resolve_symbol(std::string_view binary, const char* name)
+{
+	if (UNLIKELY(binary.empty())) return nullptr;
+	const auto* sym_hdr = section_by_name(binary, ".symtab");
+	if (UNLIKELY(sym_hdr == nullptr)) return nullptr;
+	const auto* str_hdr = section_by_name(binary, ".strtab");
+	if (UNLIKELY(str_hdr == nullptr)) return nullptr;
+
+	const auto* symtab = elf_sym_index(binary, sym_hdr, 0);
+	const size_t symtab_ents = sym_hdr->sh_size / sizeof(Elf64_Sym);
+	const char* strtab = elf_offset<char>(binary, str_hdr->sh_offset);
+
+	for (size_t i = 0; i < symtab_ents; i++)
+	{
+		const char* symname = &strtab[symtab[i].st_name];
+		if (strcmp(symname, name) == 0) {
+			return &symtab[i];
+		}
+	}
+	return nullptr;
+}
+
+uint64_t Machine::address_of(const char* name) const
+{
+	const auto* sym = resolve_symbol(m_binary, name);
+	return (sym) ? sym->st_value : 0x0;
 }
 
 }

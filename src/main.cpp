@@ -17,7 +17,7 @@ inline long nanodiff(timespec start_time, timespec end_time);
 int main(int argc, char** argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "Missing argument: VM64.bin\n");
+		fprintf(stderr, "Missing argument: 64-bit ELF binary\n");
 		exit(1);
 	}
 	const auto binary = load_file(argv[1]);
@@ -67,8 +67,10 @@ int main(int argc, char** argv)
 #ifdef ENABLE_GUEST_CLEAR_MEMORY
 		vm.reset();
 #endif
-		/* RIP at start of binary */
+		/* Normal execution of _start -> main() */
 		vm.vmcall(vm.start_address());
+		/* Execute public function */
+		vm.vmcall(vm.address_of("empty"));
 	}
 
 	asm("" : : : "memory");

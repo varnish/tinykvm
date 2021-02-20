@@ -52,6 +52,13 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 	: Machine(std::string_view{(const char*)&bin[0], bin.size()}, opts) {}
 
+uint64_t Machine::stack_push(uint64_t& sp, const void* data, size_t length)
+{
+	sp = (sp - length) & ~0x7; // maintain word alignment
+	std::memcpy(memory.safely_at(sp, length), data, length);
+	return sp;
+}
+
 int Machine::install_memory(uint32_t idx, vMemory mem)
 {
 	const struct kvm_userspace_memory_region memreg {
