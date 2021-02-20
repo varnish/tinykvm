@@ -1,6 +1,7 @@
 #include "idt.hpp"
 #include <array>
 #include <cstdio>
+#include <linux/kvm.h>
 
 // 64-bit IDT entry
 struct IDTentry {
@@ -55,6 +56,17 @@ void set_exception_handler(void* area, uint8_t vec, uint64_t handler)
 	set_entry(idt->entry[vec], handler, 0x8, IDT_PRESENT | IDT_CPL3 | IDT_GATE_INTR);
 }
 
+void setup_amd64_exceptions(struct kvm_sregs& sregs, uint64_t addr, void* area, uint64_t ehandler)
+{
+	sregs.idt.base  = addr;
+	sregs.idt.limit = sizeof(IDT) - 1;
+	for (int i = 0; i <= 20; i++) {
+		if (i == 15) continue;
+		//printf("Exception handler %d at 0x%lX\n", i, ehandler + i * 16);
+		set_exception_handler(area, i, ehandler + i * 16);
+	}
+}
+
 void print_exception_handlers(void* area)
 {
 	auto* idt = (IDT*) area;
@@ -68,12 +80,6 @@ void print_exception_handlers(void* area)
 			i, addr.whole, entry.selector, entry.type_attr >> 7,
 			(entry.type_attr >> 5) & 0x3, entry.type_attr & 0xF);
 	}
-}
-
-
-uint64_t sizeof_idt()
-{
-	return sizeof(IDT);
 }
 
 static std::array<const char*, 32> exception_names =

@@ -7,7 +7,6 @@
 #include "amd64.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
-#define ENABLE_GUEST_STDOUT
 #define SYSCALL_ADDRESS_BEG   0xffffa000
 #define SYSCALL_ADDRESS_END   0xffffb000
 static struct kvm_sregs master_sregs;
@@ -56,8 +55,15 @@ void Machine::setup_call(uint64_t rip, uint64_t rsp)
 	}
 }
 
+std::string_view Machine::io_data() const
+{
+	char *p = (char *) vcpu.kvm_run;
+	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
+}
+
 long Machine::run(double timeout)
 {
+	this->stopped = false;
 	for (;;) {
 		if (ioctl(vcpu.fd, KVM_RUN, 0) < 0) {
 			throw std::runtime_error("KVM_RUN failed");
@@ -74,30 +80,33 @@ long Machine::run(double timeout)
 			return 0;
 
 		case KVM_EXIT_IO:
-			if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT
-				&& vcpu.kvm_run->io.port == 0xE9) {
-#ifdef ENABLE_GUEST_STDOUT
-				char *p = (char *) vcpu.kvm_run;
-				fwrite(p + vcpu.kvm_run->io.data_offset,
-					   vcpu.kvm_run->io.size, 1, stdout);
-				fflush(stdout);
-#endif
+			if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT) {
+			if (vcpu.kvm_run->io.port < TINYKVM_MAX_SYSCALLS) {
+				this->system_call(vcpu.kvm_run->io.port);
+				if (this->stopped) return 0;
 				continue;
 			}
-			if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT
-				&& vcpu.kvm_run->io.port < 32) {
+			else if (vcpu.kvm_run->io.port == 0xFFFF) {
+				char *p = (char *) vcpu.kvm_run;
+				auto intr = *(uint8_t*) &p[vcpu.kvm_run->io.data_offset];
 				/* CPU Exception */
-				this->handle_exception(vcpu.kvm_run->io.port);
+				struct kvm_regs regs;
+				if (ioctl(vcpu.fd, KVM_GET_REGS, &regs) < 0) {
+					throw std::runtime_error("CPU exception: KVM_GET_REGS failed");
+				}
+				this->handle_exception(intr, regs);
 				return -1;
 			}
 			fprintf(stderr,	"Unknown IO port %d\n",
 				vcpu.kvm_run->io.port);
+			}
 			continue;
 		case KVM_EXIT_MMIO:
 			if (vcpu.kvm_run->mmio.phys_addr >= SYSCALL_ADDRESS_BEG
 				&& vcpu.kvm_run->mmio.phys_addr < SYSCALL_ADDRESS_END) {
 				unsigned scall = vcpu.kvm_run->mmio.phys_addr - SYSCALL_ADDRESS_BEG;
 				system_call(scall);
+				if (this->stopped) return 0;
 				continue;
 			}
 			printf("Unknown MMIO write at 0x%llX\n",
@@ -170,22 +179,10 @@ void Machine::setup_long_mode()
 	sregs.efer = EFER_LME | EFER_LMA | EFER_NXE;
 
 	setup_amd64_segments(sregs, GDT_ADDR, memory.at(GDT_ADDR));
-	setup_amd64_exceptions(sregs, 0x200060);
+	setup_amd64_exceptions(sregs, IDT_ADDR, memory.at(IDT_ADDR), 0x200050);
 
 	if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
 		throw std::runtime_error("KVM_SET_SREGS failed");
-	}
-}
-
-void Machine::setup_amd64_exceptions(struct kvm_sregs& sregs, uint64_t ehandler)
-{
-	char* idt = memory.at(IDT_ADDR);
-	sregs.idt.base  = IDT_ADDR;
-	sregs.idt.limit = sizeof_idt() - 1;
-	for (int i = 0; i <= 20; i++) {
-		if (i == 15) continue;
-		//printf("Exception handler %d at 0x%lX\n", i, ehandler + i * 16);
-		set_exception_handler(idt, i, ehandler + i * 16);
 	}
 }
 
@@ -201,10 +198,10 @@ void Machine::print_registers()
 	print_gdt_entries(memory.at(GDT_ADDR), 3);
 }
 
-void Machine::handle_exception(uint8_t exception)
+void Machine::handle_exception(uint8_t intr, const struct kvm_regs& regs)
 {
 	fprintf(stderr, "*** CPU EXCEPTION: %s\n",
-		exception_name(exception));
+		exception_name(intr));
 	this->print_registers();
 }
 

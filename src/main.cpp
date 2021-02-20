@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <vector>
 
+#define ENABLE_GUEST_STDOUT
 //#define ENABLE_GUEST_CLEAR_MEMORY
 #define NUM_ROUNDS   1
 #define NUM_GUESTS   1
@@ -25,9 +26,21 @@ int main(int argc, char** argv)
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
 		vms.push_back(new tinykvm::Machine {binary, GUEST_MEMORY});
-		vms.back()->set_unhandled_syscall_handler(
+		vms.back()->install_unhandled_syscall_handler(
 			[] (auto&, unsigned scall) {
 				fprintf(stderr,	"System call: %u\n", scall);
+			});
+		vms.back()->install_syscall_handler(
+			0, [] (auto& machine) {
+				machine.stop();
+			});
+		vms.back()->install_syscall_handler(
+			1, [] (auto& machine) {
+#ifdef ENABLE_GUEST_STDOUT
+				auto data = machine.io_data();
+				fwrite(data.begin(), data.size(), 1, stdout);
+				fflush(stdout);
+#endif
 			});
 	}
 

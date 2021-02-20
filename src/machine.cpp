@@ -24,14 +24,14 @@ Machine::Machine(std::string_view binary, uint64_t max_mem)
 		throw std::runtime_error("Failed to KVM_CREATE_VM");
 	}
 
-	if (ioctl(this->fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
+/*	if (ioctl(this->fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
 		throw std::runtime_error("Failed to KVM_SET_TSS_ADDR");
 	}
 
 	__u64 map_addr = 0xffffc000;
 	if (ioctl(this->fd, KVM_SET_IDENTITY_MAP_ADDR, &map_addr) < 0) {
 		throw std::runtime_error("Failed KVM_SET_IDENTITY_MAP_ADDR");
-	}
+	}*/
 
 	/* TODO: Needs improvements */
 	this->ptmem = MemRange::New("Page tables", PT_ADDR, 0x8000);
@@ -48,9 +48,6 @@ Machine::Machine(std::string_view binary, uint64_t max_mem)
 	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}
-//	if (UNLIKELY(install_memory(1, this->mmio_scall) < 0)) {
-//		throw std::runtime_error("Failed to install syscall MMIO memory region");
-//	}
 
 	this->vcpu.init(*this);
 	this->setup_long_mode();
@@ -81,6 +78,11 @@ Machine::~Machine()
 		close(fd);
 		close(vcpu.fd);
 	}
+}
+
+void Machine::stop()
+{
+	this->stopped = true;
 }
 
 void Machine::system_call(unsigned idx)
