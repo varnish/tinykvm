@@ -26,5 +26,3 @@ if (KVM_DEBUG)
 else()
 	target_compile_options(tinykvm PUBLIC -O2 -g)
 endif()
-
-target_compile_definitions(tinykvm PUBLIC TINYKVM_MAX_SYSCALLS=64)

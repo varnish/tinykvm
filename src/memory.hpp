@@ -23,8 +23,9 @@ struct MemRange {
 	size_t   size;
 	const char* name;
 
-	bool within(uint64_t addr, size_t size = 0) const noexcept {
-		return addr >= physbase && addr + size < physbase + size;
+	auto begin() const noexcept { return physbase; }
+	bool within(uint64_t addr, size_t asize = 1) const noexcept {
+		return addr >= physbase && addr + asize <= physbase + this->size;
 	}
 
 	static MemRange New(const char*, uint64_t physical, size_t size);

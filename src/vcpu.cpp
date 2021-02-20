@@ -7,8 +7,6 @@
 #include "amd64.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
-#define SYSCALL_ADDRESS_BEG   0xffffa000
-#define SYSCALL_ADDRESS_END   0xffffb000
 static struct kvm_sregs master_sregs;
 
 namespace tinykvm {
@@ -41,16 +39,17 @@ void Machine::vCPU::print_address_info(uint64_t addr)
 	printf("* %s\n", tr.valid ? "Valid" : "Invalid");
 }
 
-void Machine::setup_call(uint64_t rip, uint64_t rsp)
+tinykvm_x86regs Machine::vCPU::registers() const
 {
-	struct kvm_regs regs;
-	memset(&regs, 0, sizeof(regs));
-	/* Set IOPL=3 to allow I/O instructions */
-	regs.rflags = 2 | (3 << 12);
-	regs.rip = rip;
-	regs.rsp = rsp;
-
-	if (ioctl(this->vcpu.fd, KVM_SET_REGS, &regs) < 0) {
+	struct tinykvm_x86regs regs;
+	if (ioctl(this->fd, KVM_GET_REGS, &regs) < 0) {
+		throw std::runtime_error("KVM_SET_REGS failed");
+	}
+	return regs;
+}
+void Machine::vCPU::assign_registers(const struct tinykvm_x86regs& regs)
+{
+	if (ioctl(this->fd, KVM_SET_REGS, &regs) < 0) {
 		throw std::runtime_error("KVM_SET_REGS failed");
 	}
 }
@@ -61,7 +60,7 @@ std::string_view Machine::io_data() const
 	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
 }
 
-long Machine::run(double timeout)
+long Machine::run(unsigned timeout)
 {
 	this->stopped = false;
 	for (;;) {
@@ -102,9 +101,8 @@ long Machine::run(double timeout)
 			}
 			continue;
 		case KVM_EXIT_MMIO:
-			if (vcpu.kvm_run->mmio.phys_addr >= SYSCALL_ADDRESS_BEG
-				&& vcpu.kvm_run->mmio.phys_addr < SYSCALL_ADDRESS_END) {
-				unsigned scall = vcpu.kvm_run->mmio.phys_addr - SYSCALL_ADDRESS_BEG;
+			if (mmio_scall.within(vcpu.kvm_run->mmio.phys_addr, 1)) {
+				unsigned scall = vcpu.kvm_run->mmio.phys_addr - mmio_scall.begin();
 				system_call(scall);
 				if (this->stopped) return 0;
 				continue;

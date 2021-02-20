@@ -32,6 +32,8 @@ int main(int argc, char** argv)
 			});
 		vms.back()->install_syscall_handler(
 			0, [] (auto& machine) {
+				auto regs = machine.registers();
+				printf("Machine stopped with return value 0x%llX\n", regs.rax);
 				machine.stop();
 			});
 		vms.back()->install_syscall_handler(
@@ -55,14 +57,8 @@ int main(int argc, char** argv)
 #ifdef ENABLE_GUEST_CLEAR_MEMORY
 		vm.reset();
 #endif
-		vm.setup_call(
-			/* RIP at start of binary */
-			0x200000,
-			/* Create stack at top of 2 MB page and grow down */
-			0x200000
-		);
-
-		assert( vm.run() == 0 );
+		/* RIP at start of binary */
+		vm.vmcall(0x200000);
 	}
 
 	asm("" : : : "memory");

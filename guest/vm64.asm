@@ -38,15 +38,15 @@ org 0x200000
 	push rax
 	pop  rax
 
-	;; Test syscall 0 via MMIO
-	mov rax, 0xffffa000
-	mov WORD [rax], 1234
 	;; Test syscall 1 via MMIO
 	mov rax, 0xffffa001
 	mov WORD [rax], 1234
 	;; Test syscall 2 via MMIO
 	mov rax, 0xffffa002
 	mov WORD [rax], 1234
+	;; Test syscall 0 via I/O
+	mov eax, 0x1234abcd
+	out 0, eax
 	;; Cause exception
 	ud2
 

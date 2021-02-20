@@ -80,23 +80,6 @@ Machine::~Machine()
 	}
 }
 
-void Machine::stop()
-{
-	this->stopped = true;
-}
-
-void Machine::system_call(unsigned idx)
-{
-	if (idx < m_syscalls.size()) {
-		const auto handler = m_syscalls[idx];
-		if (handler != nullptr) {
-			handler(*this);
-			return;
-		}
-	}
-	m_unhandled_syscall(*this, idx);
-}
-
 __attribute__ ((cold))
 int kvm_open()
 {
