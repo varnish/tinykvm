@@ -1,3 +1,4 @@
+#include <cstddef>
 static const char text[] = "Hello World!\n";
 
 asm(".global syscall\n"
@@ -23,9 +24,14 @@ void _start()
 	exit(main());
 }
 
+struct Data {
+	char   buffer[128];
+	size_t len;
+};
+
 extern "C" __attribute__((used))
-int empty()
+int empty(const Data& data)
 {
-	syscall(1, text, sizeof(text)-1);
+	syscall(1, data.buffer, data.len);
 	return 0;
 }

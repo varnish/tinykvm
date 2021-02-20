@@ -1,8 +1,5 @@
 #include "machine.hpp"
-#include <cassert>
-#include <string>
-#include <stdexcept>
-#include <vector>
+#include <cstring>
 
 #define ENABLE_GUEST_STDOUT
 //#define ENABLE_GUEST_CLEAR_MEMORY
@@ -70,7 +67,13 @@ int main(int argc, char** argv)
 		/* Normal execution of _start -> main() */
 		vm.vmcall(vm.start_address());
 		/* Execute public function */
-		vm.vmcall(vm.address_of("empty"));
+		struct Data {
+			char   buffer[128];
+			size_t len;
+		} data;
+		strcpy(data.buffer, "Hello Buffered World!\n");
+		data.len = strlen(data.buffer);
+		vm.vmcall(vm.address_of("empty"), data);
 	}
 
 	asm("" : : : "memory");

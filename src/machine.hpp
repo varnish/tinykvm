@@ -22,9 +22,9 @@ struct Machine
 	void reset();
 
 	template <typename T>
-	uint64_t stack_push(uint64_t& sp, const T&);
-	uint64_t stack_push(uint64_t& sp, const void*, size_t);
-	uint64_t stack_push(uint64_t& sp, const std::string&);
+	uint64_t stack_push(__u64& sp, const T&);
+	uint64_t stack_push(__u64& sp, const void*, size_t);
+	uint64_t stack_push(__u64& sp, const std::string&);
 
 	tinykvm_x86regs registers() const;
 	std::string_view io_data() const;

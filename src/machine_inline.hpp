@@ -28,9 +28,7 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 	/* Set IOPL=3 to allow I/O instructions */
 	regs.rflags = 2 | (3 << 12);
 	regs.rip = addr;
-	auto rsp = this->stack_address();
-	stack_push<uint64_t> (rsp, this->m_exit_address);
-	regs.rsp = rsp;
+	regs.rsp = this->stack_address();
 	[[maybe_unused]] unsigned iargs = 0;
 	([&] {
 		if constexpr (std::is_integral_v<Args>) {
@@ -51,11 +49,28 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 			}
 			iargs ++;
 		} else if constexpr (std::is_pod_v<std::remove_reference<Args>>) {
-			/* TODO: stack push */
+			if (iargs == 0)
+				regs.rdi = stack_push(regs.rsp, args);
+			else if (iargs == 1)
+				regs.rsi = stack_push(regs.rsp, args);
+			else if (iargs == 2)
+				regs.rdx = stack_push(regs.rsp, args);
+			else if (iargs == 3)
+				regs.rcx = stack_push(regs.rsp, args);
+			else if (iargs == 4)
+				regs.r8 = stack_push(regs.rsp, args);
+			else if (iargs == 5)
+				regs.r9 = stack_push(regs.rsp, args);
+			else {
+				/* TODO: stack push */
+			}
+			iargs ++;
 		} else {
 
 		}
 	}(), ...);
+	/* Push return value last */
+	stack_push<uint64_t> (regs.rsp, this->m_exit_address);
 	return regs;
 }
 
@@ -74,12 +89,12 @@ long Machine::vmcall(const char* function, Args&&... args)
 	return vmcall(address, std::forward<Args> (args)...);
 }
 
-inline uint64_t Machine::stack_push(uint64_t& sp, const std::string& string)
+inline uint64_t Machine::stack_push(__u64& sp, const std::string& string)
 {
 	return stack_push(sp, string.data(), string.size()+1); /* zero */
 }
 template <typename T>
-inline uint64_t Machine::stack_push(uint64_t& sp, const T& type)
+inline uint64_t Machine::stack_push(__u64& sp, const T& type)
 {
 	return stack_push(sp, &type, sizeof(T));
 }
