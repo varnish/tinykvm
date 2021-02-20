@@ -10,6 +10,7 @@ option(KVM_EXPERIMENTAL "Enable experimental features" OFF)
 set (SOURCES
 	src/main.cpp
 	src/machine.cpp
+	src/machine_elf.cpp
 	src/memory.cpp
 	src/vcpu.cpp
 	src/kernel/gdt.cpp

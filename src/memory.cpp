@@ -11,7 +11,14 @@ void vMemory::reset()
 	std::memset(this->ptr, 0, this->size);
 }
 
-vMemory vMemory::New(uint64_t phys, size_t size)
+char* vMemory::at(uint64_t addr)
+{
+	if (within(addr, 8))
+		return &ptr[addr - physbase];
+	throw std::runtime_error("Memory::at() invalid addr:size pair");
+}
+
+vMemory vMemory::New(uint64_t phys, uint64_t safe, size_t size)
 {
 	auto* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
@@ -21,16 +28,8 @@ vMemory vMemory::New(uint64_t phys, size_t size)
 	madvise(ptr, size, MADV_MERGEABLE);
 	return vMemory {
 		.physbase = phys,
+		.safebase = safe,
 		.ptr  = ptr,
-		.size = size
-	};
-}
-
-vMemory vMemory::NewMMIO(uint64_t phys, size_t size)
-{
-	return vMemory {
-		.physbase = phys,
-		.ptr  = nullptr,
 		.size = size
 	};
 }

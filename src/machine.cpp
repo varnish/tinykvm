@@ -13,7 +13,8 @@ namespace tinykvm {
 	int Machine::kvm_fd = -1;
 	static int kvm_open();
 
-Machine::Machine(std::string_view binary, uint64_t max_mem)
+Machine::Machine(std::string_view binary, const MachineOptions& options)
+	: m_binary {binary}
 {
 	if (UNLIKELY(kvm_fd == -1)) {
 		kvm_fd = kvm_open();
@@ -35,25 +36,21 @@ Machine::Machine(std::string_view binary, uint64_t max_mem)
 
 	/* TODO: Needs improvements */
 	this->ptmem = MemRange::New("Page tables", PT_ADDR, 0x8000);
-
-	const size_t binsize = (binary.size() + 0xFFF) & ~0xFFF;
-	this->romem = MemRange::New("Binary", 0x200000, binsize);
-	this->rwmem = MemRange::New("Heap", 0x400000, max_mem - 0x400000);
-
-	this->memory = vMemory::New(0x0, max_mem);
-	std::memcpy(memory.at(romem.physbase), binary.data(), binary.size());
-
 	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
 
+	/* Disallow viewing memory below 1MB */
+	this->memory = vMemory::New(0x0, 0x100000, options.max_mem);
 	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}
 
+	this->elf_loader(options);
+
 	this->vcpu.init(*this);
 	this->setup_long_mode();
 }
-Machine::Machine(const std::vector<uint8_t>& binary, uint64_t max_mem)
-	: Machine(std::string_view{(const char*)&binary[0], binary.size()}, max_mem) {}
+Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
+	: Machine(std::string_view{(const char*)&bin[0], bin.size()}, opts) {}
 
 int Machine::install_memory(uint32_t idx, vMemory mem)
 {

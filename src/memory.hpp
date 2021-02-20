@@ -1,21 +1,32 @@
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 namespace tinykvm {
 
 struct vMemory {
 	uint64_t physbase;
+	uint64_t safebase;
 	char*  ptr;
 	size_t size;
 
-	void reset();
-	char* at(uint64_t addr) {
-		//assert(addr - physbase < size);
-		return &ptr[addr - physbase];
+	/* Unsafe */
+	bool within(uint64_t addr, size_t asize) const noexcept {
+		return (addr >= physbase) && (addr + asize <= physbase + this->size);
+	}
+	char* at(uint64_t addr);
+	/* Safe */
+	bool safely_within(uint64_t addr, size_t asize) const noexcept {
+		return (addr >= safebase) && (addr + asize <= physbase + this->size);
+	}
+	std::string_view view(uint64_t addr, size_t asize) const noexcept {
+		if (safely_within(addr, asize))
+			return {&ptr[addr - physbase], asize};
+		return {};
 	}
 
-	static vMemory New(uint64_t, size_t size);
-	static vMemory NewMMIO(uint64_t, size_t size);
+	void reset();
+	static vMemory New(uint64_t, uint64_t, size_t size);
 };
 
 struct MemRange {

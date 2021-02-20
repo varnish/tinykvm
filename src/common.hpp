@@ -10,3 +10,14 @@
 #ifndef TINYKVM_MAX_SYSCALLS
 #define TINYKVM_MAX_SYSCALLS  128
 #endif
+
+#include <cstdint>
+
+namespace tinykvm
+{
+	struct MachineOptions {
+		uint64_t max_mem;
+
+		bool verbose_loader = false;
+	};
+}

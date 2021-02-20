@@ -1,1 +1,3 @@
 **/build*
+guest/interrupts
+guest/guest.elf

@@ -75,5 +75,5 @@ void setup_amd64_segments(struct kvm_sregs& sregs, uint64_t gdt_addr, char* gdt_
 
 	/* GDT dtable */
 	sregs.gdt.base  = gdt_addr;
-	sregs.gdt.limit = 8 * 3 - 1;
+	sregs.gdt.limit = sizeof(GDT_entry) * 3 - 1;
 }

@@ -1,7 +1,5 @@
 [BITS 64]
-global vm64_entry
 global vm64_exception
-global vm64_end
 
 %macro CPU_EXCEPT 1
 ALIGN 0x10
@@ -20,37 +18,7 @@ ALIGN 0x10
 	out dx, ax
 %endmacro
 
-org 0x200000
-.vm64_entry:
-	;; Hello to stdout
-	mov ax, 'H'
-	out 1, ax
-	mov ax, 'e'
-	out 1, ax
-	mov ax, 'l'
-	out 1, ax
-	mov ax, 'l'
-	out 1, ax
-	mov ax, 'o'
-	out 1, ax
-	mov ax, '!'
-	out 1, ax
-	push rax
-	pop  rax
-
-	;; Test syscall 1 via MMIO
-	mov rax, 0xffffa001
-	mov WORD [rax], 1234
-	;; Test syscall 2 via MMIO
-	mov rax, 0xffffa002
-	mov WORD [rax], 1234
-	;; Test syscall 0 via I/O
-	mov eax, 0x1234abcd
-	out 0, eax
-	;; Cause exception
-	ud2
-
-ALIGN 0x10
+org 0x2000
 .vm64_exception:
 	CPU_EXCEPT 0
 	CPU_EXCEPT 1
@@ -73,5 +41,3 @@ ALIGN 0x10
 	CPU_EXCEPT 18
 	CPU_EXCEPT 19
 	CPU_EXCEPT 20
-
-.vm64_end:

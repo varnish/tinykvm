@@ -25,7 +25,11 @@ int main(int argc, char** argv)
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
-		vms.push_back(new tinykvm::Machine {binary, GUEST_MEMORY});
+		tinykvm::MachineOptions options {
+			.max_mem = GUEST_MEMORY,
+			.verbose_loader = true
+		};
+		vms.push_back(new tinykvm::Machine {binary, options});
 		vms.back()->install_unhandled_syscall_handler(
 			[] (auto&, unsigned scall) {
 				fprintf(stderr,	"System call: %u\n", scall);
@@ -39,9 +43,15 @@ int main(int argc, char** argv)
 		vms.back()->install_syscall_handler(
 			1, [] (auto& machine) {
 #ifdef ENABLE_GUEST_STDOUT
-				auto data = machine.io_data();
-				fwrite(data.begin(), data.size(), 1, stdout);
-				fflush(stdout);
+				auto regs = machine.registers();
+				auto view = machine.memory_at(regs.rsi, regs.rdx);
+				if (!view.empty()) {
+					fwrite(view.begin(), view.size(), 1, stdout);
+					fflush(stdout);
+				} else {
+					fprintf(stderr, "Invalid memory from guest: 0x%llX:%llu\n",
+						regs.rsi, regs.rdx);
+				}
 #endif
 			});
 	}
@@ -58,7 +68,7 @@ int main(int argc, char** argv)
 		vm.reset();
 #endif
 		/* RIP at start of binary */
-		vm.vmcall(0x200000);
+		vm.vmcall(vm.start_address());
 	}
 
 	asm("" : : : "memory");

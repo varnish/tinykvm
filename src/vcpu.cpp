@@ -150,15 +150,17 @@ void Machine::setup_long_mode()
 	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
 	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd_addr;
 	pdpt[3] = PDE64_PRESENT | PDE64_USER | PDE64_RW | mmio_addr;
-	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | low1_addr;
+	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
 
 	lowpage[0] = 0; /* Null-page at 0x0 */
+	/* Kernel area < 1MB */
 	for (unsigned i = 1; i < 256; i++) {
-		/* Kernel area < 1MB */
 		lowpage[i] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (i << 12);
 	}
+	/* Exception handlers */
+	lowpage[EXCEPT_ASM_ADDR >> 12] = PDE64_PRESENT | PDE64_USER | EXCEPT_ASM_ADDR;
+	/* Stack area 1MB -> 2MB */
 	for (unsigned i = 256; i < 512; i++) {
-		/* Stack area 1MB -> 2MB */
 		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | (i << 12);
 	}
 
@@ -177,7 +179,8 @@ void Machine::setup_long_mode()
 	sregs.efer = EFER_LME | EFER_LMA | EFER_NXE;
 
 	setup_amd64_segments(sregs, GDT_ADDR, memory.at(GDT_ADDR));
-	setup_amd64_exceptions(sregs, IDT_ADDR, memory.at(IDT_ADDR), 0x200050);
+	setup_amd64_exceptions(sregs,
+		IDT_ADDR, memory.at(IDT_ADDR), EXCEPT_ASM_ADDR, memory.at(EXCEPT_ASM_ADDR));
 
 	if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
 		throw std::runtime_error("KVM_SET_SREGS failed");
