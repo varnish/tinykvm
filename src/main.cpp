@@ -1,4 +1,4 @@
-#include "machine.hpp"
+#include <tinykvm/machine.hpp>
 #include <cstring>
 
 #define ENABLE_GUEST_STDOUT
