@@ -29,6 +29,22 @@ void Machine::vCPU::init(Machine& machine)
 	if (this->kvm_run == MAP_FAILED) {
 		throw std::runtime_error("Failed to create KVM run-time mapped memory");
 	}
+
+	/* Retrieve KVM-host CPUID features */
+	struct {
+		__u32 nent;
+		__u32 padding;
+		struct kvm_cpuid_entry2 entries[100];
+	} kvm_cpuid;
+	kvm_cpuid.nent = sizeof(kvm_cpuid.entries) / sizeof(kvm_cpuid.entries[0]);
+	if (ioctl(Machine::kvm_fd, KVM_GET_SUPPORTED_CPUID, &kvm_cpuid) < 0) {
+		throw std::runtime_error("KVM_GET_SUPPORTED_CPUID failed");
+	}
+
+	/* Assign CPUID features to guest */
+	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
+		throw std::runtime_error("KVM_SET_CPUID2 failed");
+	}
 }
 void Machine::vCPU::print_address_info(uint64_t addr)
 {
@@ -136,9 +152,9 @@ void Machine::setup_long_mode()
 	setup_amd64_paging(memory, PT_ADDR, EXCEPT_ASM_ADDR, m_binary);
 
 	sregs.cr3 = PT_ADDR;
-	sregs.cr4 = CR4_TSD | CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT;
-	sregs.cr0
-		= CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
+	sregs.cr4 = CR4_TSD | CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE;
+	sregs.cr0 =
+		CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
 	sregs.efer = EFER_LME | EFER_LMA | EFER_NXE;
 
 	setup_amd64_segments(sregs, GDT_ADDR, memory.at(GDT_ADDR));
@@ -148,13 +164,16 @@ void Machine::setup_long_mode()
 	if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
 		throw std::runtime_error("KVM_SET_SREGS failed");
 	}
-return;
+
 	struct kvm_xcrs xregs;
 	if (ioctl(this->vcpu.fd, KVM_GET_XCRS, &xregs) < 0) {
 		throw std::runtime_error("KVM_GET_XCRS failed");
 	}
 
-	xregs.xcrs[0].xcr |= 0x7; // FPU, SSE, YMM
+	/* Enable AVX instructions */
+	xregs.xcrs[0].xcr = 0;
+	xregs.xcrs[0].value |= 0x7; // FPU, SSE, YMM
+	xregs.nr_xcrs = 1;
 
 	if (ioctl(this->vcpu.fd, KVM_SET_XCRS, &xregs) < 0) {
 		throw std::runtime_error("KVM_SET_XCRS failed");
@@ -179,8 +198,8 @@ void Machine::print_registers()
 
 	printf("CR0 PE=%llu MP=%llu EM=%llu\n",
 		sregs.cr0 & 1, (sregs.cr0 >> 1) & 1, (sregs.cr0 >> 2) & 1);
-	printf("CR4 OSFXSR=%llu OSXMMEXCPT=%llu\n",
-		(sregs.cr4 >> 9) & 1, (sregs.cr0 >> 10) & 1);
+	printf("CR4 OSFXSR=%llu OSXMMEXCPT=%llu OSXSAVE=%llu\n",
+		(sregs.cr4 >> 9) & 1, (sregs.cr4 >> 10) & 1, (sregs.cr4 >> 18) & 1);
 
 	//printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
 	//print_exception_handlers(memory.at(IDT_ADDR));

@@ -30,8 +30,8 @@ struct Data {
 #include <immintrin.h>
 PUBLIC(uint32_t empty(const Data& data))
 {
-	volatile __m128i xmm0 __attribute__((aligned(16)));
-	xmm0 = _mm_set_epi32(1, 2, 3, 4);
+	volatile __m256i xmm0;
+	xmm0 = _mm256_set_epi32(1, 2, 3, 4, 5, 6, 7, 8);
 
 	kprint(data.buffer, data.len);
 
