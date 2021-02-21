@@ -24,14 +24,14 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 		throw std::runtime_error("Failed to KVM_CREATE_VM");
 	}
 
-/*	if (ioctl(this->fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
+	if (ioctl(this->fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
 		throw std::runtime_error("Failed to KVM_SET_TSS_ADDR");
 	}
 
 	__u64 map_addr = 0xffffc000;
 	if (ioctl(this->fd, KVM_SET_IDENTITY_MAP_ADDR, &map_addr) < 0) {
 		throw std::runtime_error("Failed KVM_SET_IDENTITY_MAP_ADDR");
-	}*/
+	}
 
 	/* TODO: Needs improvements */
 	this->ptmem = MemRange::New("Page tables", PT_ADDR, 0x8000);
@@ -47,14 +47,10 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->vcpu.init(*this);
 	this->setup_long_mode();
-
 	struct tinykvm_x86regs regs {0};
-	/* Set IOPL=3 to allow I/O instructions */
-	regs.rflags = 2 | (3 << 12);
-	regs.rip = this->start_address();
-	regs.rsp = this->stack_address();
 	/* Store the registers, so that Machine is ready to go */
-	set_registers(regs);
+	this->setup_registers(regs);
+	this->set_registers(regs);
 }
 Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 	: Machine(std::string_view{(const char*)&bin[0], bin.size()}, opts) {}
@@ -76,6 +72,14 @@ int Machine::install_memory(uint32_t idx, vMemory mem)
 		.userspace_addr = (uintptr_t) mem.ptr,
 	};
 	return ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg);
+}
+
+void Machine::setup_registers(tinykvm_x86regs& regs)
+{
+	/* Set IOPL=3 to allow I/O instructions */
+	regs.rflags = 2 | (3 << 12);
+	regs.rip = this->start_address();
+	regs.rsp = this->stack_address();
 }
 
 void Machine::reset()

@@ -1,10 +1,11 @@
 #include <tinykvm/machine.hpp>
 #include <cstring>
 
-#define ENABLE_GUEST_STDOUT
+//#define ENABLE_GUEST_STDOUT
+//#define ENABLE_GUEST_VERBOSE
 //#define ENABLE_GUEST_CLEAR_MEMORY
-#define NUM_ROUNDS   1
-#define NUM_GUESTS   1
+#define NUM_ROUNDS   400
+#define NUM_GUESTS   8
 #define GUEST_MEMORY 0x800000
 
 std::vector<uint8_t> load_file(const std::string& filename);
@@ -30,12 +31,14 @@ int main(int argc, char** argv)
 		auto& vm = *vms.back();
 		vm.install_unhandled_syscall_handler(
 			[] (auto&, unsigned scall) {
-				fprintf(stderr,	"System call: %u\n", scall);
+				fprintf(stderr,	"Unhandled system call: %u\n", scall);
 			});
 		vm.install_syscall_handler(
 			0, [] (auto& machine) {
 				auto regs = machine.registers();
+#ifdef ENABLE_GUEST_VERBOSE
 				printf("Machine stopped with return value 0x%llX\n", regs.rdi);
+#endif
 				machine.stop();
 			});
 		vm.install_syscall_handler(
@@ -52,7 +55,6 @@ int main(int argc, char** argv)
 				}
 #endif
 			});
-		vm.setup_argv({"KVM tiny guest\n", "Hello World!\n"});
 		vm.set_exit_address(vm.address_of("rexit"));
 	}
 
@@ -67,6 +69,7 @@ int main(int argc, char** argv)
 #ifdef ENABLE_GUEST_CLEAR_MEMORY
 		vm.reset();
 #endif
+		vm.setup_argv({"KVM tiny guest\n", "Hello World!\n"});
 		/* Normal execution of _start -> main() */
 		vm.run();
 		/* Execute public function */

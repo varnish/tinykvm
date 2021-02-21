@@ -16,8 +16,25 @@ asm(".global _start\n"
 "_start:\n"
 "	pop %rdi\n"
 "	mov %rsp, %rsi\n"
-"   call main\n"
+"   call libc_start\n"
 "   jmp rexit\n");
+
+
+extern int main(int, char**);
+
+extern "C"
+int libc_start(int argc, char** argv)
+{
+	/* Global constructors */
+	extern void(*__init_array_start [])();
+	extern void(*__init_array_end [])();
+	const int count = __init_array_end - __init_array_start;
+	for (int i = 0; i < count; i++) {
+		__init_array_start[i]();
+	}
+
+	return main(argc, argv);
+}
 
 extern "C" __attribute__((noreturn)) void exit(int code) __THROW {
 	syscall(0, code);

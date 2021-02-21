@@ -38,7 +38,7 @@ void Machine::elf_loader(const MachineOptions& options)
 	if (UNLIKELY(program_headers <= 0)) {
 		throw std::runtime_error("ELF with no program-headers");
 	}
-	if (UNLIKELY(program_headers >= 10)) {
+	if (UNLIKELY(program_headers >= 16)) {
 		throw std::runtime_error("ELF with too many program-headers");
 	}
 	if (UNLIKELY(elf->e_phoff > 0x4000)) {

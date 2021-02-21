@@ -18,12 +18,12 @@ struct Machine
 	long vmcall(const char*, Args&&...);
 	template <typename... Args> constexpr
 	long vmcall(address_t, Args&&...);
-	long run(unsigned timeout = 10);
-	void stop();
-	void reset();
 
 	void setup_argv(const std::vector<std::string>& args,
 					const std::vector<std::string>& env = {});
+	long run(unsigned timeout = 10);
+	void stop();
+	void reset();
 
 	void copy_to_guest(address_t addr, const void*, size_t);
 
@@ -68,6 +68,8 @@ private:
 	};
 	template <typename... Args> constexpr
 	tinykvm_x86regs setup_call(uint64_t addr, Args&&... args);
+	void setup_registers(tinykvm_x86regs&);
+	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	int install_memory(uint32_t idx, vMemory mem);
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
