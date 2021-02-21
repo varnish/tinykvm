@@ -1,28 +1,18 @@
-#include <cstddef>
-static const char text[] = "Hello World!\n";
+#include "api.hpp"
 
-asm(".global syscall\n"
-"syscall:\n"
-"	add $0xffffa000, %edi\n"
-"	movl $0, (%rdi)\n"
-"   ret\n");
-extern "C" long syscall(int scall, ...);
-
-extern "C" __attribute__((noreturn)) void exit(int code) __THROW {
-	syscall(0, code);
-	__builtin_unreachable();
+size_t strlen(const char *str)
+{
+	const char *s = str;
+	while (*s) s++;
+	return s - str;
 }
 
-int main()
+int main(int argc, char** argv)
 {
-	syscall(1, text, sizeof(text)-1);
-	return 0;
-}
-
-extern "C"
-void _start()
-{
-	exit(main());
+	for (int i = 0; i < argc; i++) {
+		syscall(1, argv[i], strlen(argv[i]));
+	}
+	return 0x123;
 }
 
 struct Data {
@@ -31,8 +21,8 @@ struct Data {
 };
 
 #include <immintrin.h>
-extern "C" __attribute__((used))
-int empty(const Data& data)
+
+PUBLIC(int empty(const Data& data))
 {
 	volatile __m128i xmm0 __attribute__((aligned(16)));
 	xmm0 = _mm_set_epi32(1, 2, 3, 4);

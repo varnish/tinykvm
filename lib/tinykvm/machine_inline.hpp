@@ -16,9 +16,11 @@ inline void Machine::system_call(unsigned idx)
 	m_unhandled_syscall(*this, idx);
 }
 
-inline tinykvm_x86regs Machine::registers() const
-{
+inline tinykvm_x86regs Machine::registers() const {
 	return vcpu.registers();
+}
+inline void Machine::set_registers(const tinykvm_x86regs& regs) {
+	vcpu.assign_registers(regs);
 }
 
 template <typename... Args> inline constexpr

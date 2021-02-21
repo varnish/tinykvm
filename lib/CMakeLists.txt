@@ -10,6 +10,7 @@ option(KVM_EXPERIMENTAL "Enable experimental features" OFF)
 set (SOURCES
 	tinykvm/machine.cpp
 	tinykvm/machine_elf.cpp
+	tinykvm/machine_env.cpp
 	tinykvm/memory.cpp
 	tinykvm/vcpu.cpp
 	tinykvm/kernel/gdt.cpp

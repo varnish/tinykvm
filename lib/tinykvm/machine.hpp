@@ -10,16 +10,22 @@ namespace tinykvm {
 
 struct Machine
 {
+	using address_t = uint64_t;
 	using syscall_t = void(*)(Machine&);
 	using unhandled_syscall_t = void(*)(Machine&, unsigned);
 
 	template <typename... Args>
 	long vmcall(const char*, Args&&...);
 	template <typename... Args> constexpr
-	long vmcall(uint64_t addr, Args&&...);
+	long vmcall(address_t, Args&&...);
 	long run(unsigned timeout = 10);
 	void stop();
 	void reset();
+
+	void setup_argv(const std::vector<std::string>& args,
+					const std::vector<std::string>& env = {});
+
+	void copy_to_guest(address_t addr, const void*, size_t);
 
 	template <typename T>
 	uint64_t stack_push(__u64& sp, const T&);
@@ -27,6 +33,7 @@ struct Machine
 	uint64_t stack_push(__u64& sp, const std::string&);
 
 	tinykvm_x86regs registers() const;
+	void set_registers(const tinykvm_x86regs&);
 	std::string_view io_data() const;
 	std::string_view memory_at(uint64_t a, size_t s) const { return memory.view(a, s); }
 
@@ -34,8 +41,10 @@ struct Machine
 	void install_syscall_handler(unsigned idx, syscall_t h) { m_syscalls.at(idx) = h; }
 	void install_unhandled_syscall_handler(unhandled_syscall_t h) { m_unhandled_syscall = h; }
 
-	uint64_t start_address() const noexcept { return this->m_start_address; }
-	uint64_t stack_address() const noexcept { return this->m_stack_address; }
+	address_t start_address() const noexcept { return this->m_start_address; }
+	address_t stack_address() const noexcept { return this->m_stack_address; }
+	address_t exit_address() const noexcept { return this->m_exit_address; }
+	void set_exit_address(address_t addr) { this->m_exit_address = addr; }
 
 	uint64_t address_of(const char*) const;
 

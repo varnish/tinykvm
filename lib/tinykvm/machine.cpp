@@ -47,6 +47,14 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->vcpu.init(*this);
 	this->setup_long_mode();
+
+	struct tinykvm_x86regs regs {0};
+	/* Set IOPL=3 to allow I/O instructions */
+	regs.rflags = 2 | (3 << 12);
+	regs.rip = this->start_address();
+	regs.rsp = this->stack_address();
+	/* Store the registers, so that Machine is ready to go */
+	set_registers(regs);
 }
 Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 	: Machine(std::string_view{(const char*)&bin[0], bin.size()}, opts) {}

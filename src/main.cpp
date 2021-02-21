@@ -24,20 +24,21 @@ int main(int argc, char** argv)
 	{
 		tinykvm::MachineOptions options {
 			.max_mem = GUEST_MEMORY,
-			.verbose_loader = true
+			.verbose_loader = false
 		};
 		vms.push_back(new tinykvm::Machine {binary, options});
-		vms.back()->install_unhandled_syscall_handler(
+		auto& vm = *vms.back();
+		vm.install_unhandled_syscall_handler(
 			[] (auto&, unsigned scall) {
 				fprintf(stderr,	"System call: %u\n", scall);
 			});
-		vms.back()->install_syscall_handler(
+		vm.install_syscall_handler(
 			0, [] (auto& machine) {
 				auto regs = machine.registers();
-				printf("Machine stopped with return value 0x%llX\n", regs.rax);
+				printf("Machine stopped with return value 0x%llX\n", regs.rdi);
 				machine.stop();
 			});
-		vms.back()->install_syscall_handler(
+		vm.install_syscall_handler(
 			1, [] (auto& machine) {
 #ifdef ENABLE_GUEST_STDOUT
 				auto regs = machine.registers();
@@ -51,6 +52,8 @@ int main(int argc, char** argv)
 				}
 #endif
 			});
+		vm.setup_argv({"KVM tiny guest\n", "Hello World!\n"});
+		vm.set_exit_address(vm.address_of("rexit"));
 	}
 
 	asm("" : : : "memory");
@@ -65,7 +68,7 @@ int main(int argc, char** argv)
 		vm.reset();
 #endif
 		/* Normal execution of _start -> main() */
-		vm.vmcall(vm.start_address());
+		vm.run();
 		/* Execute public function */
 		struct Data {
 			char   buffer[128];
