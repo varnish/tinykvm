@@ -21,7 +21,7 @@
 #define CR4_MCE (1U << 6)
 #define CR4_PGE (1U << 7)
 #define CR4_PCE (1U << 8)
-#define CR4_OSFXSR (1U << 8)
+#define CR4_OSFXSR (1U << 9)
 #define CR4_OSXMMEXCPT (1U << 10)
 #define CR4_UMIP (1U << 11)
 #define CR4_VMXE (1U << 13)

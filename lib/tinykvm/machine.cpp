@@ -1,7 +1,6 @@
 #include "machine.hpp"
 
-#include "amd64.hpp"
-#include "common.hpp"
+#include "kernel/amd64.hpp"
 #include <cstring>
 #include <fcntl.h>
 #include <linux/kvm.h>

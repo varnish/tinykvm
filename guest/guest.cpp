@@ -8,8 +8,9 @@ asm(".global syscall\n"
 "   ret\n");
 extern "C" long syscall(int scall, ...);
 
-extern "C" void exit(int code) {
+extern "C" __attribute__((noreturn)) void exit(int code) __THROW {
 	syscall(0, code);
+	__builtin_unreachable();
 }
 
 int main()
@@ -29,9 +30,13 @@ struct Data {
 	size_t len;
 };
 
+#include <immintrin.h>
 extern "C" __attribute__((used))
 int empty(const Data& data)
 {
+	volatile __m128i xmm0 __attribute__((aligned(16)));
+	xmm0 = _mm_set_epi32(1, 2, 3, 4);
+
 	syscall(1, data.buffer, data.len);
 	return 0;
 }

@@ -4,7 +4,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <stdexcept>
-#include "amd64.hpp"
+#include "kernel/amd64.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
 static struct kvm_sregs master_sregs;
@@ -173,7 +173,7 @@ void Machine::setup_long_mode()
 	mmio[511] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | 0xff000000 | (511 << 21);
 
 	sregs.cr3 = pml4_addr;
-	sregs.cr4 = CR4_PAE;
+	sregs.cr4 = CR4_TSD | CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT;
 	sregs.cr0
 		= CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
 	sregs.efer = EFER_LME | EFER_LMA | EFER_NXE;
@@ -185,6 +185,17 @@ void Machine::setup_long_mode()
 	if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
 		throw std::runtime_error("KVM_SET_SREGS failed");
 	}
+return;
+	struct kvm_xcrs xregs;
+	if (ioctl(this->vcpu.fd, KVM_GET_XCRS, &xregs) < 0) {
+		throw std::runtime_error("KVM_GET_XCRS failed");
+	}
+
+	xregs.xcrs[0].xcr |= 0x7; // FPU, SSE, YMM
+
+	if (ioctl(this->vcpu.fd, KVM_SET_XCRS, &xregs) < 0) {
+		throw std::runtime_error("KVM_SET_XCRS failed");
+	}
 }
 
 void Machine::print_registers()
@@ -194,7 +205,21 @@ void Machine::print_registers()
 		throw std::runtime_error("KVM_GET_SREGS failed");
 	}
 
-	printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
+	auto regs = registers();
+	printf("RIP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rsp);
+	try {
+		auto stk = *(uint64_t *)memory.safely_at(regs.rsp, 8);
+		printf("Stack contents: 0x%lX\n", stk);
+		auto ra = *(uint64_t *)memory.safely_at(regs.rsp + 0x10, 8);
+		printf("Possible return: 0x%lX\n", ra);
+	} catch (...) {}
+
+	printf("CR0 PE=%llu MP=%llu EM=%llu\n",
+		sregs.cr0 & 1, (sregs.cr0 >> 1) & 1, (sregs.cr0 >> 2) & 1);
+	printf("CR4 OSFXSR=%llu OSXMMEXCPT=%llu\n",
+		(sregs.cr4 >> 9) & 1, (sregs.cr0 >> 10) & 1);
+
+	//printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
 	//print_exception_handlers(memory.at(IDT_ADDR));
 	print_gdt_entries(memory.at(GDT_ADDR), 3);
 }
