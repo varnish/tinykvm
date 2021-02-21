@@ -125,7 +125,7 @@ void Machine::elf_load_ph(const MachineOptions& options, const void* vphdr)
 	if (memory.safely_within(hdr->p_vaddr, len)) {
 		std::memcpy(memory.at(hdr->p_vaddr), src, len);
 	} else {
-
+		throw std::runtime_error("Unsafe PT_LOAD segment or executable too big");
 	}
 }
 

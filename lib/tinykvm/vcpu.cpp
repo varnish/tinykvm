@@ -7,6 +7,7 @@
 #include "kernel/amd64.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
+#include "kernel/paging.hpp"
 static struct kvm_sregs master_sregs;
 
 namespace tinykvm {
@@ -132,47 +133,9 @@ void Machine::setup_long_mode()
 	}
 
 	auto sregs = master_sregs;
+	setup_amd64_paging(memory, PT_ADDR, EXCEPT_ASM_ADDR, m_binary);
 
-	// guest physical
-	const uint64_t pml4_addr = PT_ADDR;
-	const uint64_t pdpt_addr = pml4_addr + 0x1000;
-	const uint64_t pd_addr   = pml4_addr + 0x2000;
-	const uint64_t mmio_addr = pml4_addr + 0x4000;
-	const uint64_t low1_addr = pml4_addr + 0x5000;
-	// userspace
-	char* pagetable = memory.at(PT_ADDR);
-	auto* pml4 = (uint64_t*) (pagetable + 0x0);
-	auto* pdpt = (uint64_t*) (pagetable + 0x1000);
-	auto* pd   = (uint64_t*) (pagetable + 0x2000);
-	auto* mmio = (uint64_t*) (pagetable + 0x4000);
-	auto* lowpage = (uint64_t*) (pagetable + 0x5000);
-
-	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
-	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd_addr;
-	pdpt[3] = PDE64_PRESENT | PDE64_USER | PDE64_RW | mmio_addr;
-	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
-
-	lowpage[0] = 0; /* Null-page at 0x0 */
-	/* Kernel area < 1MB */
-	for (unsigned i = 1; i < 256; i++) {
-		lowpage[i] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (i << 12);
-	}
-	/* Exception handlers */
-	lowpage[EXCEPT_ASM_ADDR >> 12] = PDE64_PRESENT | PDE64_USER | EXCEPT_ASM_ADDR;
-	/* Stack area 1MB -> 2MB */
-	for (unsigned i = 256; i < 512; i++) {
-		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | (i << 12);
-	}
-
-	/* ELF executable area */
-	for (unsigned i = 1; i < 512; i++) {
-		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | (i << 21);
-	}
-
-	// MMIO system calls
-	mmio[511] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | 0xff000000 | (511 << 21);
-
-	sregs.cr3 = pml4_addr;
+	sregs.cr3 = PT_ADDR;
 	sregs.cr4 = CR4_TSD | CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT;
 	sregs.cr0
 		= CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
