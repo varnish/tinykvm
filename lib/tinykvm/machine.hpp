@@ -3,7 +3,7 @@
 #include "forward.hpp"
 #include "memory.hpp"
 #include <array>
-#include <string_view>
+#include <string>
 #include <vector>
 
 namespace tinykvm {

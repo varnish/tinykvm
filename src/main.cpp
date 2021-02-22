@@ -1,5 +1,6 @@
 #include <tinykvm/machine.hpp>
 #include <cstring>
+#include <stdexcept>
 
 #define ENABLE_GUEST_STDOUT
 #define ENABLE_GUEST_VERBOSE

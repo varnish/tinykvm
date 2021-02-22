@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <stdexcept>
 #include "util/elf.h"
 
 namespace tinykvm {

@@ -19,6 +19,7 @@ int main(int argc, char** argv)
 	for (int i = 0; i < argc; i++) {
 		kprint(argv[i]);
 	}
+
 	return 0x123;
 }
 

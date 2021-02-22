@@ -155,7 +155,7 @@ void Machine::setup_long_mode()
 	sregs.cr4 = CR4_TSD | CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE;
 	sregs.cr0 =
 		CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
-	sregs.efer = EFER_LME | EFER_LMA | EFER_NXE;
+	sregs.efer = EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
 
 	setup_amd64_segments(sregs, GDT_ADDR, memory.at(GDT_ADDR));
 	setup_amd64_exceptions(sregs,
@@ -177,6 +177,23 @@ void Machine::setup_long_mode()
 
 	if (ioctl(this->vcpu.fd, KVM_SET_XCRS, &xregs) < 0) {
 		throw std::runtime_error("KVM_SET_XCRS failed");
+	}
+
+	/* Enable SYSCALL/SYSRET instructions */
+	struct {
+		__u32 nmsrs; /* number of msrs in entries */
+		__u32 pad;
+
+		struct kvm_msr_entry entries[2];
+	} msrs;
+	msrs.nmsrs = 2;
+	msrs.entries[0].index = AMD64_MSR_STAR;
+	msrs.entries[0].data  = 0x0810081000000000;
+	msrs.entries[1].index = AMD64_MSR_LSTAR;
+	msrs.entries[1].data  = EXCEPT_ASM_ADDR;
+
+	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 0) {
+		throw std::runtime_error("KVM_SET_MSRS failed");
 	}
 }
 

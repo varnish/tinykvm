@@ -6,6 +6,15 @@ asm(".global syscall\n"
 "	movl $0, (%rdi)\n"
 "   ret\n");
 
+asm(".global native_syscall\n"
+"native_syscall:\n"
+"	mov %rdi, %rax\n"
+"	mov %rsi, %rdi\n"
+"	mov %rdx, %rsi\n"
+"	mov %rcx, %rdx\n"
+"	syscall\n"
+"   ret\n");
+
 asm(".global rexit\n"
 "rexit:\n"
 "	mov %rax, %rdi\n"

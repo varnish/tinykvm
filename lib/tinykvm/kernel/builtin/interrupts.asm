@@ -19,6 +19,11 @@ ALIGN 0x10
 %endmacro
 
 org 0x2000
+.vm64_syscall:
+	add eax, 0xffffa000
+	mov DWORD [eax], 0
+	sysret
+
 .vm64_exception:
 	CPU_EXCEPT 0
 	CPU_EXCEPT 1

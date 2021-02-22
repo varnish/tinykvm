@@ -52,3 +52,6 @@
 #define PDE64_PS (1U << 7)
 #define PDE64_G (1U << 8)
 #define PDE64_NX (1ULL << 63)
+
+#define AMD64_MSR_STAR   0xC0000081
+#define AMD64_MSR_LSTAR  0xC0000082
