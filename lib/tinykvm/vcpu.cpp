@@ -197,6 +197,23 @@ void Machine::setup_long_mode()
 	}
 }
 
+void Machine::set_tls_base(__u64 baseaddr)
+{
+	struct {
+		__u32 nmsrs; /* number of msrs in entries */
+		__u32 pad;
+
+		struct kvm_msr_entry entries[2];
+	} msrs;
+	msrs.nmsrs = 1;
+	msrs.entries[0].index = AMD64_MSR_FS_BASE;
+	msrs.entries[0].data  = baseaddr;
+
+	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 0) {
+		throw std::runtime_error("KVM_SET_MSRS failed");
+	}
+}
+
 void Machine::print_registers()
 {
 	struct kvm_sregs sregs;
@@ -209,18 +226,27 @@ void Machine::print_registers()
 	try {
 		auto stk = *(uint64_t *)memory.safely_at(regs.rsp, 8);
 		printf("Stack contents: 0x%lX\n", stk);
-		auto ra = *(uint64_t *)memory.safely_at(regs.rsp + 0x10, 8);
-		printf("Possible return: 0x%lX\n", ra);
+		printf("Possible return: 0x%lX\n",
+			*(uint64_t *)memory.safely_at(regs.rsp + 0x0, 8));
+		printf("Possible return: 0x%lX\n",
+			*(uint64_t *)memory.safely_at(regs.rsp + 0x08, 8));
+		printf("Possible return: 0x%lX\n",
+			*(uint64_t *)memory.safely_at(regs.rsp + 0x10, 8));
 	} catch (...) {}
 
+#if 0
 	printf("CR0 PE=%llu MP=%llu EM=%llu\n",
 		sregs.cr0 & 1, (sregs.cr0 >> 1) & 1, (sregs.cr0 >> 2) & 1);
 	printf("CR4 OSFXSR=%llu OSXMMEXCPT=%llu OSXSAVE=%llu\n",
 		(sregs.cr4 >> 9) & 1, (sregs.cr4 >> 10) & 1, (sregs.cr4 >> 18) & 1);
-
-	//printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
-	//print_exception_handlers(memory.at(IDT_ADDR));
+#endif
+#if 0
+	printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
+	print_exception_handlers(memory.at(IDT_ADDR));
+#endif
+#if 0
 	print_gdt_entries(memory.at(GDT_ADDR), 3);
+#endif
 }
 
 void Machine::handle_exception(uint8_t intr, const struct kvm_regs& regs)

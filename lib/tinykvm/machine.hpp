@@ -21,6 +21,8 @@ struct Machine
 
 	void setup_argv(const std::vector<std::string>& args,
 					const std::vector<std::string>& env = {});
+	void setup_linux(const std::vector<std::string>& args,
+					const std::vector<std::string>& env = {});
 	long run(unsigned timeout = 10);
 	void stop();
 	void reset();
@@ -34,8 +36,10 @@ struct Machine
 
 	tinykvm_x86regs registers() const;
 	void set_registers(const tinykvm_x86regs&);
+	void set_tls_base(__u64 baseaddr);
 	std::string_view io_data() const;
 	std::string_view memory_at(uint64_t a, size_t s) const { return memory.view(a, s); }
+	bool memory_safe_at(uint64_t a, size_t s) const { return memory.safely_within(a, s); }
 
 	void system_call(unsigned);
 	void install_syscall_handler(unsigned idx, syscall_t h) { m_syscalls.at(idx) = h; }
@@ -70,6 +74,7 @@ private:
 	tinykvm_x86regs setup_call(uint64_t addr, Args&&... args);
 	void setup_registers(tinykvm_x86regs&);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
+	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	int install_memory(uint32_t idx, vMemory mem);
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);

@@ -31,8 +31,11 @@ int main(int argc, char** argv)
 		vms.push_back(new tinykvm::Machine {binary, options});
 		auto& vm = *vms.back();
 		vm.install_unhandled_syscall_handler(
-			[] (auto&, unsigned scall) {
+			[] (auto& machine, unsigned scall) {
 				fprintf(stderr,	"Unhandled system call: %u\n", scall);
+				auto regs = machine.registers();
+				regs.rax = -1;
+				machine.set_registers(regs);
 			});
 		vm.install_syscall_handler(
 			0, [] (auto& machine) {
@@ -56,6 +59,26 @@ int main(int argc, char** argv)
 				}
 #endif
 			});
+		vm.install_syscall_handler(
+			158, [] (auto& machine) {
+				auto regs = machine.registers();
+				constexpr long ARCH_SET_GS = 0x1001;
+				constexpr long ARCH_SET_FS = 0x1002;
+				constexpr long ARCH_GET_FS = 0x1003;
+				constexpr long ARCH_GET_GS = 0x1004;
+				if (regs.rdi == ARCH_SET_FS) {
+					if (machine.memory_safe_at(regs.rsi, 64)) {
+						machine.set_tls_base(regs.rsi);
+						regs.rax = 0;
+						machine.set_registers(regs);
+						printf("New guest FS: OK\n");
+						return;
+					}
+				}
+				printf("SYSCALL ARCH_PRCTL opt=0x%llX\n", regs.rdi);
+				regs.rax = -1;
+				machine.set_registers(regs);
+			});
 		vm.set_exit_address(vm.address_of("rexit"));
 	}
 
@@ -70,7 +93,9 @@ int main(int argc, char** argv)
 #ifdef ENABLE_GUEST_CLEAR_MEMORY
 		vm.reset();
 #endif
-		vm.setup_argv({"KVM tiny guest\n", "Hello World!\n"});
+		vm.setup_linux(
+			{"KVM tiny guest\n", "Hello World!\n"},
+			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 		/* Normal execution of _start -> main() */
 		vm.run();
 		/* Execute public function */

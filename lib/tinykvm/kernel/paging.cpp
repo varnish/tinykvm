@@ -37,15 +37,16 @@ void setup_amd64_paging(vMemory& memory,
 	}
 	/* Exception handlers */
 	lowpage[except_asm_addr >> 12] = PDE64_PRESENT | PDE64_USER | except_asm_addr;
+
 	/* Stack area 1MB -> 2MB */
 	for (unsigned i = 256; i < 512; i++) {
 		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | (i << 12);
 	}
-
-	/* Initial userspace area */
+	/* Initial userspace area (no execute) */
 	for (unsigned i = 1; i < 512; i++) {
-		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | (i << 21);
+		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | (i << 21);
 	}
+
 	/* ELF executable area */
 	const auto* elf = (Elf64_Ehdr*) binary.data();
 	const auto program_headers = elf->e_phnum;

@@ -8,7 +8,7 @@
 #endif
 
 #ifndef TINYKVM_MAX_SYSCALLS
-#define TINYKVM_MAX_SYSCALLS  128
+#define TINYKVM_MAX_SYSCALLS  384
 #endif
 
 #include <cstdint>
