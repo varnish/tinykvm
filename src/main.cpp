@@ -2,6 +2,8 @@
 #include <cstring>
 #include <stdexcept>
 
+#include <tinykvm/rsp_client.hpp>
+
 #define ENABLE_GUEST_STDOUT
 #define ENABLE_GUEST_VERBOSE
 //#define ENABLE_GUEST_CLEAR_MEMORY
@@ -60,6 +62,15 @@ int main(int argc, char** argv)
 #endif
 			});
 		vm.install_syscall_handler(
+			21, [] (auto& machine) {
+				auto regs = machine.registers();
+				// 0x40216e
+				// CRASH: 0x44bdd9
+				printf("SYSCALL access 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
+				regs.rax = -1;
+				machine.set_registers(regs);
+			});
+		vm.install_syscall_handler(
 			158, [] (auto& machine) {
 				auto regs = machine.registers();
 				constexpr long ARCH_SET_GS = 0x1001;
@@ -96,8 +107,29 @@ int main(int argc, char** argv)
 		vm.setup_linux(
 			{"KVM tiny guest\n", "Hello World!\n"},
 			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
-		/* Normal execution of _start -> main() */
-		vm.run();
+
+		if (getenv("DEBUG"))
+		{
+			tinykvm::RSP server {vm, 2159};
+			printf("Waiting for connection...\n");
+			auto client = server.accept();
+			if (client != nullptr) {
+				/* Debugging session of _start -> main() */
+				printf("Connected\n");
+				try {
+					while (client->process_one());
+				} catch (const tinykvm::MachineException& e) {
+					printf("EXCEPTION %s: %lu\n", e.what(), e.data());
+					vm.print_registers();
+				}
+			} else {
+				/* Normal execution of _start -> main() */
+				vm.run();
+			}
+		} else {
+			/* Normal execution of _start -> main() */
+			vm.run();
+		}
 		/* Execute public function */
 		struct Data {
 			char   buffer[128];

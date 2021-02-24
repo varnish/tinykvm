@@ -23,6 +23,7 @@ asm(".global rexit\n"
 
 asm(".global _start\n"
 "_start:\n"
+"	xor %ebp, %ebp\n"
 "	pop %rdi\n"
 "	mov %rsp, %rsi\n"
 "   call libc_start\n"

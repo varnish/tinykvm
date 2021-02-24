@@ -1,6 +1,6 @@
 #pragma once
+#include "common.hpp"
 #include <cstddef>
-#include <cstdint>
 #include <string_view>
 
 namespace tinykvm {
@@ -21,11 +21,7 @@ struct vMemory {
 		return (addr >= safebase) && (addr + asize <= physbase + this->size);
 	}
 	char* safely_at(uint64_t addr, size_t asize);
-	std::string_view view(uint64_t addr, size_t asize) const noexcept {
-		if (safely_within(addr, asize))
-			return {&ptr[addr - physbase], asize};
-		return {};
-	}
+	std::string_view view(uint64_t addr, size_t asize) const;
 
 	void reset();
 	static vMemory New(uint64_t, uint64_t, size_t size);

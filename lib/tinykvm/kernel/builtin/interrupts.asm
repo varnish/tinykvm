@@ -3,16 +3,15 @@ global vm64_exception
 
 %macro CPU_EXCEPT 1
 ALIGN 0x10
-	push rax
-	push rdx
+	push QWORD [rsp]
+	;; exception trap
 	mov ax, %1
 	mov dx, 0xFFFF
 	out dx, ax
 %endmacro
 %macro CPU_EXCEPT_CODE 1
 ALIGN 0x10
-	push rax
-	push rdx
+	;; exception trap
 	mov ax, %1
 	mov dx, 0xFFFF
 	out dx, ax

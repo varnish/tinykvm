@@ -3,7 +3,6 @@
 #include "forward.hpp"
 #include "memory.hpp"
 #include <array>
-#include <string>
 #include <vector>
 
 namespace tinykvm {
@@ -24,7 +23,9 @@ struct Machine
 	void setup_linux(const std::vector<std::string>& args,
 					const std::vector<std::string>& env = {});
 	long run(unsigned timeout = 10);
-	void stop();
+	long step_one();
+	void stop(bool = true);
+	bool stopped() const noexcept { return m_stopped; }
 	void reset();
 
 	void copy_to_guest(address_t addr, const void*, size_t);
@@ -36,14 +37,18 @@ struct Machine
 
 	tinykvm_x86regs registers() const;
 	void set_registers(const tinykvm_x86regs&);
+	std::pair<__u64, __u64> get_fsgs() const;
 	void set_tls_base(__u64 baseaddr);
-	std::string_view io_data() const;
-	std::string_view memory_at(uint64_t a, size_t s) const { return memory.view(a, s); }
-	bool memory_safe_at(uint64_t a, size_t s) const { return memory.safely_within(a, s); }
+	void print_registers();
 
-	void system_call(unsigned);
 	void install_syscall_handler(unsigned idx, syscall_t h) { m_syscalls.at(idx) = h; }
 	void install_unhandled_syscall_handler(unhandled_syscall_t h) { m_unhandled_syscall = h; }
+	void system_call(unsigned);
+
+	std::string_view io_data() const;
+	std::string_view memory_at(uint64_t a, size_t s) const { return memory.view(a, s); }
+	char* rw_memory_at(uint64_t a, size_t s) { return memory.safely_at(a, s); }
+	bool memory_safe_at(uint64_t a, size_t s) const { return memory.safely_within(a, s); }
 
 	address_t start_address() const noexcept { return this->m_start_address; }
 	address_t stack_address() const noexcept { return this->m_stack_address; }
@@ -79,11 +84,11 @@ private:
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
 	void setup_long_mode();
-	void print_registers();
-	void handle_exception(uint8_t intr, const struct kvm_regs&);
+	void handle_exception(uint8_t intr);
+	long run_once();
 
 	int   fd;
-	bool  stopped = false;
+	bool  m_stopped = false;
 	vCPU  vcpu;
 	void* m_userdata = nullptr;
 

@@ -15,13 +15,18 @@ char* vMemory::at(uint64_t addr)
 {
 	if (within(addr, 8))
 		return &ptr[addr - physbase];
-	throw std::runtime_error("Memory::at() invalid addr:size pair");
+	throw MemoryException("Memory::safely_at() invalid region", addr, 8);
 }
 char* vMemory::safely_at(uint64_t addr, size_t asize)
 {
 	if (safely_within(addr, asize))
 		return &ptr[addr - physbase];
-	throw std::runtime_error("Memory::safely_at() invalid addr:size pair");
+	throw MemoryException("Memory::safely_at() invalid region", addr, asize);
+}
+std::string_view vMemory::view(uint64_t addr, size_t asize) const {
+	if (safely_within(addr, asize))
+		return {&ptr[addr - physbase], asize};
+	throw MemoryException("vMemory::view failed", addr, asize);
 }
 
 vMemory vMemory::New(uint64_t phys, uint64_t safe, size_t size)

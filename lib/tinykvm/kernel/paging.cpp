@@ -66,7 +66,9 @@ void setup_amd64_paging(vMemory& memory,
 			const bool exec  = (hdr->p_flags & PF_X) != 0;
 
 			auto base = hdr->p_vaddr & ~0xFFF;
-			auto end  = hdr->p_vaddr + len;
+			auto end  = ((hdr->p_vaddr + len) + 0xFFF) & ~0xFFF;
+			printf("0x%lX->0x%lX --> 0x%lX:0x%lX\n",
+				hdr->p_vaddr, hdr->p_vaddr + len, base, end);
 			for (size_t addr = base; addr < end; addr += 0x1000)
 			{
 				// Branch 2MB page
@@ -74,24 +76,93 @@ void setup_amd64_paging(vMemory& memory,
 				if (pd[pdidx] & PDE64_PS) {
 					// Set default attributes + free PTE page
 					pd[pdidx] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
+					// Fill new page with default attributes
+					auto* pagetable = (uint64_t*) memory.at(free_page);
+					for (uint64_t i = 0; i < 512; i++) {
+						// Set writable 4k attributes
+						uint64_t addr4k = (pdidx << 21) | (i << 12);
+						pagetable[i] =
+							PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | addr4k;
+					}
 					free_page += 0x1000;
 				}
 				// Get the pagetable array (NB: mask out NX)
 				auto ptaddr = pd[pdidx] & ~0x8000000000000FFF;
 				auto* pagetable = (uint64_t*) memory.at(ptaddr);
-				// Set 4k attributes
+				// Set read-only 4k attributes
 				auto entry = (addr >> 12) & 511;
 				auto& ptentry = pagetable[entry];
-				ptentry = PDE64_PRESENT | PDE64_USER | addr;
+/*				if ((ptentry & PDE64_NX) && exec) {
+					printf("NX-bit before on 0x%lX, but exec now\n", addr);
+				}
+				if (!(ptentry & PDE64_NX) && !exec) {
+					printf("Execute on 0x%lX, but not exec now\n", addr);
+				}*/
 				// We would enforce XO here, but no linker script support...
-				if (write) ptentry |= PDE64_RW;
-				if (!exec) ptentry |= PDE64_NX;
+				if (exec)
+					ptentry &= ~PDE64_NX;
+				else
+					ptentry |= PDE64_NX;
+				if (!read) ptentry &= ~PDE64_PRESENT;
+				if (!write) ptentry &= ~PDE64_RW;
 			}
 		}
 	}
 
 	// MMIO system calls
 	mmio[511] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | 0xff000000 | (511 << 21);
+}
+
+void print_pte(vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
+{
+	uint64_t* pt = (uint64_t*) memory.at(pte_mem);
+	for (uint64_t i = 0; i < 512; i++) {
+		if (pt[i] & PDE64_PRESENT) {
+			printf("    |-- 4k PT (0x%lX): 0x%lX  W=%lu  E=%d  %s\n",
+				pte_addr + (i << 12), pt[i] & ~0x8000000000000FFF,
+				pt[i] & PDE64_RW, !(pt[i] & PDE64_NX),
+				(pt[i] & PDE64_USER) ? "USER" : "KERNEL");
+		}
+	}
+}
+void print_pd(vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
+{
+	uint64_t* pd = (uint64_t*) memory.at(pd_mem);
+	for (uint64_t i = 0; i < 512; i++) {
+		if (pd[i] & PDE64_PRESENT) {
+			uint64_t addr = pd_addr + (i << 21);
+			uint64_t mem  = pd[i] & ~0x8000000000000FFF;
+			printf("  |-* 2MB PD (0x%lX): 0x%lX  W=%lu  E=%d  %s\n",
+				addr, mem,
+				pd[i] & PDE64_RW, !(pd[i] & PDE64_NX),
+				(pd[i] & PDE64_USER) ? "USER" : "KERNEL");
+			if (!(pd[i] & PDE64_PS))
+				print_pte(memory, addr, mem);
+		}
+	}
+}
+void print_pdpt(vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
+{
+	uint64_t* pdpt = (uint64_t*) memory.at(pdpt_mem);
+	for (uint64_t i = 0; i < 512; i++) {
+		if (pdpt[i] & PDE64_PRESENT) {
+			uint64_t addr = pdpt_base + (i << 30);
+			printf("|-* 1GB PDPT (0x%lX): 0x%lX\n",
+				addr, pdpt[i] & ~0xFFF);
+			print_pd(memory, addr, pdpt[i] & ~0xFFF);
+		}
+	}
+}
+
+void print_pagetables(vMemory& memory, uint64_t pagetable_mem)
+{
+	uint64_t* pml4 = (uint64_t*) memory.at(pagetable_mem);
+	for (size_t i = 0; i < 512; i++) {
+		if (pml4[i] & PDE64_PRESENT) {
+			printf("* 512GB PML4:\n");
+			print_pdpt(memory, 0, pml4[i] & ~0xFFF);
+		}
+	}
 }
 
 }

@@ -1,7 +1,7 @@
 
-inline void Machine::stop()
+inline void Machine::stop(bool s)
 {
-	this->stopped = true;
+	this->m_stopped = s;
 }
 
 inline void Machine::system_call(unsigned idx)

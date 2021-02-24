@@ -1,9 +1,9 @@
 #include "machine.hpp"
 #include <cstring>
+#include <stdexcept>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <stdexcept>
 #include "kernel/amd64.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
@@ -77,67 +77,6 @@ std::string_view Machine::io_data() const
 	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
 }
 
-long Machine::run(unsigned timeout)
-{
-	this->stopped = false;
-	for (;;) {
-		if (ioctl(vcpu.fd, KVM_RUN, 0) < 0) {
-			throw std::runtime_error("KVM_RUN failed");
-		}
-		//printf("KVM interrupted\n");
-
-		switch (vcpu.kvm_run->exit_reason) {
-		case KVM_EXIT_HLT:
-			fprintf(stderr,	"KVM_EXIT_HLT\n");
-			return 0;
-
-		case KVM_EXIT_SHUTDOWN:
-			fprintf(stderr,	"Shutdown! Triple fault?\n");
-			return 0;
-
-		case KVM_EXIT_IO:
-			if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT) {
-			if (vcpu.kvm_run->io.port < TINYKVM_MAX_SYSCALLS) {
-				this->system_call(vcpu.kvm_run->io.port);
-				if (this->stopped) return 0;
-				continue;
-			}
-			else if (vcpu.kvm_run->io.port == 0xFFFF) {
-				char *p = (char *) vcpu.kvm_run;
-				auto intr = *(uint8_t*) &p[vcpu.kvm_run->io.data_offset];
-				/* CPU Exception */
-				struct kvm_regs regs;
-				if (ioctl(vcpu.fd, KVM_GET_REGS, &regs) < 0) {
-					throw std::runtime_error("CPU exception: KVM_GET_REGS failed");
-				}
-				this->handle_exception(intr, regs);
-				return -1;
-			}
-			fprintf(stderr,	"Unknown IO port %d\n",
-				vcpu.kvm_run->io.port);
-			}
-			continue;
-		case KVM_EXIT_MMIO:
-			if (mmio_scall.within(vcpu.kvm_run->mmio.phys_addr, 1)) {
-				unsigned scall = vcpu.kvm_run->mmio.phys_addr - mmio_scall.begin();
-				system_call(scall);
-				if (this->stopped) return 0;
-				continue;
-			}
-			printf("Unknown MMIO write at 0x%llX\n",
-				vcpu.kvm_run->mmio.phys_addr);
-			//[[fallthrough]];
-			continue;
-		default:
-			fprintf(stderr,	"Got exit_reason %d,"
-				" expected KVM_EXIT_HLT (%d)\n",
-				vcpu.kvm_run->exit_reason, KVM_EXIT_HLT);
-			throw std::runtime_error("Unexpected KVM exit reason");
-		}
-	}
-	return -1;
-}
-
 void Machine::setup_long_mode()
 {
 	static bool init = false;
@@ -197,6 +136,23 @@ void Machine::setup_long_mode()
 	}
 }
 
+std::pair<__u64, __u64> Machine::get_fsgs() const
+{
+	struct {
+		__u32 nmsrs; /* number of msrs in entries */
+		__u32 pad;
+
+		struct kvm_msr_entry entries[2];
+	} msrs;
+	msrs.nmsrs = 2;
+	msrs.entries[0].index = AMD64_MSR_FS_BASE;
+	msrs.entries[1].index = AMD64_MSR_GS_BASE;
+
+	if (ioctl(this->vcpu.fd, KVM_GET_MSRS, &msrs) < 0) {
+		throw std::runtime_error("KVM_GET_MSRS failed");
+	}
+	return {msrs.entries[0].data, msrs.entries[1].data};
+}
 void Machine::set_tls_base(__u64 baseaddr)
 {
 	struct {
@@ -218,20 +174,17 @@ void Machine::print_registers()
 {
 	struct kvm_sregs sregs;
 	if (ioctl(this->vcpu.fd, KVM_GET_SREGS, &sregs) < 0) {
-		throw std::runtime_error("KVM_GET_SREGS failed");
+		fprintf(stderr, "Unable to retrieve registers\n");
+		return;
 	}
 
 	auto regs = registers();
 	printf("RIP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rsp);
 	try {
-		auto stk = *(uint64_t *)memory.safely_at(regs.rsp, 8);
-		printf("Stack contents: 0x%lX\n", stk);
 		printf("Possible return: 0x%lX\n",
 			*(uint64_t *)memory.safely_at(regs.rsp + 0x0, 8));
 		printf("Possible return: 0x%lX\n",
 			*(uint64_t *)memory.safely_at(regs.rsp + 0x08, 8));
-		printf("Possible return: 0x%lX\n",
-			*(uint64_t *)memory.safely_at(regs.rsp + 0x10, 8));
 	} catch (...) {}
 
 #if 0
@@ -249,11 +202,109 @@ void Machine::print_registers()
 #endif
 }
 
-void Machine::handle_exception(uint8_t intr, const struct kvm_regs& regs)
+void Machine::handle_exception(uint8_t intr)
 {
+	auto regs = registers();
 	fprintf(stderr, "*** CPU EXCEPTION: %s\n",
 		exception_name(intr));
+	if (intr == 14) { // Page fault
+		auto regs = registers();
+		auto code = *(uint64_t *)memory.safely_at(regs.rsp, 8);
+		printf("Error code: 0x%lX\n", code);
+		if (code & 0x01) {
+			printf("* Protection violation\n");
+		} else {
+			printf("* Page not present\n");
+		}
+		if (code & 0x02) {
+			printf("* Invalid write on page\n");
+		}
+		if (code & 0x04) {
+			printf("* CPL=3 Page fault\n");
+		}
+		if (code & 0x08) {
+			printf("* Page contains invalid bits\n");
+		}
+		if (code & 0x10) {
+			printf("* Instruction fetch failed (NX-bit was set)\n");
+		}
+	}
 	this->print_registers();
+	//print_pagetables(memory, PT_ADDR);
+}
+
+long Machine::run(unsigned timeout)
+{
+	this->m_stopped = false;
+	while(run_once());
+	return 0;
+}
+long Machine::run_once()
+{
+	if (ioctl(vcpu.fd, KVM_RUN, 0) < 0) {
+		throw std::runtime_error("KVM_RUN failed");
+	}
+	//printf("KVM interrupted\n");
+
+	switch (vcpu.kvm_run->exit_reason) {
+	case KVM_EXIT_HLT:
+		return 0;
+
+	case KVM_EXIT_DEBUG:
+		return KVM_EXIT_DEBUG;
+
+	case KVM_EXIT_SHUTDOWN:
+		throw MachineException("Shutdown! Triple fault?", 32);
+
+	case KVM_EXIT_IO:
+		if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT) {
+		if (vcpu.kvm_run->io.port < TINYKVM_MAX_SYSCALLS) {
+			this->system_call(vcpu.kvm_run->io.port);
+			if (this->m_stopped) return 0;
+			return KVM_EXIT_IO;
+		}
+		else if (vcpu.kvm_run->io.port == 0xFFFF) {
+			char *p = (char *) vcpu.kvm_run;
+			auto intr = *(uint8_t*) &p[vcpu.kvm_run->io.data_offset];
+			/* CPU Exception */
+			this->handle_exception(intr);
+			throw MachineException(std::string(exception_name(intr)), intr);
+		}
+		fprintf(stderr,	"Unknown IO port %d\n",
+			vcpu.kvm_run->io.port);
+		}
+		return KVM_EXIT_IO;
+
+	case KVM_EXIT_MMIO:
+		if (mmio_scall.within(vcpu.kvm_run->mmio.phys_addr, 1)) {
+			unsigned scall = vcpu.kvm_run->mmio.phys_addr - mmio_scall.begin();
+			system_call(scall);
+			if (this->m_stopped) return 0;
+			return KVM_EXIT_MMIO;
+		}
+		printf("Unknown MMIO write at 0x%llX\n",
+			vcpu.kvm_run->mmio.phys_addr);
+		//[[fallthrough]];
+		return KVM_EXIT_MMIO;
+	default:
+		fprintf(stderr,	"Got exit_reason %d,"
+			" expected KVM_EXIT_HLT (%d)\n",
+			vcpu.kvm_run->exit_reason, KVM_EXIT_HLT);
+		throw MachineException("Unexpected KVM exit reason",
+			vcpu.kvm_run->exit_reason);
+	}
+}
+
+long Machine::step_one()
+{
+	struct kvm_guest_debug dbg;
+	dbg.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
+
+	if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
+		throw std::runtime_error("KVM_RUN failed");
+	}
+
+	return run_once();
 }
 
 }
