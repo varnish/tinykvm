@@ -64,8 +64,6 @@ int main(int argc, char** argv)
 		vm.install_syscall_handler(
 			21, [] (auto& machine) {
 				auto regs = machine.registers();
-				// 0x40216e
-				// CRASH: 0x44bdd9
 				printf("SYSCALL access 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
 				regs.rax = -1;
 				machine.set_registers(regs);
@@ -87,7 +85,7 @@ int main(int argc, char** argv)
 					}
 				}
 				printf("SYSCALL ARCH_PRCTL opt=0x%llX\n", regs.rdi);
-				regs.rax = -1;
+				regs.rax = -22; // EINVAL
 				machine.set_registers(regs);
 			});
 		vm.set_exit_address(vm.address_of("rexit"));
@@ -115,6 +113,7 @@ int main(int argc, char** argv)
 			auto client = server.accept();
 			if (client != nullptr) {
 				/* Debugging session of _start -> main() */
+				// 0x402173
 				printf("Connected\n");
 				try {
 					while (client->process_one());

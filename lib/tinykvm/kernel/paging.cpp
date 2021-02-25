@@ -37,6 +37,8 @@ void setup_amd64_paging(vMemory& memory,
 	}
 	/* Exception handlers */
 	lowpage[except_asm_addr >> 12] = PDE64_PRESENT | PDE64_USER | except_asm_addr;
+	/* Exception (IST) stack */
+	lowpage[3] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | 0x3000;
 
 	/* Stack area 1MB -> 2MB */
 	for (unsigned i = 256; i < 512; i++) {
@@ -67,8 +69,10 @@ void setup_amd64_paging(vMemory& memory,
 
 			auto base = hdr->p_vaddr & ~0xFFF;
 			auto end  = ((hdr->p_vaddr + len) + 0xFFF) & ~0xFFF;
+#if 0
 			printf("0x%lX->0x%lX --> 0x%lX:0x%lX\n",
 				hdr->p_vaddr, hdr->p_vaddr + len, base, end);
+#endif
 			for (size_t addr = base; addr < end; addr += 0x1000)
 			{
 				// Branch 2MB page

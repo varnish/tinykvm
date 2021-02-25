@@ -7,6 +7,7 @@
 #include "kernel/amd64.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
+#include "kernel/tss.hpp"
 #include "kernel/paging.hpp"
 static struct kvm_sregs master_sregs;
 
@@ -40,6 +41,12 @@ void Machine::vCPU::init(Machine& machine)
 	if (ioctl(Machine::kvm_fd, KVM_GET_SUPPORTED_CPUID, &kvm_cpuid) < 0) {
 		throw std::runtime_error("KVM_GET_SUPPORTED_CPUID failed");
 	}
+
+/*	for (uint32_t i = 0; i < kvm_cpuid.nent; i++) {
+		if (kvm_cpuid.entries[i].function == 7) {
+			printf("CET = %u\n", kvm_cpuid.entries[i].edx & (1 << 20));
+		}
+	}*/
 
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
@@ -97,6 +104,8 @@ void Machine::setup_long_mode()
 	sregs.efer = EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
 
 	setup_amd64_segments(sregs, GDT_ADDR, memory.at(GDT_ADDR));
+	setup_amd64_tss(sregs,
+		TSS_ADDR, memory.at(TSS_ADDR), GDT_ADDR, memory.at(GDT_ADDR));
 	setup_amd64_exceptions(sregs,
 		IDT_ADDR, memory.at(IDT_ADDR), EXCEPT_ASM_ADDR, memory.at(EXCEPT_ASM_ADDR));
 
@@ -182,9 +191,9 @@ void Machine::print_registers()
 	printf("RIP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rsp);
 	try {
 		printf("Possible return: 0x%lX\n",
-			*(uint64_t *)memory.safely_at(regs.rsp + 0x0, 8));
+			*(uint64_t *)memory.at(regs.rsp + 0x0, 8));
 		printf("Possible return: 0x%lX\n",
-			*(uint64_t *)memory.safely_at(regs.rsp + 0x08, 8));
+			*(uint64_t *)memory.at(regs.rsp + 0x08, 8));
 	} catch (...) {}
 
 #if 0
@@ -198,7 +207,7 @@ void Machine::print_registers()
 	print_exception_handlers(memory.at(IDT_ADDR));
 #endif
 #if 0
-	print_gdt_entries(memory.at(GDT_ADDR), 3);
+	print_gdt_entries(memory.at(GDT_ADDR), 4);
 #endif
 }
 
@@ -209,24 +218,29 @@ void Machine::handle_exception(uint8_t intr)
 		exception_name(intr));
 	if (intr == 14) { // Page fault
 		auto regs = registers();
-		auto code = *(uint64_t *)memory.safely_at(regs.rsp, 8);
-		printf("Error code: 0x%lX\n", code);
-		if (code & 0x01) {
-			printf("* Protection violation\n");
+		if (memory.within(regs.rsp, 8))
+		{
+			auto code = *(uint64_t *)memory.at(regs.rsp, 8);
+			printf("Error code: 0x%lX\n", code);
+			if (code & 0x01) {
+				printf("* Protection violation\n");
+			} else {
+				printf("* Page not present\n");
+			}
+			if (code & 0x02) {
+				printf("* Invalid write on page\n");
+			}
+			if (code & 0x04) {
+				printf("* CPL=3 Page fault\n");
+			}
+			if (code & 0x08) {
+				printf("* Page contains invalid bits\n");
+			}
+			if (code & 0x10) {
+				printf("* Instruction fetch failed (NX-bit was set)\n");
+			}
 		} else {
-			printf("* Page not present\n");
-		}
-		if (code & 0x02) {
-			printf("* Invalid write on page\n");
-		}
-		if (code & 0x04) {
-			printf("* CPL=3 Page fault\n");
-		}
-		if (code & 0x08) {
-			printf("* Page contains invalid bits\n");
-		}
-		if (code & 0x10) {
-			printf("* Instruction fetch failed (NX-bit was set)\n");
+			printf("Bullshit RSP: 0x%llX\n", regs.rsp);
 		}
 	}
 	this->print_registers();
@@ -252,6 +266,9 @@ long Machine::run_once()
 
 	case KVM_EXIT_DEBUG:
 		return KVM_EXIT_DEBUG;
+
+	case KVM_EXIT_FAIL_ENTRY:
+		throw MachineException("Failed to start guest! Misconfigured?", KVM_EXIT_FAIL_ENTRY);
 
 	case KVM_EXIT_SHUTDOWN:
 		throw MachineException("Shutdown! Triple fault?", 32);
@@ -287,9 +304,7 @@ long Machine::run_once()
 		//[[fallthrough]];
 		return KVM_EXIT_MMIO;
 	default:
-		fprintf(stderr,	"Got exit_reason %d,"
-			" expected KVM_EXIT_HLT (%d)\n",
-			vcpu.kvm_run->exit_reason, KVM_EXIT_HLT);
+		fprintf(stderr,	"Unexpected exit reason %d\n", vcpu.kvm_run->exit_reason);
 		throw MachineException("Unexpected KVM exit reason",
 			vcpu.kvm_run->exit_reason);
 	}

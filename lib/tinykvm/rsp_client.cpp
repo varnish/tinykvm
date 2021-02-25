@@ -349,6 +349,7 @@ void RSPClient::handle_breakpoint()
 	} else {
 		this->m_bp = 0;
 	}
+	printf("Breakpoint %u: 0x%lX\n", type, m_bp);
 	reply_ok();
 }
 void RSPClient::handle_executing()

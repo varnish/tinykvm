@@ -15,7 +15,7 @@ struct vMemory {
 	bool within(uint64_t addr, size_t asize) const noexcept {
 		return (addr >= physbase) && (addr + asize <= physbase + this->size);
 	}
-	char* at(uint64_t addr);
+	char* at(uint64_t addr, size_t asize = 8);
 	/* Safe */
 	bool safely_within(uint64_t addr, size_t asize) const noexcept {
 		return (addr >= safebase) && (addr + asize <= physbase + this->size);

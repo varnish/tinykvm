@@ -47,7 +47,7 @@ static void set_entry(
 	idt_entry.offset_3  = addr.top32;
 	idt_entry.selector  = segment_sel;
 	idt_entry.type_attr = attributes;
-	idt_entry.ist       = 0;
+	idt_entry.ist       = 1; /* IST #1 */
 	idt_entry.zero2     = 0;
 }
 

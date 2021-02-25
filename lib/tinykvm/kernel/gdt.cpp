@@ -4,8 +4,16 @@
 #include <cstring>
 #include <linux/kvm.h>
 
+#define GDT_ACCESS_DUMMY  0x0
+#define GDT_ACCESS_TSS    0x09
+#define GDT_ACCESS_CODE   0x9A
+#define GDT_ACCESS_DATA   0x92
+#define GDT_ACCESS_CODE3  0xFA
+#define GDT_ACCESS_DATA3  0xF2
+
 #define FLAGS_X32_PAGE 0xC
 #define FLAGS_X64_PAGE 0xA
+#define FLAGS_X64_TSS  0x0
 
 struct GDT_desc
 {
@@ -32,6 +40,16 @@ void GDT_write_segment(void* area, uint8_t flags)
 	entry->limit_hi = 0xF;
 	entry->flags    = FLAGS_X64_PAGE;
 	entry->base_hi  = 0;
+}
+void GDT_write_TSS_segment(void* area, uint64_t tss_addr, uint32_t size)
+{
+	auto* entry = (GDT_entry*) area;
+	entry->limit_lo = size;
+	entry->limit_hi = 0;
+	entry->access   = 0xE5;
+	entry->flags    = FLAGS_X64_TSS;
+	entry->base_lo  = tss_addr & 0xFFFFFF;
+	entry->base_hi  = tss_addr >> 24;
 }
 
 void print_gdt_entries(void* area, size_t count)
@@ -73,7 +91,10 @@ void setup_amd64_segments(struct kvm_sregs& sregs, uint64_t gdt_addr, char* gdt_
 	sregs.ds = sregs.es = sregs.ss = seg;
 	GDT_write_segment(gdt_ptr + 0x10, GDT_ACCESS_DATA3);
 
+	/* TSS segment (initialized later) */
+	memset(gdt_ptr + 0x18, 0, 8);
+
 	/* GDT dtable */
 	sregs.gdt.base  = gdt_addr;
-	sregs.gdt.limit = sizeof(GDT_entry) * 3 - 1;
+	sregs.gdt.limit = sizeof(GDT_entry) * 4 - 1;
 }

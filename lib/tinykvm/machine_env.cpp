@@ -128,7 +128,7 @@ void Machine::setup_linux(__u64& rsp,
 	push_aux(argv, {AT_EUID, 0});
 	push_aux(argv, {AT_GID, 0});
 	push_aux(argv, {AT_EGID, 0});
-	push_aux(argv, {AT_SECURE, 1}); // indeed ;)
+	push_aux(argv, {AT_SECURE, 0});
 
 	push_aux(argv, {AT_PLATFORM, platform_addr});
 

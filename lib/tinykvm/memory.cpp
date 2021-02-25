@@ -11,11 +11,11 @@ void vMemory::reset()
 	std::memset(this->ptr, 0, this->size);
 }
 
-char* vMemory::at(uint64_t addr)
+char* vMemory::at(uint64_t addr, size_t asize)
 {
-	if (within(addr, 8))
+	if (within(addr, asize))
 		return &ptr[addr - physbase];
-	throw MemoryException("Memory::safely_at() invalid region", addr, 8);
+	throw MemoryException("Memory::safely_at() invalid region", addr, asize);
 }
 char* vMemory::safely_at(uint64_t addr, size_t asize)
 {

@@ -61,7 +61,7 @@ private:
 	void report_status();
 	void close_now();
 	Machine* m_machine;
-	uint64_t m_ilimit = 100'000;
+	uint64_t m_ilimit = 1'000'000;
 	int  sockfd;
 	bool m_closed  = false;
 	bool m_verbose = false;

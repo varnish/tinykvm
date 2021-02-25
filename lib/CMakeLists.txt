@@ -16,6 +16,7 @@ set (SOURCES
 	tinykvm/vcpu.cpp
 	tinykvm/kernel/gdt.cpp
 	tinykvm/kernel/idt.cpp
+	tinykvm/kernel/tss.cpp
 	tinykvm/kernel/paging.cpp
 	)
 
