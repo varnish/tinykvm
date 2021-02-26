@@ -24,7 +24,7 @@ struct Machine
 					const std::vector<std::string>& env = {});
 	long run(unsigned timeout = 10);
 	long step_one();
-	long run_with_breakpoint(uint64_t bp0, uint64_t bp1);
+	long run_with_breakpoints(std::array<uint64_t, 4> bps);
 	void stop(bool = true);
 	bool stopped() const noexcept { return m_stopped; }
 	void reset();

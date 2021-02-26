@@ -296,15 +296,17 @@ void RSPClient::handle_query()
 void RSPClient::handle_continue()
 {
 	auto regs = m_machine->registers();
-	if (m_bp0 == regs.rip || m_bp1 == regs.rip) {
-		send("S05");
-		return;
+	for (const auto bp : m_bp) {
+		if (bp == regs.rip) {
+			send("S05");
+			return;
+		}
 	}
 restart:
 	try {
 		uint64_t n = m_ilimit;
 		while (!m_machine->stopped()) {
-			auto reason = m_machine->run_with_breakpoint(m_bp0, m_bp1);
+			auto reason = m_machine->run_with_breakpoints(m_bp);
 			// Hardware breakpoint
 			if (reason == KVM_EXIT_DEBUG)
 				break;
@@ -313,13 +315,10 @@ restart:
 				break;
 		}
 	} catch (const tinykvm::MachineException& e) {
-		// Hardware breakpoints are exceptions
-		if (e.data() != 3) {
-			// Guest crashed
-			fprintf(stderr, "Exception: %s (%lu)\n", e.what(), e.data());
-			send("S11");
-			return;
-		}
+		// Guest crashed
+		fprintf(stderr, "Exception: %s (%lu)\n", e.what(), e.data());
+		send("S11");
+		return;
 	} catch (const std::exception& e) {
 		fprintf(stderr, "Exception: %s\n", e.what());
 		send("S11");
@@ -353,18 +352,10 @@ void RSPClient::handle_breakpoint()
 	uint64_t addr = 0;
 	sscanf(&buffer[1], "%1u,%lx", &type, &addr);
 	if (buffer[0] == 'Z') {
-		if (m_bp0 == 0)
-			m_bp0 = addr;
-		else if (m_bp1 == 0)
-			m_bp1 = addr;
-		else {
-			fprintf(stderr, "RSP: No more room for breakpoints\n");
-			send("");
-			return;
-		}
+		m_bp[bp_iterator] = addr;
+		bp_iterator = (bp_iterator + 1) % m_bp.size();
 	} else {
-		this->m_bp0 = 0;
-		this->m_bp1 = 0;
+		m_bp = {0};
 	}
 	//printf("Breakpoint 0: 0x%lX   Breakpoint 1: 0x%lX\n", m_bp0, m_bp1);
 	reply_ok();
