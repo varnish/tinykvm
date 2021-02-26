@@ -24,6 +24,7 @@ struct Machine
 					const std::vector<std::string>& env = {});
 	long run(unsigned timeout = 10);
 	long step_one();
+	long run_with_breakpoint(uint64_t bp0, uint64_t bp1);
 	void stop(bool = true);
 	bool stopped() const noexcept { return m_stopped; }
 	void reset();
@@ -49,6 +50,7 @@ struct Machine
 	std::string_view memory_at(uint64_t a, size_t s) const { return memory.view(a, s); }
 	char* rw_memory_at(uint64_t a, size_t s) { return memory.safely_at(a, s); }
 	bool memory_safe_at(uint64_t a, size_t s) const { return memory.safely_within(a, s); }
+	char* unsafe_memory_at(uint64_t a, size_t s) { return memory.at(a, s); }
 
 	address_t start_address() const noexcept { return this->m_start_address; }
 	address_t stack_address() const noexcept { return this->m_stack_address; }

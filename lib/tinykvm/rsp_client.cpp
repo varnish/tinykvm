@@ -296,25 +296,33 @@ void RSPClient::handle_query()
 void RSPClient::handle_continue()
 {
 	auto regs = m_machine->registers();
+	if (m_bp0 == regs.rip || m_bp1 == regs.rip) {
+		send("S05");
+		return;
+	}
+restart:
 	try {
-		if (m_bp == regs.rip) {
-			send("S05");
-			return;
-		}
 		uint64_t n = m_ilimit;
 		while (!m_machine->stopped()) {
-			m_machine->step_one();
-			auto regs = m_machine->registers();
-			// Breakpoint
-			if (regs.rip == this->m_bp)
+			auto reason = m_machine->run_with_breakpoint(m_bp0, m_bp1);
+			// Hardware breakpoint
+			if (reason == KVM_EXIT_DEBUG)
 				break;
 			// Instruction limit
 			if (n-- == 0)
 				break;
 		}
+	} catch (const tinykvm::MachineException& e) {
+		// Hardware breakpoints are exceptions
+		if (e.data() != 3) {
+			// Guest crashed
+			fprintf(stderr, "Exception: %s (%lu)\n", e.what(), e.data());
+			send("S11");
+			return;
+		}
 	} catch (const std::exception& e) {
 		fprintf(stderr, "Exception: %s\n", e.what());
-		send("S01");
+		send("S11");
 		return;
 	}
 	report_status();
@@ -330,11 +338,11 @@ void RSPClient::handle_step()
 		}
 	} catch (const MachineException& e) {
 		fprintf(stderr, "Exception: %s (%lu)\n", e.what(), e.data());
-		send("S01");
+		send("S11");
 		return;
 	} catch (const std::exception& e) {
 		fprintf(stderr, "Exception: %s\n", e.what());
-		send("S01");
+		send("S11");
 		return;
 	}
 	report_status();
@@ -343,13 +351,22 @@ void RSPClient::handle_breakpoint()
 {
 	uint32_t type = 0;
 	uint64_t addr = 0;
-	sscanf(&buffer[1], "%x,%lx", &type, &addr);
+	sscanf(&buffer[1], "%1u,%lx", &type, &addr);
 	if (buffer[0] == 'Z') {
-		this->m_bp = addr;
+		if (m_bp0 == 0)
+			m_bp0 = addr;
+		else if (m_bp1 == 0)
+			m_bp1 = addr;
+		else {
+			fprintf(stderr, "RSP: No more room for breakpoints\n");
+			send("");
+			return;
+		}
 	} else {
-		this->m_bp = 0;
+		this->m_bp0 = 0;
+		this->m_bp1 = 0;
 	}
-	printf("Breakpoint %u: 0x%lX\n", type, m_bp);
+	//printf("Breakpoint 0: 0x%lX   Breakpoint 1: 0x%lX\n", m_bp0, m_bp1);
 	reply_ok();
 }
 void RSPClient::handle_executing()
@@ -399,12 +416,12 @@ void RSPClient::handle_readmem()
 	char* d = data;
 	try {
 		for (unsigned i = 0; i < len; i++) {
-			uint8_t val = m_machine->memory_at(addr + i, 1)[0];
+			uint8_t val = *m_machine->unsafe_memory_at(addr + i, 1);
 			*d++ = lut[(val >> 4) & 0xF];
 			*d++ = lut[(val >> 0) & 0xF];
 		}
 	} catch (...) {
-		send("E01");
+		send("E11");
 		return;
 	}
 	*d++ = 0;
@@ -439,7 +456,7 @@ void RSPClient::handle_writemem()
 		}
 		reply_ok();
 	} catch (...) {
-		send("E01");
+		send("E11");
 	}
 }
 void RSPClient::report_status()

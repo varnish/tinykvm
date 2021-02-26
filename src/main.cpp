@@ -116,10 +116,12 @@ int main(int argc, char** argv)
 				// 0x402173
 				printf("Connected\n");
 				try {
+					//client->set_verbose(true);
 					while (client->process_one());
 				} catch (const tinykvm::MachineException& e) {
 					printf("EXCEPTION %s: %lu\n", e.what(), e.data());
 					vm.print_registers();
+					break;
 				}
 			} else {
 				/* Normal execution of _start -> main() */

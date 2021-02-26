@@ -321,5 +321,27 @@ long Machine::step_one()
 
 	return run_once();
 }
+long Machine::run_with_breakpoint(uint64_t bp0, uint64_t bp1)
+{
+	struct kvm_guest_debug dbg;
+
+	if (bp0 != 0x0 || bp1 != 0x0) {
+		dbg.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_USE_HW_BP;
+		dbg.arch.debugreg[0] = bp0;
+		dbg.arch.debugreg[1] = bp1;
+		dbg.arch.debugreg[7] = 0x3 | 0xC;
+		printf("Continue with breakpoints at 0x%lX and 0x%lX\n", bp0, bp1);
+	}
+	else {
+		dbg.control = KVM_GUESTDBG_ENABLE;
+		printf("Continue with NO breakpoints\n");
+	}
+
+	if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
+		throw std::runtime_error("KVM_RUN failed");
+	}
+
+	return run_once();
+}
 
 }

@@ -66,7 +66,8 @@ private:
 	bool m_closed  = false;
 	bool m_verbose = false;
 	std::string buffer;
-	uint64_t m_bp = 0;
+	uint64_t m_bp0 = 0;
+	uint64_t m_bp1 = 0;
 	StopFunc m_on_stopped = nullptr;
 };
 
