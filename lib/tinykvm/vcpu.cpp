@@ -43,11 +43,11 @@ void Machine::vCPU::init(Machine& machine)
 	}
 
 /*	for (uint32_t i = 0; i < kvm_cpuid.nent; i++) {
-		if (kvm_cpuid.entries[i].function == 7) {
-			printf("CET = %u\n", kvm_cpuid.entries[i].edx & (1 << 20));
+		auto& entry = kvm_cpuid.entries[i];
+		if (entry.function == 7) {
+			printf("CET = %u\n", entry.edx & (1 << 20));
 		}
 	}*/
-
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
 		throw std::runtime_error("KVM_SET_CPUID2 failed");

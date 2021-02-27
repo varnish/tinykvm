@@ -24,14 +24,14 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 		throw std::runtime_error("Failed to KVM_CREATE_VM");
 	}
 
-	if (ioctl(this->fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
+/*	if (ioctl(this->fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
 		throw std::runtime_error("Failed to KVM_SET_TSS_ADDR");
 	}
 
 	__u64 map_addr = 0xffffc000;
 	if (ioctl(this->fd, KVM_SET_IDENTITY_MAP_ADDR, &map_addr) < 0) {
 		throw std::runtime_error("Failed KVM_SET_IDENTITY_MAP_ADDR");
-	}
+	}*/
 
 	/* TODO: Needs improvements */
 	this->ptmem = MemRange::New("Page tables", PT_ADDR, 0x8000);
