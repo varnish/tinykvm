@@ -265,6 +265,7 @@ long Machine::run_once()
 
 	switch (vcpu.kvm_run->exit_reason) {
 	case KVM_EXIT_HLT:
+		throw MachineException("Shutdown! HLT?", 5);
 		return 0;
 
 	case KVM_EXIT_DEBUG:

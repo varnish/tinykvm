@@ -81,6 +81,24 @@ int main(int argc, char** argv)
 #endif
 			});
 		vm.install_syscall_handler(
+			7, [] (auto& machine) {
+				auto regs = machine.registers();
+
+				struct pollfd {
+					int   fd;         /* file descriptor */
+					short events;     /* requested events */
+					short revents;    /* returned events */
+				};
+				const size_t bytes = sizeof(pollfd) * regs.rsi;
+				auto* fds = machine.template rw_memory_at<struct pollfd>(regs.rdi, bytes);
+				for (size_t i = 0; i < regs.rsi; i++) {
+					fds[i].revents = fds[i].events;
+				}
+
+				regs.rax = 0;
+				machine.set_registers(regs);
+			});
+		vm.install_syscall_handler(
 			21, [] (auto& machine) {
 				auto regs = machine.registers();
 				printf("SYSCALL access 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
@@ -99,7 +117,6 @@ int main(int argc, char** argv)
 						machine.set_tls_base(regs.rsi);
 						regs.rax = 0;
 						machine.set_registers(regs);
-						printf("New guest FS: OK\n");
 						return;
 					}
 				}
@@ -132,7 +149,6 @@ int main(int argc, char** argv)
 			auto client = server.accept();
 			if (client != nullptr) {
 				/* Debugging session of _start -> main() */
-				// 0x402173
 				printf("Connected\n");
 				try {
 					//client->set_verbose(true);
@@ -150,14 +166,18 @@ int main(int argc, char** argv)
 			/* Normal execution of _start -> main() */
 			vm.run();
 		}
-		/* Execute public function */
-		struct Data {
-			char   buffer[128];
-			size_t len;
-		} data;
-		strcpy(data.buffer, "Hello Buffered World!\n");
-		data.len = strlen(data.buffer);
-		vm.vmcall(vm.address_of("empty"), data);
+
+		if (false)
+		{
+			/* Execute public function */
+			struct Data {
+				char   buffer[128];
+				size_t len;
+			} data;
+			strcpy(data.buffer, "Hello Buffered World!\n");
+			data.len = strlen(data.buffer);
+			vm.vmcall(vm.address_of("empty"), data);
+		}
 	}
 
 	asm("" : : : "memory");

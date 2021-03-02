@@ -48,7 +48,8 @@ struct Machine
 
 	std::string_view io_data() const;
 	std::string_view memory_at(uint64_t a, size_t s) const { return memory.view(a, s); }
-	char* rw_memory_at(uint64_t a, size_t s) { return memory.safely_at(a, s); }
+	template <typename T = char>
+	T* rw_memory_at(uint64_t a, size_t s) { return (T*) memory.safely_at(a, s); }
 	bool memory_safe_at(uint64_t a, size_t s) const { return memory.safely_within(a, s); }
 	char* unsafe_memory_at(uint64_t a, size_t s) { return memory.at(a, s); }
 
