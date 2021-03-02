@@ -40,10 +40,29 @@ int main(int argc, char** argv)
 				machine.set_registers(regs);
 			});
 		vm.install_syscall_handler(
-			0, [] (auto& machine) {
+			60, [] (auto& machine) {
 				auto regs = machine.registers();
 #ifdef ENABLE_GUEST_VERBOSE
-				printf("Machine stopped with return value 0x%llX\n", regs.rdi);
+				printf("Machine exited with return value 0x%llX\n", regs.rdi);
+#endif
+				machine.stop();
+			});
+		vm.install_syscall_handler(
+			218, [] (auto& machine) {
+				/* SYS set_tid_address */
+				auto regs = machine.registers();
+#ifdef ENABLE_GUEST_VERBOSE
+				printf("Set TID address: clear_child_tid=0x%llX\n", regs.rdi);
+#endif
+				regs.rax = 0;
+				machine.set_registers(regs);
+			});
+		vm.install_syscall_handler(
+			231, [] (auto& machine) {
+				/* SYS exit_group */
+				auto regs = machine.registers();
+#ifdef ENABLE_GUEST_VERBOSE
+				printf("Machine exits: _exit(%lld)\n", regs.rdi);
 #endif
 				machine.stop();
 			});

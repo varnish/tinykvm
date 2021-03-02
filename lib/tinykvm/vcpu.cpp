@@ -136,7 +136,7 @@ void Machine::setup_long_mode()
 	} msrs;
 	msrs.nmsrs = 2;
 	msrs.entries[0].index = AMD64_MSR_STAR;
-	msrs.entries[0].data  = 0x0810081000000000;
+	msrs.entries[0].data  = (11ull << 32) | (11ull << 48);
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
 	msrs.entries[1].data  = EXCEPT_ASM_ADDR;
 
@@ -168,15 +168,17 @@ void Machine::set_tls_base(__u64 baseaddr)
 		__u32 nmsrs; /* number of msrs in entries */
 		__u32 pad;
 
-		struct kvm_msr_entry entries[2];
+		struct kvm_msr_entry entries[1];
 	} msrs;
 	msrs.nmsrs = 1;
 	msrs.entries[0].index = AMD64_MSR_FS_BASE;
 	msrs.entries[0].data  = baseaddr;
 
-	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 0) {
+	long ret = ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs);
+	if (ret <= 0) {
 		throw std::runtime_error("KVM_SET_MSRS failed");
 	}
+	printf("set_tls_base: 0x%llX => %ld\n", baseaddr, ret);
 }
 
 void Machine::print_registers()
@@ -195,6 +197,7 @@ void Machine::print_registers()
 		printf("Possible return: 0x%lX\n",
 			*(uint64_t *)memory.at(regs.rsp + 0x08, 8));
 	} catch (...) {}
+	printf("CS=0x%X  SS=0x%X\n", sregs.cs.selector, sregs.ss.selector);
 
 #if 0
 	printf("CR0 PE=%llu MP=%llu EM=%llu\n",

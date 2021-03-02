@@ -16,9 +16,12 @@ inline void kprint(const char* string) {
 
 int main(int argc, char** argv)
 {
-	for (int i = 0; i < argc; i++) {
+/*	for (int i = 0; i < argc; i++) {
 		kprint(argv[i]);
-	}
+	}*/
+
+	//syscall(158, 0x1003, 0x5678);
+	native_syscall(158, 0x1003, 0x5678);
 
 	return 0x123;
 }
