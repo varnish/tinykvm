@@ -20,8 +20,9 @@ int main(int argc, char** argv)
 		kprint(argv[i]);
 	}*/
 
+	//asm("hlt");
 	//syscall(158, 0x1003, 0x5678);
-	native_syscall(158, 0x1003, 0x5678);
+	//native_syscall(158, 0x1003, 0x5678);
 
 	return 0x123;
 }

@@ -18,8 +18,7 @@ asm(".global native_syscall\n"
 asm(".global rexit\n"
 "rexit:\n"
 "	mov %rax, %rdi\n"
-"   mov $0, %ax\n"
-"	out %ax, $0\n");
+"	out %ax, $60\n");
 
 asm(".global _start\n"
 "_start:\n"

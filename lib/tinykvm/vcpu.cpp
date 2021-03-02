@@ -136,7 +136,7 @@ void Machine::setup_long_mode()
 	} msrs;
 	msrs.nmsrs = 2;
 	msrs.entries[0].index = AMD64_MSR_STAR;
-	msrs.entries[0].data  = (11ull << 32) | (11ull << 48);
+	msrs.entries[0].data  = (8ull << 32) | (24ull << 48);
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
 	msrs.entries[1].data  = EXCEPT_ASM_ADDR;
 
@@ -210,7 +210,7 @@ void Machine::print_registers()
 	print_exception_handlers(memory.at(IDT_ADDR));
 #endif
 #if 0
-	print_gdt_entries(memory.at(GDT_ADDR), 4);
+	print_gdt_entries(memory.at(GDT_ADDR), 7);
 #endif
 }
 

@@ -68,12 +68,23 @@ void setup_amd64_segments(struct kvm_sregs& sregs, uint64_t gdt_addr, char* gdt_
 {
 	/* Null segment */
 	memset(gdt_ptr + 0x0, 0, 8);
+	/* Kernel mode */
+	GDT_write_segment(gdt_ptr + 0x8, GDT_ACCESS_CODE);
+	GDT_write_segment(gdt_ptr + 0x10, GDT_ACCESS_DATA);
+	/* Null user-base segment */
+	memset(gdt_ptr + 0x18, 0, 8);
+	/* User mode */
+	GDT_write_segment(gdt_ptr + 0x20, GDT_ACCESS_DATA3);
+	GDT_write_segment(gdt_ptr + 0x28, GDT_ACCESS_CODE3);
+
+	/* TSS segment (initialized later) */
+	memset(gdt_ptr + 0x30, 0, 8);
 
 	/* Code segment */
 	struct kvm_segment seg = {
 		.base = 0,
 		.limit = 0xffffffff,
-		.selector = 0x8,
+		.selector = 0x28,
 		.type = 11, /* Code: execute, read, accessed */
 		.present = 1,
 		.dpl = 3, /* User-mode */
@@ -83,18 +94,13 @@ void setup_amd64_segments(struct kvm_sregs& sregs, uint64_t gdt_addr, char* gdt_
 		.g = 1, /* 4KB granularity */
 	};
 	sregs.cs = seg;
-	GDT_write_segment(gdt_ptr + 0x8, GDT_ACCESS_CODE3);
 
 	/* Data segment */
 	seg.type = 3; /* Data: read/write, accessed */
-	seg.selector = 0x10;
+	seg.selector = 0x20;
 	sregs.ds = sregs.es = sregs.ss = seg;
-	GDT_write_segment(gdt_ptr + 0x10, GDT_ACCESS_DATA3);
-
-	/* TSS segment (initialized later) */
-	memset(gdt_ptr + 0x18, 0, 8);
 
 	/* GDT dtable */
 	sregs.gdt.base  = gdt_addr;
-	sregs.gdt.limit = sizeof(GDT_entry) * 4 - 1;
+	sregs.gdt.limit = sizeof(GDT_entry) * 7 - 1;
 }

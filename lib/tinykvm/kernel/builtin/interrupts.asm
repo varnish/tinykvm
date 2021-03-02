@@ -21,7 +21,7 @@ org 0x2000
 .vm64_syscall:
 	add eax, 0xffffa000
 	mov DWORD [eax], 0
-	jmp rcx
+	o64 sysret
 
 .vm64_exception:
 	CPU_EXCEPT 0
