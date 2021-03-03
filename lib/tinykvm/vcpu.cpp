@@ -9,9 +9,17 @@
 #include "kernel/gdt.hpp"
 #include "kernel/tss.hpp"
 #include "kernel/paging.hpp"
-static struct kvm_sregs master_sregs;
 
 namespace tinykvm {
+	static constexpr uint64_t GDT_ADDR = 0x1600;
+	static constexpr uint64_t TSS_ADDR = 0x1700;
+	static constexpr uint64_t IDT_ADDR = 0x1800;
+	static constexpr uint64_t EXCEPT_ASM_ADDR = 0x2000;
+	static constexpr uint64_t IST_ADDR = 0x3000;
+	static constexpr uint64_t PT_ADDR  = 0x4000;
+
+	static struct kvm_sregs master_sregs;
+
 void Machine::vCPU::init(Machine& machine)
 {
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, 0);
@@ -95,10 +103,14 @@ void Machine::setup_long_mode()
 	}
 
 	auto sregs = master_sregs;
-	setup_amd64_paging(memory, PT_ADDR, EXCEPT_ASM_ADDR, m_binary);
+	uint64_t last_page = setup_amd64_paging(
+		memory, PT_ADDR, EXCEPT_ASM_ADDR, m_binary);
+	this->ptmem = MemRange::New("Page tables",
+		PT_ADDR, last_page - PT_ADDR);
 
 	sregs.cr3 = PT_ADDR;
-	sregs.cr4 = CR4_TSD | CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE;
+	sregs.cr4 =
+		CR4_TSD | CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE;
 	sregs.cr0 =
 		CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
 	sregs.efer = EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
@@ -178,7 +190,6 @@ void Machine::set_tls_base(__u64 baseaddr)
 	if (ret <= 0) {
 		throw std::runtime_error("KVM_SET_MSRS failed");
 	}
-	printf("set_tls_base: 0x%llX => %ld\n", baseaddr, ret);
 }
 
 void Machine::print_registers()

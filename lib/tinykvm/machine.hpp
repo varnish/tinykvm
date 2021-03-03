@@ -55,8 +55,10 @@ struct Machine
 
 	address_t start_address() const noexcept { return this->m_start_address; }
 	address_t stack_address() const noexcept { return this->m_stack_address; }
+	address_t heap_address() const noexcept { return this->m_heap_address; }
 	address_t exit_address() const noexcept { return this->m_exit_address; }
 	void set_exit_address(address_t addr) { this->m_exit_address = addr; }
+	address_t max_address() const noexcept { return memory.physbase + memory.size; }
 
 	uint64_t address_of(const char*) const;
 
@@ -65,12 +67,6 @@ struct Machine
 	~Machine();
 
 private:
-	static constexpr uint64_t GDT_ADDR = 0x1600;
-	static constexpr uint64_t TSS_ADDR = 0x1700;
-	static constexpr uint64_t IDT_ADDR = 0x1800;
-	static constexpr uint64_t EXCEPT_ASM_ADDR = 0x2000;
-	static constexpr uint64_t IST_ADDR = 0x3000;
-	static constexpr uint64_t PT_ADDR  = 0x4000;
 	struct vCPU {
 		void init(Machine&);
 		void print_address_info(uint64_t addr);
@@ -103,6 +99,7 @@ private:
 	std::string_view m_binary;
 	uint64_t m_exit_address;
 	uint64_t m_stack_address;
+	uint64_t m_heap_address;
 	uint64_t m_start_address;
 
 	vMemory memory; // guest memory

@@ -36,6 +36,7 @@ void Machine::elf_loader(const MachineOptions& options)
 	const auto program_begin = phdr->p_vaddr;
 	this->m_start_address = elf->e_entry;
 	this->m_stack_address = program_begin;
+	this->m_heap_address = 0x0;
 
 	int seg = 0;
 	for (const auto* hdr = phdr; hdr < phdr + program_headers; hdr++)
@@ -67,6 +68,11 @@ void Machine::elf_loader(const MachineOptions& options)
 				//	"Dynamically linked ELF binaries are not supported");
 				break;
 		}
+
+		uint64_t endm = hdr->p_vaddr + hdr->p_memsz;
+		endm += 4095; endm &= ~0xFFF;
+		if (this->m_heap_address < endm)
+			this->m_heap_address = endm;
 	}
 
 	if (this->m_stack_address < 0x200000) {
@@ -113,7 +119,7 @@ void Machine::elf_load_ph(const MachineOptions& options, const void* vphdr)
 	}
 }
 
-static const Elf64_Shdr* section_by_name(std::string_view binary, const char* name)
+const Elf64_Shdr* section_by_name(std::string_view binary, const char* name)
 {
 	const auto* ehdr = elf_header(binary);
 	const auto* shdr = elf_offset<Elf64_Shdr> (binary, ehdr->e_shoff);

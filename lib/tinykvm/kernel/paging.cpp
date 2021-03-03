@@ -6,7 +6,7 @@
 
 namespace tinykvm {
 
-void setup_amd64_paging(vMemory& memory,
+uint64_t setup_amd64_paging(vMemory& memory,
 	uint64_t pagetable_base, uint64_t except_asm_addr, std::string_view binary)
 {
 	// guest physical
@@ -115,6 +115,8 @@ void setup_amd64_paging(vMemory& memory,
 
 	// MMIO system calls
 	mmio[511] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | 0xff000000 | (511 << 21);
+
+	return free_page;
 }
 
 void print_pte(vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
