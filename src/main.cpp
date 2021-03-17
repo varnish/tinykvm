@@ -1,12 +1,9 @@
 #include <tinykvm/machine.hpp>
 #include <cstring>
 #include <cstdio>
-#include <stdexcept>
 
 #include <tinykvm/rsp_client.hpp>
 
-#define ENABLE_GUEST_STDOUT
-//#define ENABLE_GUEST_VERBOSE
 //#define ENABLE_GUEST_CLEAR_MEMORY
 #define NUM_ROUNDS   1
 #define NUM_GUESTS   1
@@ -33,155 +30,8 @@ int main(int argc, char** argv)
 		};
 		vms.push_back(new tinykvm::Machine {binary, options});
 		auto& vm = *vms.back();
-		vm.install_unhandled_syscall_handler(
-			[] (auto& machine, unsigned scall) {
-				fprintf(stderr,	"Unhandled system call: %u\n", scall);
-				auto regs = machine.registers();
-				regs.rax = -1;
-				machine.set_registers(regs);
-			});
-		vm.install_syscall_handler(
-			60, [] (auto& machine) {
-				auto regs = machine.registers();
-#ifdef ENABLE_GUEST_VERBOSE
-				printf("Machine exited with return value 0x%llX\n", regs.rdi);
-#endif
-				machine.stop();
-			});
-		vm.install_syscall_handler(
-			218, [] (auto& machine) {
-				/* SYS set_tid_address */
-				auto regs = machine.registers();
-#ifdef ENABLE_GUEST_VERBOSE
-				printf("Set TID address: clear_child_tid=0x%llX\n", regs.rdi);
-#endif
-				regs.rax = 0;
-				machine.set_registers(regs);
-			});
-		vm.install_syscall_handler(
-			231, [] (auto& machine) {
-				/* SYS exit_group */
-				auto regs = machine.registers();
-#ifdef ENABLE_GUEST_VERBOSE
-				printf("Machine exits: _exit(%lld)\n", regs.rdi);
-#endif
-				machine.stop();
-			});
-		vm.install_syscall_handler(
-			1, [] (auto& machine) {
-#ifdef ENABLE_GUEST_STDOUT
-				auto regs = machine.registers();
-				auto view = machine.memory_at(regs.rsi, regs.rdx);
-				if (!view.empty()) {
-					fwrite(view.begin(), view.size(), 1, stdout);
-					fflush(stdout);
-				} else {
-					fprintf(stderr, "Invalid memory from guest: 0x%llX:%llu\n",
-						regs.rsi, regs.rdx);
-				}
-#endif
-			});
-		vm.install_syscall_handler(
-			7, [] (auto& machine) {
-				auto regs = machine.registers();
-
-				struct pollfd {
-					int   fd;         /* file descriptor */
-					short events;     /* requested events */
-					short revents;    /* returned events */
-				};
-				const size_t bytes = sizeof(pollfd) * regs.rsi;
-				auto* fds = machine.template rw_memory_at<struct pollfd>(regs.rdi, bytes);
-				for (size_t i = 0; i < regs.rsi; i++) {
-					fds[i].revents = fds[i].events;
-				}
-
-				regs.rax = 0;
-				machine.set_registers(regs);
-			});
-		vm.install_syscall_handler(
-			9, [] (auto& machine) {
-				/* SYS mmap */
-				auto regs = machine.registers();
-				printf("mmap(0x%llX, %llu)\n",
-					regs.rdi, regs.rsi);
-				regs.rax = ~(uint64_t) 0; /* MAP_FAILED */
-				regs.rax = machine.heap_address();
-				machine.set_registers(regs);
-			});
-		vm.install_syscall_handler(
-			12, [] (auto& machine) {
-				/* SYS brk */
-				auto regs = machine.registers();
-				if (regs.rdi > machine.max_address()) {
-					regs.rax = machine.max_address();
-				} else {
-					regs.rax = regs.rdi;
-				}
-				machine.set_registers(regs);
-			});
-		vm.install_syscall_handler(
-			16, [] (auto& machine) {
-				/* SYS ioctl */
-				auto regs = machine.registers();
-				if (regs.rax > machine.max_address()) {
-					regs.rax = machine.max_address();
-				}
-				machine.set_registers(regs);
-			});
-		vm.install_syscall_handler(
-			20, [] (auto& machine) {
-				/* SYS writev */
-				auto regs = machine.registers();
-				struct iovec {
-					uint64_t iov_base;
-					size_t   iov_len;
-				};
-				/* writev: Stdout, Stderr */
-				if (regs.rdi == 1 || regs.rdi == 2)
-				{
-					const size_t bytes = sizeof(iovec) * regs.rdx;
-					size_t written = 0;
-					auto* vec = machine.template rw_memory_at<struct iovec>(regs.rsi, bytes);
-					for (size_t i = 0; i < regs.rdx; i++) {
-						auto sv = machine.memory_at(vec[i].iov_base, vec[i].iov_len);
-#ifdef ENABLE_GUEST_STDOUT
-						printf(">>> Guest says: %.*s\n", (int)sv.size(), sv.begin());
-#endif
-						written += sv.size();
-					}
-					regs.rax = written;
-				} else {
-					regs.rax = -1;
-				}
-				machine.set_registers(regs);
-			});
-		vm.install_syscall_handler(
-			21, [] (auto& machine) {
-				auto regs = machine.registers();
-				printf("SYSCALL access 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
-				regs.rax = -1;
-				machine.set_registers(regs);
-			});
-		vm.install_syscall_handler(
-			158, [] (auto& machine) {
-				auto regs = machine.registers();
-				constexpr long ARCH_SET_GS = 0x1001;
-				constexpr long ARCH_SET_FS = 0x1002;
-				constexpr long ARCH_GET_FS = 0x1003;
-				constexpr long ARCH_GET_GS = 0x1004;
-				if (regs.rdi == ARCH_SET_FS) {
-					if (machine.memory_safe_at(regs.rsi, 64)) {
-						machine.set_tls_base(regs.rsi);
-						regs.rax = 0;
-						machine.set_registers(regs);
-						return;
-					}
-				}
-				printf("SYSCALL ARCH_PRCTL opt=0x%llX\n", regs.rdi);
-				regs.rax = -22; // EINVAL
-				machine.set_registers(regs);
-			});
+		extern void setup_vm_system_calls(tinykvm::Machine&);
+		setup_vm_system_calls(vm);
 		vm.set_exit_address(vm.address_of("rexit"));
 	}
 
@@ -249,6 +99,7 @@ int main(int argc, char** argv)
 	}
 }
 
+#include <stdexcept>
 std::vector<uint8_t> load_file(const std::string& filename)
 {
 	size_t size = 0;

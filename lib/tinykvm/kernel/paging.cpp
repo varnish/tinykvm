@@ -7,7 +7,7 @@
 namespace tinykvm {
 
 uint64_t setup_amd64_paging(vMemory& memory,
-	uint64_t pagetable_base, uint64_t except_asm_addr, std::string_view binary)
+	uint64_t pagetable_base, uint64_t except_asm_addr, uint64_t ist_addr, std::string_view binary)
 {
 	// guest physical
 	const uint64_t pml4_addr = pagetable_base;
@@ -38,7 +38,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	/* Exception handlers */
 	lowpage[except_asm_addr >> 12] = PDE64_PRESENT | PDE64_USER | except_asm_addr;
 	/* Exception (IST) stack */
-	lowpage[3] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | 0x3000;
+	lowpage[ist_addr >> 12] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | ist_addr;
 
 	/* Stack area 1MB -> 2MB */
 	for (unsigned i = 256; i < 512; i++) {

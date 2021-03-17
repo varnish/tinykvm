@@ -104,7 +104,7 @@ void Machine::setup_long_mode()
 
 	auto sregs = master_sregs;
 	uint64_t last_page = setup_amd64_paging(
-		memory, PT_ADDR, EXCEPT_ASM_ADDR, m_binary);
+		memory, PT_ADDR, EXCEPT_ASM_ADDR, IST_ADDR, m_binary);
 	this->ptmem = MemRange::New("Page tables",
 		PT_ADDR, last_page - PT_ADDR);
 

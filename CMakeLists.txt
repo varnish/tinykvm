@@ -3,6 +3,7 @@ project(kvmtest)
 
 set (SOURCES
 	src/main.cpp
+	src/functions.cpp
 	)
 
 add_executable(kvmtest ${SOURCES})
