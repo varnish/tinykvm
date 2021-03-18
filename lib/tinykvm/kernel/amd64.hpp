@@ -31,6 +31,7 @@
 #define CR4_OSXSAVE (1U << 18)
 #define CR4_SMEP (1U << 20)
 #define CR4_SMAP (1U << 21)
+#define CR4_CET (1U << 23)
 
 #define EFER_SCE 1
 #define EFER_LME (1U << 8)

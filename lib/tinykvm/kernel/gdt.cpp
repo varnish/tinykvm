@@ -98,7 +98,7 @@ void setup_amd64_segments(struct kvm_sregs& sregs, uint64_t gdt_addr, char* gdt_
 	/* Data segment */
 	seg.type = 3; /* Data: read/write, accessed */
 	seg.selector = 0x20;
-	sregs.ds = sregs.es = sregs.ss = seg;
+	sregs.ds = sregs.es = sregs.ss = sregs.fs = sregs.gs = seg;
 
 	/* GDT dtable */
 	sregs.gdt.base  = gdt_addr;

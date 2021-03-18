@@ -110,7 +110,7 @@ void Machine::setup_long_mode()
 
 	sregs.cr3 = PT_ADDR;
 	sregs.cr4 =
-		CR4_TSD | CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE;
+		CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE | CR4_FSGSBASE;
 	sregs.cr0 =
 		CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
 	sregs.efer = EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
@@ -144,16 +144,20 @@ void Machine::setup_long_mode()
 		__u32 nmsrs; /* number of msrs in entries */
 		__u32 pad;
 
-		struct kvm_msr_entry entries[2];
+		struct kvm_msr_entry entries[4];
 	} msrs;
-	msrs.nmsrs = 2;
+	msrs.nmsrs = 4;
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[0].data  = (8ull << 32) | (24ull << 48);
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
 	msrs.entries[1].data  = EXCEPT_ASM_ADDR;
+	msrs.entries[2].index = AMD64_MSR_FS_BASE;
+	msrs.entries[2].data  = 0x0;
+	msrs.entries[3].index = AMD64_MSR_GS_BASE;
+	msrs.entries[3].data  = 0x0;
 
-	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 0) {
-		throw std::runtime_error("KVM_SET_MSRS failed");
+	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 2) {
+		throw std::runtime_error("KVM_SET_MSRS: failed to set STAR/LSTAR");
 	}
 }
 
@@ -169,7 +173,7 @@ std::pair<__u64, __u64> Machine::get_fsgs() const
 	msrs.entries[0].index = AMD64_MSR_FS_BASE;
 	msrs.entries[1].index = AMD64_MSR_GS_BASE;
 
-	if (ioctl(this->vcpu.fd, KVM_GET_MSRS, &msrs) < 0) {
+	if (ioctl(this->vcpu.fd, KVM_GET_MSRS, &msrs) < 2) {
 		throw std::runtime_error("KVM_GET_MSRS failed");
 	}
 	return {msrs.entries[0].data, msrs.entries[1].data};
@@ -187,7 +191,9 @@ void Machine::set_tls_base(__u64 baseaddr)
 	msrs.entries[0].data  = baseaddr;
 
 	long ret = ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs);
-	if (ret <= 0) {
+	if (ret < 1) {
+		fprintf(stderr, "set_tls_base returned %ld, address: 0x%llX\n",
+			ret, baseaddr);
 		throw std::runtime_error("KVM_SET_MSRS failed");
 	}
 }

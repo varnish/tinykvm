@@ -19,10 +19,23 @@ ALIGN 0x10
 
 org 0x2000
 .vm64_syscall:
+	cmp eax, 158 ;; PRCTL
+	je .vm64_prctl
 	add eax, 0xffffa000
 	mov DWORD [eax], 0
 	o64 sysret
 
+.vm64_prctl:
+	push rcx
+	mov rcx, 0xC0000100  ;; FSBASE
+	mov eax, esi ;; low-32 FS base
+	xor edx, edx ;; 0x0
+	wrmsr
+	pop rcx
+	xor rax, rax ;; return 0
+	o64 sysret
+
+ALIGN 0x40
 .vm64_exception:
 	CPU_EXCEPT 0
 	CPU_EXCEPT 1

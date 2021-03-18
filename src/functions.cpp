@@ -1,5 +1,6 @@
 #include <tinykvm/machine.hpp>
 #include <cstring>
+#include <sys/uio.h>
 #include <sys/utsname.h>
 #define ENABLE_GUEST_STDOUT
 //#define ENABLE_GUEST_VERBOSE
@@ -96,20 +97,30 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 		20, [] (auto& machine) {
 			/* SYS writev */
 			auto regs = machine.registers();
-			struct iovec {
+			struct g_iovec {
 				uint64_t iov_base;
 				size_t   iov_len;
 			};
 			/* writev: Stdout, Stderr */
 			if (regs.rdi == 1 || regs.rdi == 2)
 			{
-				const size_t bytes = sizeof(iovec) * regs.rdx;
+				const size_t bytes = sizeof(g_iovec) * regs.rdx;
 				size_t written = 0;
-				auto* vec = machine.template rw_memory_at<struct iovec>(regs.rsi, bytes);
+				auto* vec = machine.template rw_memory_at<g_iovec>(regs.rsi, bytes);
 				for (size_t i = 0; i < regs.rdx; i++) {
+					// Ignore empty writes?
+					if (vec[i].iov_len == 0)
+						continue;
 					auto sv = machine.memory_at(vec[i].iov_base, vec[i].iov_len);
 #ifdef ENABLE_GUEST_STDOUT
-					printf(">>> Guest says: %.*s\n", (int)sv.size(), sv.begin());
+					//printf(">>> Guest writes %zu bytes to %llu from iov %zu/%llu\n",
+					//	sv.size(), regs.rdi, i, regs.rdx);
+					static const char gw[] = ">>> Guest says: ";
+					struct iovec vec[] = {
+						{(void *)gw, sizeof(gw)-1},
+						{(void *)sv.begin(), sv.size()}
+					};
+					writev(0, vec, 2);
 #endif
 					written += sv.size();
 				}
@@ -154,25 +165,6 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 		72, [] (auto& machine) { // FCNTL
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
-			machine.set_registers(regs);
-		});
-	vm.install_syscall_handler(
-		158, [] (auto& machine) {
-			auto regs = machine.registers();
-			constexpr long ARCH_SET_GS = 0x1001;
-			constexpr long ARCH_SET_FS = 0x1002;
-			constexpr long ARCH_GET_FS = 0x1003;
-			constexpr long ARCH_GET_GS = 0x1004;
-			if (regs.rdi == ARCH_SET_FS) {
-				if (machine.memory_safe_at(regs.rsi, 64)) {
-					machine.set_tls_base(regs.rsi);
-					regs.rax = 0;
-					machine.set_registers(regs);
-					return;
-				}
-			}
-			printf("SYSCALL ARCH_PRCTL opt=0x%llX\n", regs.rdi);
-			regs.rax = -22; // EINVAL
 			machine.set_registers(regs);
 		});
 	vm.install_syscall_handler(
