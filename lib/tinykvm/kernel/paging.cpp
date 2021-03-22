@@ -12,11 +12,12 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	// guest physical
 	const uint64_t pml4_addr = pagetable_base;
 	const uint64_t pdpt_addr = pml4_addr + 0x1000;
-	const uint64_t pd_addr   = pml4_addr + 0x2000;
+	const uint64_t pd1_addr  = pml4_addr + 0x2000;
+	const uint64_t pd2_addr  = pml4_addr + 0x3000;
 	const uint64_t mmio_addr = pml4_addr + 0x4000;
 	const uint64_t low1_addr = pml4_addr + 0x5000;
 	// next free page for ELF loader
-	uint64_t free_page = pml4_addr + 0x6000;
+	uint64_t free_page = pml4_addr + 0x8000;
 	// userspace
 	char* pagetable = memory.at(pagetable_base);
 	auto* pml4 = (uint64_t*) (pagetable + 0x0);
@@ -25,8 +26,15 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	auto* mmio = (uint64_t*) (pagetable + 0x4000);
 	auto* lowpage = (uint64_t*) (pagetable + 0x5000);
 
+	const uint64_t arena_pdpt_addr = pml4_addr + 0x6000;
+	const uint64_t arena_pd_addr   = pml4_addr + 0x7000;
+	auto* arena_pdpt = (uint64_t*) (pagetable + 0x6000);
+	auto* arena_pd   = (uint64_t*) (pagetable + 0x7000);
+
 	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
-	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd_addr;
+	pml4[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | arena_pdpt_addr;
+	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd1_addr;
+	pdpt[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd2_addr;
 	pdpt[3] = PDE64_PRESENT | PDE64_USER | PDE64_RW | mmio_addr;
 	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
 
@@ -45,8 +53,18 @@ uint64_t setup_amd64_paging(vMemory& memory,
 		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | (i << 12);
 	}
 	/* Initial userspace area (no execute) */
-	for (unsigned i = 1; i < 512; i++) {
+	for (unsigned i = 1; i < 1024; i++) {
 		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | (i << 21);
+	}
+
+	arena_pdpt[256] = PDE64_PRESENT | PDE64_USER | PDE64_RW | arena_pd_addr;
+
+	// vDSO gettimeofday: 0xFFFFFFFFFF600000
+
+	/* Arena memory mapping at 0xC000000000 */
+	for (unsigned i = 0; i < 512; i++) {
+		uint64_t dst = 0x2800000 + (i << 21);
+		arena_pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | dst;
 	}
 
 	/* ELF executable area */
@@ -166,7 +184,7 @@ void print_pagetables(vMemory& memory, uint64_t pagetable_mem)
 	for (size_t i = 0; i < 512; i++) {
 		if (pml4[i] & PDE64_PRESENT) {
 			printf("* 512GB PML4:\n");
-			print_pdpt(memory, 0, pml4[i] & ~0xFFF);
+			print_pdpt(memory, i << 39, pml4[i] & ~(uint64_t) 0xFFF);
 		}
 	}
 }

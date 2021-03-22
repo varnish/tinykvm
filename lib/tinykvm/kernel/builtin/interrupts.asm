@@ -18,6 +18,11 @@ ALIGN 0x10
 %endmacro
 
 org 0x2000
+dw .vm64_syscall
+dw .vm64_gettimeofday
+dw .vm64_exception
+dw 0x0
+
 .vm64_syscall:
 	cmp eax, 158 ;; PRCTL
 	je .vm64_prctl
@@ -35,7 +40,14 @@ org 0x2000
 	xor rax, rax ;; return 0
 	o64 sysret
 
-ALIGN 0x40
+.vm64_gettimeofday:
+	cmp eax, 158 ;; PRCTL
+	je .vm64_prctl
+	add eax, 0xffffa000
+	mov DWORD [eax], 0
+	o64 sysret
+
+ALIGN 0x10
 .vm64_exception:
 	CPU_EXCEPT 0
 	CPU_EXCEPT 1

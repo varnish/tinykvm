@@ -14,7 +14,7 @@ namespace tinykvm {
 	static constexpr uint64_t GDT_ADDR = 0x1600;
 	static constexpr uint64_t TSS_ADDR = 0x1700;
 	static constexpr uint64_t IDT_ADDR = 0x1800;
-	static constexpr uint64_t EXCEPT_ASM_ADDR = 0x2000;
+	static constexpr uint64_t INTR_ASM_ADDR = 0x2000;
 	static constexpr uint64_t IST_ADDR = 0x3000;
 	static constexpr uint64_t PT_ADDR  = 0x4000;
 
@@ -104,7 +104,7 @@ void Machine::setup_long_mode()
 
 	auto sregs = master_sregs;
 	uint64_t last_page = setup_amd64_paging(
-		memory, PT_ADDR, EXCEPT_ASM_ADDR, IST_ADDR, m_binary);
+		memory, PT_ADDR, INTR_ASM_ADDR, IST_ADDR, m_binary);
 	this->ptmem = MemRange::New("Page tables",
 		PT_ADDR, last_page - PT_ADDR);
 
@@ -119,7 +119,7 @@ void Machine::setup_long_mode()
 	setup_amd64_tss(sregs,
 		TSS_ADDR, memory.at(TSS_ADDR), GDT_ADDR, memory.at(GDT_ADDR));
 	setup_amd64_exceptions(sregs,
-		IDT_ADDR, memory.at(IDT_ADDR), EXCEPT_ASM_ADDR, memory.at(EXCEPT_ASM_ADDR));
+		IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
 
 	if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
 		throw std::runtime_error("KVM_SET_SREGS failed");
@@ -150,7 +150,7 @@ void Machine::setup_long_mode()
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[0].data  = (8ull << 32) | (24ull << 48);
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
-	msrs.entries[1].data  = EXCEPT_ASM_ADDR;
+	msrs.entries[1].data  = interrupt_header().vm64_syscall;
 	msrs.entries[2].index = AMD64_MSR_FS_BASE;
 	msrs.entries[2].data  = 0x0;
 	msrs.entries[3].index = AMD64_MSR_GS_BASE;
@@ -214,7 +214,6 @@ void Machine::print_registers()
 		printf("Possible return: 0x%lX\n",
 			*(uint64_t *)memory.at(regs.rsp + 0x08, 8));
 	} catch (...) {}
-	printf("CS=0x%X  SS=0x%X\n", sregs.cs.selector, sregs.ss.selector);
 
 #if 0
 	printf("CR0 PE=%llu MP=%llu EM=%llu\n",

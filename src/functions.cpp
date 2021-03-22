@@ -56,10 +56,19 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 		9, [] (auto& machine) { // MMAP
 			/* SYS mmap */
 			auto regs = machine.registers();
-			printf("mmap(0x%llX, %llu)\n",
-				regs.rdi, regs.rsi);
-			regs.rax = ~(uint64_t) 0; /* MAP_FAILED */
-			regs.rax = machine.heap_address();
+			//regs.rax = ~(uint64_t) 0; /* MAP_FAILED */
+			regs.rsi &= ~0xFFF;
+			if (regs.rdi == 0xC000000000LL) {
+				regs.rax = regs.rdi;
+			}
+			else {
+				static uint64_t mm = 0;
+				if (mm < machine.heap_address()) mm = machine.heap_address();
+				regs.rax = mm;
+				mm += regs.rsi;
+			}
+			printf("mmap(0x%llX, %llu) = 0x%llX\n",
+				regs.rdi, regs.rsi, regs.rax);
 			machine.set_registers(regs);
 		});
 	vm.install_syscall_handler(
@@ -68,6 +77,13 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 			auto regs = machine.registers();
 			printf("mprotect(0x%llX, %llu, 0x%llX)\n",
 				regs.rdi, regs.rsi, regs.rdx);
+			regs.rax = 0;
+			machine.set_registers(regs);
+		});
+	vm.install_syscall_handler(
+		11, [] (auto& machine) { // MUNMAP
+			auto regs = machine.registers();
+			printf("munmap(0x%llX, %llu)\n", regs.rdi, regs.rsi);
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
