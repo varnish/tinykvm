@@ -84,6 +84,7 @@ private:
 	int install_memory(uint32_t idx, vMemory mem);
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
+	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode();
 	void handle_exception(uint8_t intr);
 	long run_once();
@@ -103,6 +104,7 @@ private:
 	uint64_t m_start_address;
 
 	vMemory memory; // guest memory
+	vMemory vsyscall; // vsyscall page
 	MemRange mmio_scall; // syscall MMIO slot
 	MemRange ptmem; // page tables
 

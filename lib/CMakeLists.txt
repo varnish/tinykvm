@@ -18,6 +18,7 @@ set (SOURCES
 	tinykvm/kernel/idt.cpp
 	tinykvm/kernel/tss.cpp
 	tinykvm/kernel/paging.cpp
+	tinykvm/kernel/vdso.cpp
 	)
 
 add_library(tinykvm STATIC ${SOURCES})

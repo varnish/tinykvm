@@ -1,6 +1,7 @@
 #include "paging.hpp"
 
 #include "amd64.hpp"
+#include "vdso.hpp"
 #include "../util/elf.h"
 #include <stdexcept>
 
@@ -16,8 +17,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	const uint64_t pd2_addr  = pml4_addr + 0x3000;
 	const uint64_t mmio_addr = pml4_addr + 0x4000;
 	const uint64_t low1_addr = pml4_addr + 0x5000;
-	// next free page for ELF loader
-	uint64_t free_page = pml4_addr + 0x8000;
+
 	// userspace
 	char* pagetable = memory.at(pagetable_base);
 	auto* pml4 = (uint64_t*) (pagetable + 0x0);
@@ -31,8 +31,19 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	auto* arena_pdpt = (uint64_t*) (pagetable + 0x6000);
 	auto* arena_pd   = (uint64_t*) (pagetable + 0x7000);
 
+	const uint64_t vdso_pdpt_addr = pml4_addr + 0x8000;
+	const uint64_t vsyscall_pd_addr = pml4_addr + 0x9000;
+	const uint64_t vsyscall_pt_addr = pml4_addr + 0xA000;
+	auto* vdso_pdpt = (uint64_t*) (pagetable + 0x8000);
+	auto* vsyscall_pd = (uint64_t*) (pagetable + 0x9000);
+	auto* vsyscall_pt = (uint64_t*) (pagetable + 0xA000);
+
+	// next free page for ELF loader
+	uint64_t free_page = pml4_addr + 0xB000;
+
 	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
 	pml4[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | arena_pdpt_addr;
+	pml4[511] = PDE64_PRESENT | PDE64_USER | vdso_pdpt_addr;
 	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd1_addr;
 	pdpt[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd2_addr;
 	pdpt[3] = PDE64_PRESENT | PDE64_USER | PDE64_RW | mmio_addr;
@@ -58,8 +69,6 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	}
 
 	arena_pdpt[256] = PDE64_PRESENT | PDE64_USER | PDE64_RW | arena_pd_addr;
-
-	// vDSO gettimeofday: 0xFFFFFFFFFF600000
 
 	/* Arena memory mapping at 0xC000000000 */
 	for (unsigned i = 0; i < 512; i++) {
@@ -133,6 +142,12 @@ uint64_t setup_amd64_paging(vMemory& memory,
 
 	// MMIO system calls
 	mmio[511] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | 0xff000000 | (511 << 21);
+
+	// vDSO / vsyscall
+	// vsyscall gettimeofday: 0xFFFFFFFFFF600000
+	vdso_pdpt[511] = PDE64_PRESENT | PDE64_USER | vsyscall_pd_addr;
+	vsyscall_pd[507] = PDE64_PRESENT | PDE64_USER | vsyscall_pt_addr;
+	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | 0xFFFF600000;
 
 	return free_page;
 }

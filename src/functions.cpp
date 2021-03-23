@@ -1,5 +1,6 @@
 #include <tinykvm/machine.hpp>
 #include <cstring>
+#include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
 #define ENABLE_GUEST_STDOUT
@@ -12,6 +13,16 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 			fprintf(stderr,	"Unhandled system call: %u\n", scall);
 			auto regs = machine.registers();
 			regs.rax = -1;
+			machine.set_registers(regs);
+		});
+	vm.install_syscall_handler(
+		0, [] (auto& machine) {
+			auto regs = machine.registers();
+			fprintf(stderr, "READ to fd=%lld, data=0x%llX, size=%llu\n",
+				regs.rdi, regs.rsi, regs.rdx);
+			//auto data = machine.rw_memory_at(regs.rsi, regs.rdx);
+			//regs.rax = regs.rdx;
+			regs.rax = -ENOSYS;
 			machine.set_registers(regs);
 		});
 	vm.install_syscall_handler(
@@ -101,6 +112,27 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 			machine.set_registers(regs);
 		});
 	vm.install_syscall_handler(
+		13, [] (auto& machine) {
+			/* SYS sigaction */
+			auto regs = machine.registers();
+			regs.rax = 0;
+			machine.set_registers(regs);
+		});
+	vm.install_syscall_handler(
+		14, [] (auto& machine) {
+			/* SYS sigprocmask */
+			auto regs = machine.registers();
+			regs.rax = 0xfffffffffffff001;
+			machine.set_registers(regs);
+		});
+	vm.install_syscall_handler(
+		131, [] (auto& machine) {
+			/* SYS sigaltstack */
+			auto regs = machine.registers();
+			regs.rax = 0xfffffffffffff001;
+			machine.set_registers(regs);
+		});
+	vm.install_syscall_handler(
 		16, [] (auto& machine) {
 			/* SYS ioctl */
 			auto regs = machine.registers();
@@ -154,6 +186,14 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 			machine.set_registers(regs);
 		});
 	vm.install_syscall_handler(
+		56, [] (auto& machine) {
+			auto regs = machine.registers();
+			printf("Clone called 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
+			//regs.rax = 10;
+			regs.rax = -1;
+			machine.set_registers(regs);
+		});
+	vm.install_syscall_handler(
 		60, [] (auto& machine) {
 			auto regs = machine.registers();
 #ifdef ENABLE_GUEST_VERBOSE
@@ -181,6 +221,30 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 		72, [] (auto& machine) { // FCNTL
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
+			machine.set_registers(regs);
+		});
+	vm.install_syscall_handler(
+		96, [] (auto& machine) { // gettimeofday
+			auto regs = machine.registers();
+			auto tv = (struct timeval *)machine.rw_memory_at(regs.rdi, sizeof(struct timeval));
+			regs.rax = gettimeofday(tv, nullptr);
+			if (regs.rax < 0) regs.rax = -errno;
+			machine.set_registers(regs);
+		});
+	vm.install_syscall_handler(
+		186, [] (auto& machine) {
+			/* SYS gettid */
+			auto regs = machine.registers();
+			regs.rax = 0;
+			machine.set_registers(regs);
+		});
+	vm.install_syscall_handler(
+		202, [] (auto& machine) {
+			/* SYS futex */
+			auto regs = machine.registers();
+			printf("Futex on: 0x%llX\n", regs.rdi);
+			*(uint32_t*) machine.rw_memory_at(regs.rdi, 4) = 1;
+			regs.rax = 0;
 			machine.set_registers(regs);
 		});
 	vm.install_syscall_handler(

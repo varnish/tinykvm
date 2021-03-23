@@ -21,7 +21,7 @@ org 0x2000
 dw .vm64_syscall
 dw .vm64_gettimeofday
 dw .vm64_exception
-dw 0x0
+dw .vm64_dso
 
 .vm64_syscall:
 	cmp eax, 158 ;; PRCTL
@@ -41,11 +41,15 @@ dw 0x0
 	o64 sysret
 
 .vm64_gettimeofday:
-	cmp eax, 158 ;; PRCTL
-	je .vm64_prctl
-	add eax, 0xffffa000
-	mov DWORD [eax], 0
-	o64 sysret
+	mov eax, 96
+	push rcx
+	o64 syscall
+	pop rcx
+	ret
+
+.vm64_dso:
+	mov rax, .vm64_gettimeofday
+	ret
 
 ALIGN 0x10
 .vm64_exception:

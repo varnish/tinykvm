@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstring>
 #include <stdexcept>
+#include "kernel/idt.hpp"
 #include "util/elf.hpp"
 
 namespace tinykvm {
@@ -78,6 +79,8 @@ void Machine::elf_loader(const MachineOptions& options)
 	if (this->m_stack_address < 0x200000) {
 		this->m_stack_address = 0x200000;
 	}
+
+	//this->relocate_section(".rela.plt", ".symtab");
 
 	// the default exit function is simply 'exit'
 	this->m_exit_address = this->address_of("exit");
@@ -167,6 +170,49 @@ uint64_t Machine::address_of(const char* name) const
 {
 	const auto* sym = resolve_symbol(m_binary, name);
 	return (sym) ? sym->st_value : 0x0;
+}
+
+void Machine::relocate_section(const char* section_name, const char* sym_section)
+{
+	const auto* rela = section_by_name(m_binary, section_name);
+	if (rela == nullptr) {
+		printf("No such section: %s\n", section_name);
+		return;
+	}
+	const auto* dyn_hdr = section_by_name(m_binary, sym_section);
+	if (dyn_hdr == nullptr) {
+		printf("No such symbol section: %s\n", sym_section);
+		return;
+	}
+	const size_t rela_ents = rela->sh_size / rela->sh_entsize;
+	printf("Rela ents: %zu\n", rela_ents);
+
+	auto* rela_addr = elf_offset<Elf64_Rela>(m_binary, rela->sh_offset);
+	for (size_t i = 0; i < rela_ents; i++)
+	{
+		const uint8_t type = ELF64_R_TYPE(rela_addr[i].r_info);
+		if (type == R_X86_64_IRELATIVE)
+		{
+			const uint32_t symidx = ELF64_R_SYM(rela_addr[i].r_info);
+			//auto* sym = elf_sym_index(m_binary, dyn_hdr, symidx);
+			const int32_t  addend = rela_addr[i].r_addend;
+			const uint64_t addr = rela_addr[i].r_offset;
+			printf("Rela ent %zu with addend 0x%X = 0x%lX\n", i, addend, addr);
+			auto* entry = (address_t*) memory.at(addend, 8);
+			*entry = interrupt_header().vm64_dso;
+
+/*			auto* entry = elf_offset<address_t> (m_binary, rela_addr[i].r_offset);
+			auto* final = elf_offset<address_t> (m_binary, sym->st_value);
+			if constexpr (true)
+			{
+				printf("Relocating rela %zu with sym idx %u where 0x%lX -> 0x%lX\n",
+						i, symidx, rela_addr[i].r_offset, sym->st_value);
+			}
+			//*(address_t*) entry = (address_t) (uintptr_t) final;
+			*(address_t*) entry = interrupt_header().vm64_gettimeofday;
+			*/
+		}
+	}
 }
 
 }

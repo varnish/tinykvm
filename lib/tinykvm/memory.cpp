@@ -45,6 +45,16 @@ vMemory vMemory::New(uint64_t phys, uint64_t safe, size_t size)
 	};
 }
 
+vMemory vMemory::From(uint64_t phys, char* ptr, size_t size)
+{
+	return vMemory {
+		.physbase = phys,
+		.safebase = phys,
+		.ptr  = ptr,
+		.size = size
+	};
+}
+
 MemRange MemRange::New(
 	const char* name, uint64_t physbase, size_t size)
 {

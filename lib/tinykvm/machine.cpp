@@ -1,6 +1,7 @@
 #include "machine.hpp"
 
 #include "kernel/amd64.hpp"
+#include "kernel/vdso.hpp"
 #include <cstring>
 #include <fcntl.h>
 #include <linux/kvm.h>
@@ -38,6 +39,12 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	/* Disallow viewing memory below 1MB */
 	this->memory = vMemory::New(0x0, 0x100000, options.max_mem);
 	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
+		throw std::runtime_error("Failed to install guest memory region");
+	}
+
+	/* vsyscall page */
+	this->vsyscall = vMemory::From(0xFFFF600000, (char*) vdso_page().data(), vdso_page().size());
+	if (UNLIKELY(install_memory(1, this->vsyscall) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}
 

@@ -509,10 +509,10 @@ reg32_at(Machine& m, struct tinykvm_x86regs& regs, size_t idx)
 	case 21:
 		return cs;
 	case 22:
-		fs = m.get_fsgs().first;
+		//fs = m.get_fsgs().first;
 		return fs;
 	case 23:
-		gs = m.get_fsgs().second;
+		//gs = m.get_fsgs().second;
 		return gs;
 	}
 	throw std::runtime_error("Invalid register index");

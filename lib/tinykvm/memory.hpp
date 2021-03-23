@@ -24,7 +24,8 @@ struct vMemory {
 	std::string_view view(uint64_t addr, size_t asize) const;
 
 	void reset();
-	static vMemory New(uint64_t, uint64_t, size_t size);
+	static vMemory New(uint64_t phys, uint64_t safe, size_t size);
+	static vMemory From(uint64_t phys, char* ptr, size_t size);
 };
 
 struct MemRange {
