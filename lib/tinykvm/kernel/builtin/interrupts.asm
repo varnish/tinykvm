@@ -31,20 +31,28 @@ dw .vm64_dso
 	o64 sysret
 
 .vm64_prctl:
+	push rsi
 	push rcx
+	push rdx
+	cmp rdi, 0x1002 ;; PRCTL
+	jne .vm64_prctl_trap
 	mov rcx, 0xC0000100  ;; FSBASE
 	mov eax, esi ;; low-32 FS base
-	xor edx, edx ;; 0x0
+	shr rsi, 32
+	mov edx, esi ;; high-32 FS base
 	wrmsr
-	pop rcx
 	xor rax, rax ;; return 0
+.vm64_prctl_end:
+	pop rdx
+	pop rcx
+	pop rsi
 	o64 sysret
+.vm64_prctl_trap:
+	out 158, ax
+	jmp .vm64_prctl_end
 
 .vm64_gettimeofday:
-	mov eax, 96
-	push rcx
-	o64 syscall
-	pop rcx
+	out 96, ax
 	ret
 
 .vm64_dso:

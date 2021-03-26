@@ -85,6 +85,12 @@ void Machine::vCPU::assign_registers(const struct tinykvm_x86regs& regs)
 		throw std::runtime_error("KVM_SET_REGS failed");
 	}
 }
+void Machine::vCPU::get_special_registers(struct kvm_sregs& sregs) const
+{
+	if (ioctl(this->fd, KVM_GET_SREGS, &sregs) < 0) {
+		throw std::runtime_error("KVM_GET_SREGS failed");
+	}
+}
 
 std::string_view Machine::io_data() const
 {
@@ -180,21 +186,17 @@ std::pair<__u64, __u64> Machine::get_fsgs() const
 }
 void Machine::set_tls_base(__u64 baseaddr)
 {
-	struct {
-		__u32 nmsrs; /* number of msrs in entries */
-		__u32 pad;
+	struct kvm_sregs sregs;
+	if (ioctl(this->vcpu.fd, KVM_GET_SREGS, &sregs) < 0) {
+		fprintf(stderr, "Unable to retrieve special registers\n");
+		return;
+	}
 
-		struct kvm_msr_entry entries[1];
-	} msrs;
-	msrs.nmsrs = 1;
-	msrs.entries[0].index = AMD64_MSR_FS_BASE;
-	msrs.entries[0].data  = baseaddr;
+	sregs.fs.base = baseaddr;
 
-	long ret = ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs);
-	if (ret < 1) {
-		fprintf(stderr, "set_tls_base returned %ld, address: 0x%llX\n",
-			ret, baseaddr);
-		throw std::runtime_error("KVM_SET_MSRS failed");
+	if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
+		fprintf(stderr, "Unable to set special registers\n");
+		return;
 	}
 }
 

@@ -22,6 +22,10 @@ inline tinykvm_x86regs Machine::registers() const {
 inline void Machine::set_registers(const tinykvm_x86regs& regs) {
 	vcpu.assign_registers(regs);
 }
+inline void Machine::get_special_registers(struct kvm_sregs& sregs) const {
+	return vcpu.get_special_registers(sregs);
+}
+
 
 template <typename... Args> inline constexpr
 tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
@@ -101,4 +105,27 @@ template <typename T>
 inline uint64_t Machine::stack_push(__u64& sp, const T& type)
 {
 	return stack_push(sp, &type, sizeof(T));
+}
+
+inline std::string_view Machine::memory_at(uint64_t a, size_t s) const
+{
+	if (a < HIGHMEM_TRESHOLD)
+		return memory.view(a, s);
+	else
+		return memory.view(translate(a), s);
+}
+template <typename T>
+inline T* Machine::rw_memory_at(uint64_t a, size_t s)
+{
+	if (a < HIGHMEM_TRESHOLD)
+		return (T*) memory.safely_at(a, s);
+	else
+		return (T*) memory.safely_at(translate(a), s);
+}
+inline bool Machine::memory_safe_at(uint64_t a, size_t s) const
+{
+	if (a < HIGHMEM_TRESHOLD)
+		return memory.safely_within(a, s);
+	else
+		return memory.safely_within(translate(a), s);
 }

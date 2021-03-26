@@ -2,6 +2,7 @@
 #include "common.hpp"
 #include "forward.hpp"
 #include "memory.hpp"
+#include "threads.hpp"
 #include <array>
 #include <vector>
 
@@ -12,6 +13,7 @@ struct Machine
 	using address_t = uint64_t;
 	using syscall_t = void(*)(Machine&);
 	using unhandled_syscall_t = void(*)(Machine&, unsigned);
+	static constexpr address_t HIGHMEM_TRESHOLD = 0x100000000;
 
 	template <typename... Args>
 	long vmcall(const char*, Args&&...);
@@ -38,20 +40,23 @@ struct Machine
 
 	tinykvm_x86regs registers() const;
 	void set_registers(const tinykvm_x86regs&);
+	void get_special_registers(struct kvm_sregs&) const;
 	std::pair<__u64, __u64> get_fsgs() const;
 	void set_tls_base(__u64 baseaddr);
 	void print_registers();
 
 	void install_syscall_handler(unsigned idx, syscall_t h) { m_syscalls.at(idx) = h; }
 	void install_unhandled_syscall_handler(unhandled_syscall_t h) { m_unhandled_syscall = h; }
+	auto get_syscall_handler(unsigned idx) const { return m_syscalls.at(idx); }
 	void system_call(unsigned);
 
 	std::string_view io_data() const;
-	std::string_view memory_at(uint64_t a, size_t s) const { return memory.view(a, s); }
+	std::string_view memory_at(uint64_t a, size_t s) const;
 	template <typename T = char>
-	T* rw_memory_at(uint64_t a, size_t s) { return (T*) memory.safely_at(a, s); }
-	bool memory_safe_at(uint64_t a, size_t s) const { return memory.safely_within(a, s); }
+	T* rw_memory_at(uint64_t a, size_t s);
+	bool memory_safe_at(uint64_t a, size_t s) const;
 	char* unsafe_memory_at(uint64_t a, size_t s) { return memory.at(a, s); }
+	uint64_t translate(uint64_t virt) const;
 
 	address_t start_address() const noexcept { return this->m_start_address; }
 	address_t stack_address() const noexcept { return this->m_stack_address; }
@@ -61,6 +66,10 @@ struct Machine
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
 
 	uint64_t address_of(const char*) const;
+
+	const auto& threads() const { return *m_mt; }
+	auto& threads() { return *m_mt; }
+	void setup_multithreading();
 
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);
@@ -72,6 +81,7 @@ private:
 		void print_address_info(uint64_t addr);
 		tinykvm_x86regs registers() const;
 		void assign_registers(const struct tinykvm_x86regs&);
+		void get_special_registers(struct kvm_sregs&) const;
 
 		int fd;
 		struct kvm_run *kvm_run;
@@ -107,6 +117,8 @@ private:
 	vMemory vsyscall; // vsyscall page
 	MemRange mmio_scall; // syscall MMIO slot
 	MemRange ptmem; // page tables
+
+	std::unique_ptr<MultiThreading> m_mt = nullptr;
 
 	static int kvm_fd;
 };

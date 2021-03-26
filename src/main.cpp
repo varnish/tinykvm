@@ -7,7 +7,7 @@
 //#define ENABLE_GUEST_CLEAR_MEMORY
 #define NUM_ROUNDS   1
 #define NUM_GUESTS   1
-#define GUEST_MEMORY 0x8000000  /* 128MB memory */
+#define GUEST_MEMORY 0x40000000  /* 1024MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
 inline timespec time_now();

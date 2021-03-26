@@ -78,6 +78,16 @@ int Machine::install_memory(uint32_t idx, vMemory mem)
 	};
 	return ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg);
 }
+uint64_t Machine::translate(uint64_t virt) const
+{
+	struct kvm_translation tr;
+	tr.linear_address = virt;
+	if (ioctl(vcpu.fd, KVM_TRANSLATE, &tr) < 0) {
+		return 0x0;
+	}
+	//printf("Translated 0x%lX to 0x%lX\n", virt, tr.physical_address);
+	return tr.physical_address;
+}
 
 void Machine::setup_registers(tinykvm_x86regs& regs)
 {
