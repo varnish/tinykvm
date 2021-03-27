@@ -4,9 +4,7 @@
 
 #include <tinykvm/rsp_client.hpp>
 
-//#define ENABLE_GUEST_CLEAR_MEMORY
-#define NUM_ROUNDS   1
-#define NUM_GUESTS   1
+#define NUM_GUESTS   20
 #define GUEST_MEMORY 0x40000000  /* 1024MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
@@ -22,6 +20,13 @@ int main(int argc, char** argv)
 	const auto binary = load_file(argv[1]);
 	std::vector<tinykvm::Machine*> vms;
 
+	extern void setup_kvm_system_calls();
+	setup_kvm_system_calls();
+
+	asm("" : : : "memory");
+	auto t0 = time_now();
+	asm("" : : : "memory");
+
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
 		tinykvm::MachineOptions options {
@@ -30,26 +35,19 @@ int main(int argc, char** argv)
 		};
 		vms.push_back(new tinykvm::Machine {binary, options});
 		auto& vm = *vms.back();
-		extern void setup_vm_system_calls(tinykvm::Machine&);
-		setup_vm_system_calls(vm);
 		vm.set_exit_address(vm.address_of("rexit"));
-	}
-
-	asm("" : : : "memory");
-	auto t0 = time_now();
-	asm("" : : : "memory");
-
-	for (unsigned rounds = 0; rounds < NUM_ROUNDS; rounds++)
-	for (unsigned i = 0; i < NUM_GUESTS; i++)
-	{
-		auto& vm = *vms[i];
-#ifdef ENABLE_GUEST_CLEAR_MEMORY
-		vm.reset();
-#endif
 		vm.setup_linux(
 			{"KVM tiny guest\n", "Hello World!\n"},
 			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+	}
 
+	asm("" : : : "memory");
+	auto t1 = time_now();
+	asm("" : : : "memory");
+
+	for (unsigned i = 0; i < NUM_GUESTS; i++)
+	{
+		auto& vm = *vms[i];
 		if (getenv("DEBUG"))
 		{
 			tinykvm::RSP server {vm, 2159};
@@ -89,10 +87,13 @@ int main(int argc, char** argv)
 	}
 
 	asm("" : : : "memory");
-	auto t1 = time_now();
-	auto nanos_per_gr = nanodiff(t0, t1) / NUM_GUESTS / NUM_ROUNDS;
-	printf("Time spent: %ldns (%ld micros)\n",
-		nanos_per_gr, nanos_per_gr / 1000);
+	auto t2 = time_now();
+	asm("" : : : "memory");
+
+	auto nanos_per_gc = nanodiff(t0, t1) / NUM_GUESTS;
+	auto nanos_per_gr = nanodiff(t1, t2) / NUM_GUESTS;
+	printf("Construct: %ldns (%ld micros)\n", nanos_per_gc, nanos_per_gc / 1000);
+	printf("Runtime: %ldns (%ld micros)\n", nanos_per_gr, nanos_per_gr / 1000);
 
 	for (auto* vm : vms) {
 		delete vm;

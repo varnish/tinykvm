@@ -33,7 +33,7 @@ void Machine::vCPU::init(Machine& machine)
 		throw std::runtime_error("Failed to KVM_GET_VCPU_MMAP_SIZE");
 	}
 
-	this->kvm_run = (struct kvm_run*) mmap(NULL, vcpu_mmap_size,
+	this->kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
 	if (this->kvm_run == MAP_FAILED) {
 		throw std::runtime_error("Failed to create KVM run-time mapped memory");

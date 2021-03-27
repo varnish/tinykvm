@@ -45,9 +45,9 @@ struct Machine
 	void set_tls_base(__u64 baseaddr);
 	void print_registers();
 
-	void install_syscall_handler(unsigned idx, syscall_t h) { m_syscalls.at(idx) = h; }
-	void install_unhandled_syscall_handler(unhandled_syscall_t h) { m_unhandled_syscall = h; }
-	auto get_syscall_handler(unsigned idx) const { return m_syscalls.at(idx); }
+	static void install_syscall_handler(unsigned idx, syscall_t h) { m_syscalls.at(idx) = h; }
+	static void install_unhandled_syscall_handler(unhandled_syscall_t h) { m_unhandled_syscall = h; }
+	static auto get_syscall_handler(unsigned idx) { return m_syscalls.at(idx); }
 	void system_call(unsigned);
 
 	std::string_view io_data() const;
@@ -69,7 +69,10 @@ struct Machine
 
 	const auto& threads() const { return *m_mt; }
 	auto& threads() { return *m_mt; }
-	void setup_multithreading();
+	static void setup_multithreading();
+
+	const auto& mmap() const { return m_mm; }
+	auto& mmap() { return m_mm; }
 
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);
@@ -104,8 +107,8 @@ private:
 	vCPU  vcpu;
 	void* m_userdata = nullptr;
 
-	std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls {nullptr};
-	unhandled_syscall_t m_unhandled_syscall = [] (auto&, unsigned) {};
+	static std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls;
+	static unhandled_syscall_t m_unhandled_syscall;
 
 	std::string_view m_binary;
 	uint64_t m_exit_address;
@@ -118,6 +121,7 @@ private:
 	MemRange mmio_scall; // syscall MMIO slot
 	MemRange ptmem; // page tables
 
+	uint64_t m_mm = 0;
 	std::unique_ptr<MultiThreading> m_mt = nullptr;
 
 	static int kvm_fd;

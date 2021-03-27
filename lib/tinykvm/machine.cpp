@@ -11,11 +11,18 @@
 
 namespace tinykvm {
 	int Machine::kvm_fd = -1;
+	std::array<Machine::syscall_t, TINYKVM_MAX_SYSCALLS> Machine::m_syscalls {nullptr};
+	Machine::unhandled_syscall_t Machine::m_unhandled_syscall = [] (Machine&, unsigned) {};
 	static int kvm_open();
 
 Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_binary {binary}
 {
+	/* Automatically enable threads when SYS_clone is installed */
+	if (get_syscall_handler(56) != nullptr) {
+		m_mt.reset(new MultiThreading{*this});
+	}
+
 	if (UNLIKELY(kvm_fd == -1)) {
 		kvm_fd = kvm_open();
 	}
@@ -99,7 +106,8 @@ void Machine::setup_registers(tinykvm_x86regs& regs)
 
 void Machine::reset()
 {
-	memory.reset();
+	//m_mt.reset(new MultiThreading{*this});
+	//memory.reset();
 }
 
 Machine::~Machine()

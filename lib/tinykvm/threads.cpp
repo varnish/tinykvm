@@ -141,16 +141,14 @@ void MultiThreading::wakeup_next()
 
 void Machine::setup_multithreading()
 {
-	m_mt.reset(new MultiThreading{*this});
-
-	this->install_syscall_handler(
+	Machine::install_syscall_handler(
 		24, [] (auto& machine) { // sched_yield
 			THPRINT("sched_yield on tid=%d\n",
 				machine.threads().get_thread().tid);
 			machine.threads().suspend_and_yield();
 		});
-	this->install_syscall_handler(
-		56, [] (auto& machine) {
+	Machine::install_syscall_handler(
+		56, [] (auto& machine) { // clone
 			auto regs = machine.registers();
 			const auto flags = regs.rdi;
 			const auto stack = regs.rsi;
@@ -171,7 +169,7 @@ void Machine::setup_multithreading()
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
-	this->install_syscall_handler( // exit
+	Machine::install_syscall_handler( // exit
 		60, [] (auto& machine) {
 			auto regs = machine.registers();
 			const uint32_t status = regs.rdi;
@@ -184,9 +182,9 @@ void Machine::setup_multithreading()
 			}
 			machine.stop();
 		});
-	this->install_syscall_handler( // exit_group
-		231, this->get_syscall_handler(60));
-	this->install_syscall_handler(
+	Machine::install_syscall_handler( // exit_group
+		231, Machine::get_syscall_handler(60));
+	Machine::install_syscall_handler(
 		186, [] (auto& machine) {
 			/* SYS gettid */
 			auto regs = machine.registers();
@@ -194,7 +192,7 @@ void Machine::setup_multithreading()
 			THPRINT("gettid() = %lld\n", regs.rax);
 			machine.set_registers(regs);
 		});
-	this->install_syscall_handler(
+	Machine::install_syscall_handler(
 		202, [] (Machine& machine) {
 			/* SYS futex */
 			auto regs = machine.registers();
@@ -225,7 +223,7 @@ void Machine::setup_multithreading()
 			}
 			machine.set_registers(regs);
 		});
-	this->install_syscall_handler(
+	Machine::install_syscall_handler(
 		218, [] (auto& machine) {
 			/* SYS set_tid_address */
 			auto regs = machine.registers();
@@ -238,13 +236,13 @@ void Machine::setup_multithreading()
 			regs.rax = thread.tid;
 			machine.set_registers(regs);
 		});
-	this->install_syscall_handler(
+	Machine::install_syscall_handler(
 		234, [] (auto& machine) { // TGKILL
 			fprintf(stderr, "ERROR: tgkill called from tid=%d\n",
 				machine.threads().get_thread().tid);
 			machine.stop();
 		});
-	this->install_syscall_handler(
+	Machine::install_syscall_handler(
 		273, [] (auto& machine) {
 			/* SYS set_robust_list */
 			auto regs = machine.registers();

@@ -9,16 +9,16 @@
 #define PRINTMMAP(fmt, ...) /* */
 using namespace tinykvm;
 
-void setup_vm_system_calls(Machine& vm)
+void setup_kvm_system_calls()
 {
-	vm.install_unhandled_syscall_handler(
+	Machine::install_unhandled_syscall_handler(
 		[] (auto& machine, unsigned scall) {
 			fprintf(stderr,	"Unhandled system call: %u\n", scall);
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		0, [] (auto& machine) { // READ
 			auto regs = machine.registers();
 			fprintf(stderr, "READ to fd=%lld, data=0x%llX, size=%llu\n",
@@ -28,7 +28,7 @@ void setup_vm_system_calls(Machine& vm)
 			regs.rax = -ENOSYS;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		1, [] (auto& machine) { // WRITE
 #ifdef ENABLE_GUEST_STDOUT
 			auto regs = machine.registers();
@@ -41,13 +41,13 @@ void setup_vm_system_calls(Machine& vm)
 			}
 #endif
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		5, [] (auto& machine) { // FSTAT
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		7, [] (Machine& machine) { // POLL
 			auto regs = machine.registers();
 			struct pollfd {
@@ -67,7 +67,7 @@ void setup_vm_system_calls(Machine& vm)
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		9, [] (auto& machine) { // MMAP
 			auto regs = machine.registers();
 			//regs.rax = ~(uint64_t) 0; /* MAP_FAILED */
@@ -76,7 +76,7 @@ void setup_vm_system_calls(Machine& vm)
 				regs.rax = regs.rdi;
 			}
 			else {
-				static uint64_t mm = 0;
+				auto& mm = machine.mmap();
 				if (mm < machine.heap_address()) mm = machine.heap_address();
 				regs.rax = mm;
 				// XXX: MAP_ANONYMOUS -->
@@ -87,7 +87,7 @@ void setup_vm_system_calls(Machine& vm)
 				regs.rdi, regs.rsi, regs.rax);
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		10, [] (auto& machine) { // MPROTECT
 			/* SYS mprotect */
 			auto regs = machine.registers();
@@ -96,14 +96,14 @@ void setup_vm_system_calls(Machine& vm)
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		11, [] (auto& machine) { // MUNMAP
 			auto regs = machine.registers();
 			PRINTMMAP("munmap(0x%llX, %llu)\n", regs.rdi, regs.rsi);
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		12, [] (auto& machine) { // BRK
 			auto regs = machine.registers();
 			if (regs.rdi > machine.max_address()) {
@@ -115,28 +115,28 @@ void setup_vm_system_calls(Machine& vm)
 			}
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		13, [] (auto& machine) {
 			/* SYS sigaction */
 			auto regs = machine.registers();
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		14, [] (auto& machine) {
 			/* SYS sigprocmask */
 			auto regs = machine.registers();
 			regs.rax = 0xfffffffffffff001;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		131, [] (auto& machine) {
 			/* SYS sigaltstack */
 			auto regs = machine.registers();
 			regs.rax = 0xfffffffffffff001;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		16, [] (auto& machine) { // IOCTL
 			/* SYS ioctl */
 			auto regs = machine.registers();
@@ -145,7 +145,7 @@ void setup_vm_system_calls(Machine& vm)
 			}
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		20, [] (auto& machine) { // WRITEV
 			/* SYS writev */
 			auto regs = machine.registers();
@@ -167,7 +167,7 @@ void setup_vm_system_calls(Machine& vm)
 #ifdef ENABLE_GUEST_STDOUT
 					//printf(">>> Guest writes %zu bytes to %llu from iov %zu/%llu\n",
 					//	sv.size(), regs.rdi, i, regs.rdx);
-					static const char gw[] = ">>> Guest says: ";
+					static constexpr char gw[] = ">>> Guest says: ";
 					struct iovec vec[] = {
 						{(void *)gw, sizeof(gw)-1},
 						{(void *)sv.begin(), sv.size()}
@@ -182,32 +182,32 @@ void setup_vm_system_calls(Machine& vm)
 			}
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		21, [] (auto& machine) { // ACCESS
 			auto regs = machine.registers();
 			printf("SYSCALL access 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
 			regs.rax = -1;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		28, [] (auto& machine) { // MADVISE
 			auto regs = machine.registers();
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		35, [] (auto& machine) { // nanosleep
 			auto regs = machine.registers();
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		39, [] (auto& machine) { // GETPID
 			auto regs = machine.registers();
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		60, [] (auto& machine) { // EXIT
 			auto regs = machine.registers();
 #ifdef ENABLE_GUEST_VERBOSE
@@ -215,7 +215,7 @@ void setup_vm_system_calls(Machine& vm)
 #endif
 			machine.stop();
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		63, [] (tinykvm::Machine& machine) { // UTSNAME
 			auto regs = machine.registers();
 			if (machine.memory_safe_at(regs.rdi, sizeof(struct utsname)))
@@ -231,13 +231,13 @@ void setup_vm_system_calls(Machine& vm)
 			regs.rax = -EFAULT;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		72, [] (auto& machine) { // FCNTL
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		96, [] (auto& machine) { // gettimeofday
 			auto regs = machine.registers();
 			auto tv = (struct timeval *)machine.rw_memory_at(regs.rdi, sizeof(struct timeval));
@@ -245,13 +245,13 @@ void setup_vm_system_calls(Machine& vm)
 			if (regs.rax < 0) regs.rax = -errno;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		102, [] (auto& machine) { // GETUID
 			auto regs = machine.registers();
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		158, [] (auto& machine) {
 			auto regs = machine.registers();
 			constexpr long ARCH_SET_GS = 0x1001;
@@ -262,7 +262,7 @@ void setup_vm_system_calls(Machine& vm)
 			regs.rax = -22; // EINVAL
 			machine.set_registers(regs);
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		231, [] (auto& machine) {
 			/* SYS exit_group */
 			auto regs = machine.registers();
@@ -271,12 +271,12 @@ void setup_vm_system_calls(Machine& vm)
 #endif
 			machine.stop();
 		});
-	vm.install_syscall_handler(
+	Machine::install_syscall_handler(
 		302, [] (auto& machine) { // prlimit64
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
 			machine.set_registers(regs);
 		});
 	// Threads: clone, futex, block/tkill etc.
-	vm.setup_multithreading();
+	Machine::setup_multithreading();
 }
