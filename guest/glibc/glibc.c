@@ -10,7 +10,7 @@ int main()
 	strcpy(test, "Hello World!\n");
 	printf("%.*s", 13, test);
 
-	test_threads();
+	//test_threads();
 	return 0;
 }
 

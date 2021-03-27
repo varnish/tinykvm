@@ -64,7 +64,7 @@ void print_gdt_entries(void* area, size_t count)
 	}
 }
 
-void setup_amd64_segments(struct kvm_sregs& sregs, uint64_t gdt_addr, char* gdt_ptr)
+void setup_amd64_segments(uint64_t gdt_addr, char* gdt_ptr)
 {
 	/* Null segment */
 	memset(gdt_ptr + 0x0, 0, 8);
@@ -79,7 +79,10 @@ void setup_amd64_segments(struct kvm_sregs& sregs, uint64_t gdt_addr, char* gdt_
 
 	/* TSS segment (initialized later) */
 	memset(gdt_ptr + 0x30, 0, 8);
+}
 
+void setup_amd64_segment_regs(struct kvm_sregs& sregs, uint64_t gdt_addr)
+{
 	/* Code segment */
 	struct kvm_segment seg = {
 		.base = 0,

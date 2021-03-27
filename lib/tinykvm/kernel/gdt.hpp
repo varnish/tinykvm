@@ -2,7 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 
-extern void setup_amd64_segments(struct kvm_sregs&, uint64_t gdt_addr, char* gdt_ptr);
+extern void setup_amd64_segments(uint64_t gdt_addr, char* gdt_ptr);
+extern void setup_amd64_segment_regs(struct kvm_sregs&, uint64_t gdt_addr);
 
 extern void GDT_write_segment(void* area, uint8_t flags);
 extern void GDT_write_TSS_segment(void* area, uint64_t tss_addr, uint32_t size);

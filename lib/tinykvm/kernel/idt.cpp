@@ -101,11 +101,14 @@ const iasm_header& interrupt_header() {
 	return *(const iasm_header*) &interrupts[0];
 }
 
-void setup_amd64_exceptions(struct kvm_sregs& sregs,
-	uint64_t addr, void* area, void* except_area)
+void setup_amd64_exception_regs(struct kvm_sregs& sregs, uint64_t addr)
 {
 	sregs.idt.base  = addr;
 	sregs.idt.limit = sizeof(IDT) - 1;
+}
+
+void setup_amd64_exceptions(uint64_t addr, void* area, void* except_area)
+{
 	uint64_t offset = interrupt_header().vm64_exception;
 	for (int i = 0; i <= 20; i++) {
 		if (i == 15) continue;

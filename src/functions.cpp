@@ -3,17 +3,18 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
-#define ENABLE_GUEST_STDOUT
+//#define ENABLE_GUEST_STDOUT
 //#define ENABLE_GUEST_VERBOSE
 //#define VERBOSE_MMAP
 #define PRINTMMAP(fmt, ...) /* */
+#define SYSPRINT(fmt, ...) /* */
 using namespace tinykvm;
 
 void setup_kvm_system_calls()
 {
 	Machine::install_unhandled_syscall_handler(
 		[] (auto& machine, unsigned scall) {
-			fprintf(stderr,	"Unhandled system call: %u\n", scall);
+			SYSPRINT("Unhandled system call: %u\n", scall);
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
 			machine.set_registers(regs);
@@ -185,7 +186,7 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		21, [] (auto& machine) { // ACCESS
 			auto regs = machine.registers();
-			printf("SYSCALL access 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
+			SYSPRINT("SYSCALL access 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
 			regs.rax = -1;
 			machine.set_registers(regs);
 		});
@@ -258,7 +259,7 @@ void setup_kvm_system_calls()
 			constexpr long ARCH_SET_FS = 0x1002;
 			constexpr long ARCH_GET_FS = 0x1003;
 			constexpr long ARCH_GET_GS = 0x1004;
-			printf("SYSCALL ARCH_PRCTL opt=0x%llX\n", regs.rdi);
+			SYSPRINT("SYSCALL ARCH_PRCTL opt=0x%llX\n", regs.rdi);
 			regs.rax = -22; // EINVAL
 			machine.set_registers(regs);
 		});

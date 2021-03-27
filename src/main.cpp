@@ -4,8 +4,8 @@
 
 #include <tinykvm/rsp_client.hpp>
 
-#define NUM_GUESTS   20
-#define GUEST_MEMORY 0x40000000  /* 1024MB memory */
+#define NUM_GUESTS   500
+#define GUEST_MEMORY 0x8000000  /* 128MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
 inline timespec time_now();
@@ -19,6 +19,7 @@ int main(int argc, char** argv)
 	}
 	const auto binary = load_file(argv[1]);
 	std::vector<tinykvm::Machine*> vms;
+	vms.reserve(NUM_GUESTS);
 
 	extern void setup_kvm_system_calls();
 	setup_kvm_system_calls();
@@ -37,7 +38,7 @@ int main(int argc, char** argv)
 		auto& vm = *vms.back();
 		vm.set_exit_address(vm.address_of("rexit"));
 		vm.setup_linux(
-			{"KVM tiny guest\n", "Hello World!\n"},
+			{"kvmtest", "Hello World!\n"},
 			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 	}
 
@@ -45,12 +46,11 @@ int main(int argc, char** argv)
 	auto t1 = time_now();
 	asm("" : : : "memory");
 
-	for (unsigned i = 0; i < NUM_GUESTS; i++)
+	for (auto* vm : vms)
 	{
-		auto& vm = *vms[i];
 		if (getenv("DEBUG"))
 		{
-			tinykvm::RSP server {vm, 2159};
+			tinykvm::RSP server {*vm, 2159};
 			printf("Waiting for connection...\n");
 			auto client = server.accept();
 			if (client != nullptr) {
@@ -61,16 +61,16 @@ int main(int argc, char** argv)
 					while (client->process_one());
 				} catch (const tinykvm::MachineException& e) {
 					printf("EXCEPTION %s: %lu\n", e.what(), e.data());
-					vm.print_registers();
+					vm->print_registers();
 					break;
 				}
 			} else {
 				/* Normal execution of _start -> main() */
-				vm.run();
+				vm->run();
 			}
 		} else {
 			/* Normal execution of _start -> main() */
-			vm.run();
+			vm->run();
 		}
 
 		if (false)
@@ -82,7 +82,7 @@ int main(int argc, char** argv)
 			} data;
 			strcpy(data.buffer, "Hello Buffered World!\n");
 			data.len = strlen(data.buffer);
-			vm.vmcall(vm.address_of("empty"), data);
+			vm->vmcall(vm->address_of("empty"), data);
 		}
 	}
 
@@ -90,14 +90,20 @@ int main(int argc, char** argv)
 	auto t2 = time_now();
 	asm("" : : : "memory");
 
-	auto nanos_per_gc = nanodiff(t0, t1) / NUM_GUESTS;
-	auto nanos_per_gr = nanodiff(t1, t2) / NUM_GUESTS;
-	printf("Construct: %ldns (%ld micros)\n", nanos_per_gc, nanos_per_gc / 1000);
-	printf("Runtime: %ldns (%ld micros)\n", nanos_per_gr, nanos_per_gr / 1000);
-
 	for (auto* vm : vms) {
 		delete vm;
 	}
+
+	asm("" : : : "memory");
+	auto t3 = time_now();
+	asm("" : : : "memory");
+
+	auto nanos_per_gc = nanodiff(t0, t1) / NUM_GUESTS;
+	auto nanos_per_gr = nanodiff(t1, t2) / NUM_GUESTS;
+	auto nanos_per_gd = nanodiff(t2, t3) / NUM_GUESTS;
+	printf("Construct: %ldns (%ld micros)\n", nanos_per_gc, nanos_per_gc / 1000);
+	printf("Runtime: %ldns (%ld micros)\n", nanos_per_gr, nanos_per_gr / 1000);
+	printf("Destruct: %ldns (%ld micros)\n", nanos_per_gd, nanos_per_gd / 1000);
 }
 
 #include <stdexcept>

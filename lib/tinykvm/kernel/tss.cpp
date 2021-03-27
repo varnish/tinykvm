@@ -25,7 +25,10 @@ struct AMD64_TSS
 	uint16_t iomap_base;
 } __attribute__((packed));
 
-void setup_amd64_tss(struct kvm_sregs& sregs,
+static constexpr uint16_t tss_sel = 0x30;
+
+
+void setup_amd64_tss(
 	uint64_t tss_addr, char* tss_ptr, uint64_t gdt_addr, char* gdt_ptr)
 {
 	auto& tss = *(AMD64_TSS *)tss_ptr;
@@ -36,13 +39,15 @@ void setup_amd64_tss(struct kvm_sregs& sregs,
 	tss.rsp2 = 0x4000;
 	tss.iomap_base = 104; // unused
 
-	const uint16_t sel = 0x30;
-	GDT_write_TSS_segment(gdt_ptr + sel, tss_addr, sizeof(AMD64_TSS)-1);
+	GDT_write_TSS_segment(gdt_ptr + tss_sel, tss_addr, sizeof(AMD64_TSS)-1);
+}
 
+void setup_amd64_tss_regs(struct kvm_sregs& sregs, uint64_t tss_addr)
+{
 	struct kvm_segment seg = {
 		.base = tss_addr,
 		.limit = sizeof(AMD64_TSS)-1,
-		.selector = sel,
+		.selector = tss_sel,
 		.type = 11,
 		.present = 1,
 		.dpl = 3, /* User-mode */

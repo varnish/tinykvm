@@ -9,7 +9,7 @@ int main()
 	strcpy(test, "Hello World!\n");
 	printf("%.*s", 13, test);
 
-	test_threads();
+	//test_threads();
 	return 0;
 }
 
@@ -27,7 +27,7 @@ static void* thread_function1(void* data)
 static void* thread_function2(void* data)
 {
 	printf("Inside thread function2, x = %d\n", *(int*) data);
-	thread_local int test = 2022;
+	static __thread int test = 2022;
 	assert(test == 2022);
 
 	printf("Yielding from thread2, expecting to be returned to main thread\n");

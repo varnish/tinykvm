@@ -14,6 +14,7 @@ namespace tinykvm {
 	std::array<Machine::syscall_t, TINYKVM_MAX_SYSCALLS> Machine::m_syscalls {nullptr};
 	Machine::unhandled_syscall_t Machine::m_unhandled_syscall = [] (Machine&, unsigned) {};
 	static int kvm_open();
+	long vcpu_mmap_size = 0;
 
 Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_binary {binary}
@@ -136,6 +137,9 @@ int kvm_open()
 			api_ver, KVM_API_VERSION);
 		throw std::runtime_error("Wrong KVM API version");
 	}
+
+	extern void initialize_vcpu_stuff(int kvm_fd);
+	initialize_vcpu_stuff(fd);
 
 	return fd;
 }

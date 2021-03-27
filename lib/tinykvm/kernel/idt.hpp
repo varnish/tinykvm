@@ -2,8 +2,8 @@
 
 #define NUM_IDT_ENTRIES   32
 
-extern void setup_amd64_exceptions(struct kvm_sregs&,
-	uint64_t addr, void* area, void* code_area);
+extern void setup_amd64_exception_regs(struct kvm_sregs& sregs, uint64_t addr);
+extern void setup_amd64_exceptions(uint64_t addr, void* area, void* code_area);
 
 extern void set_exception_handler(void* area, uint8_t vec, uint64_t handler);
 extern void print_exception_handlers(void* area);

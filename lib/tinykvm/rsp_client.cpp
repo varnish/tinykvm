@@ -302,7 +302,6 @@ void RSPClient::handle_continue()
 			return;
 		}
 	}
-restart:
 	try {
 		uint64_t n = m_ilimit;
 		while (!m_machine->stopped()) {
@@ -502,17 +501,18 @@ reg32_at(Machine& m, struct tinykvm_x86regs& regs, size_t idx)
 	static __u32 cs = 0x8;
 	static __u32 fs = 0x0, gs = 0x0;
 	switch (idx) {
-	case 17: return *(uint32_t *)&regs.rflags;
+	case 17:
+		return *(__u32 *)&regs.rflags;
 	case 18:
 	case 19:
 	case 20:
 	case 21:
 		return cs;
 	case 22:
-		//fs = m.get_fsgs().first;
+		fs = m.get_fsgs().first;
 		return fs;
 	case 23:
-		//gs = m.get_fsgs().second;
+		gs = m.get_fsgs().second;
 		return gs;
 	}
 	throw std::runtime_error("Invalid register index");
