@@ -24,6 +24,20 @@ int main(int argc, char** argv)
 	extern void setup_kvm_system_calls();
 	setup_kvm_system_calls();
 
+	/* Warmup */
+	{
+		tinykvm::MachineOptions options {
+			.max_mem = GUEST_MEMORY,
+			.verbose_loader = false
+		};
+		tinykvm::Machine vm {binary, options};
+		vm.setup_linux(
+			{"kvmtest", "Hello World!\n"},
+			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+		/* Normal execution of _start -> main() */
+		vm.run();
+	}
+
 	asm("" : : : "memory");
 	auto t0 = time_now();
 	asm("" : : : "memory");
@@ -104,6 +118,31 @@ int main(int argc, char** argv)
 	printf("Construct: %ldns (%ld micros)\n", nanos_per_gc, nanos_per_gc / 1000);
 	printf("Runtime: %ldns (%ld micros)\n", nanos_per_gr, nanos_per_gr / 1000);
 	printf("Destruct: %ldns (%ld micros)\n", nanos_per_gd, nanos_per_gd / 1000);
+
+	asm("" : : : "memory");
+	auto t4 = time_now();
+	asm("" : : : "memory");
+
+	for (unsigned i = 0; i < NUM_GUESTS; i++)
+	{
+		tinykvm::MachineOptions options {
+			.max_mem = GUEST_MEMORY,
+			.verbose_loader = false
+		};
+		tinykvm::Machine vm {binary, options};
+		vm.setup_linux(
+			{"kvmtest", "Hello World!\n"},
+			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+		/* Normal execution of _start -> main() */
+		vm.run();
+	}
+
+	asm("" : : : "memory");
+	auto t5 = time_now();
+	asm("" : : : "memory");
+
+	auto nanos_per_gf = nanodiff(t4, t5) / NUM_GUESTS;
+	printf("Complete: %ldns (%ld micros)\n", nanos_per_gf, nanos_per_gf / 1000);
 }
 
 #include <stdexcept>
