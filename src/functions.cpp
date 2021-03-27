@@ -7,8 +7,9 @@
 //#define ENABLE_GUEST_VERBOSE
 //#define VERBOSE_MMAP
 #define PRINTMMAP(fmt, ...) /* */
+using namespace tinykvm;
 
-void setup_vm_system_calls(tinykvm::Machine& vm)
+void setup_vm_system_calls(Machine& vm)
 {
 	vm.install_unhandled_syscall_handler(
 		[] (auto& machine, unsigned scall) {
@@ -34,7 +35,6 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 			auto view = machine.memory_at(regs.rsi, regs.rdx);
 			if (!view.empty()) {
 				fwrite(view.begin(), view.size(), 1, stdout);
-				fflush(stdout);
 			} else {
 				fprintf(stderr, "Invalid memory from guest: 0x%llX:%llu\n",
 					regs.rsi, regs.rdx);
@@ -48,7 +48,7 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 			machine.set_registers(regs);
 		});
 	vm.install_syscall_handler(
-		7, [] (auto& machine) { // POLL
+		7, [] (Machine& machine) { // POLL
 			auto regs = machine.registers();
 			struct pollfd {
 				int   fd;         /* file descriptor */
@@ -56,7 +56,7 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 				short revents;    /* returned events */
 			};
 			const size_t bytes = sizeof(pollfd) * regs.rsi;
-			auto* fds = machine.template rw_memory_at<struct pollfd>(regs.rdi, bytes);
+			auto* fds = machine.rw_memory_at<struct pollfd>(regs.rdi, bytes);
 			for (size_t i = 0; i < regs.rsi; i++) {
 				// stdout/stderr
 				if (fds[i].fd == 0 || fds[i].fd == 2)
@@ -180,7 +180,6 @@ void setup_vm_system_calls(tinykvm::Machine& vm)
 			} else {
 				regs.rax = -1;
 			}
-			fflush(stdout);
 			machine.set_registers(regs);
 		});
 	vm.install_syscall_handler(

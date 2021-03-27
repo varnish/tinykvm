@@ -44,7 +44,7 @@ void Thread::resume()
 	// restore registers
 	mt.machine.set_registers(this->stored_regs);
 	mt.machine.set_tls_base(this->fsbase);
-	printf("Returning to tid=%d tls=0x%lX stack=0x%llX\n",
+	THPRINT("Returning to tid=%d tls=0x%lX stack=0x%llX\n",
 			this->tid, this->fsbase, this->stored_regs.rsp);
 }
 void Thread::exit()
@@ -52,7 +52,7 @@ void Thread::exit()
 	const bool exiting_myself = (mt.get_thread().tid == this->tid);
 	// CLONE_CHILD_CLEARTID: set userspace TID value to zero
 	if (this->clear_tid) {
-		printf("Clearing thread value for tid=%d at 0x%lX\n",
+		THPRINT("Clearing thread value for tid=%d at 0x%lX\n",
 				this->tid, this->clear_tid);
 		*(uint32_t*) mt.machine.rw_memory_at(this->clear_tid, 4) = 0;
 	}
@@ -92,18 +92,18 @@ Thread& MultiThreading::create(
 	Thread& thread = it.first->second;
 
 	if (flags & CLONE_SETTLS) {
-		printf("CLONE_SETTLS 0x%lX\n", tls);
+		THPRINT("CLONE_SETTLS 0x%lX\n", tls);
 	}
 	if (flags & CLONE_CHILD_SETTID) {
-		printf("CHILD_SETTID at 0x%lX\n", ctid);
+		THPRINT("CHILD_SETTID at 0x%lX\n", ctid);
 		*(uint32_t*) machine.rw_memory_at(ctid, 4) = tid;
 	}
 	if (flags & CLONE_PARENT_SETTID) {
-		printf("PARENT_SETTID at 0x%lX\n", ptid);
+		THPRINT("PARENT_SETTID at 0x%lX\n", ptid);
 		*(uint32_t*) machine.rw_memory_at(ptid, 4) = tid;
 	}
 	if (flags & CLONE_CHILD_CLEARTID) {
-		printf("CHILD_CLEARTID at 0x%lX\n", ctid);
+		THPRINT("CHILD_CLEARTID at 0x%lX\n", ctid);
 		thread.clear_tid = ctid;
 	}
 
@@ -145,7 +145,7 @@ void Machine::setup_multithreading()
 
 	this->install_syscall_handler(
 		24, [] (auto& machine) { // sched_yield
-			printf("sched_yield on tid=%d\n",
+			THPRINT("sched_yield on tid=%d\n",
 				machine.threads().get_thread().tid);
 			machine.threads().suspend_and_yield();
 		});
@@ -161,7 +161,7 @@ void Machine::setup_multithreading()
 
 			auto& parent = machine.threads().get_thread();
 			auto& thread = machine.threads().create(flags, ctid, ptid, stack, tls);
-			printf(">>> clone(func=0x%llX, stack=0x%llX, flags=%llX,"
+			THPRINT(">>> clone(func=0x%llX, stack=0x%llX, flags=%llX,"
 					" parent=%d, ctid=0x%llX ptid=0x%llX, tls=0x%llX) = %d\n",
 					func, stack, flags, parent.tid, ctid, ptid, tls, thread.tid);
 			// store return value for parent: child TID
@@ -176,7 +176,7 @@ void Machine::setup_multithreading()
 			auto regs = machine.registers();
 			const uint32_t status = regs.rdi;
 			auto& thread = machine.threads().get_thread();
-			printf(">>> Exit on tid=%d, exit code = %d\n",
+			THPRINT(">>> Exit on tid=%d, exit code = %d\n",
 					thread.tid, (int) status);
 			if (thread.tid != 0) {
 				thread.exit();
@@ -191,7 +191,7 @@ void Machine::setup_multithreading()
 			/* SYS gettid */
 			auto regs = machine.registers();
 			regs.rax = machine.threads().get_thread().tid;
-			printf("gettid() = %lld\n", regs.rax);
+			THPRINT("gettid() = %lld\n", regs.rax);
 			machine.set_registers(regs);
 		});
 	this->install_syscall_handler(
@@ -201,11 +201,11 @@ void Machine::setup_multithreading()
 			const auto addr = regs.rdi;
 			const auto futex_op = regs.rsi;
 			const uint32_t val = regs.rdx;
-			printf("Futex on: 0x%llX  val=%d\n", regs.rdi, val);
+			THPRINT("Futex on: 0x%llX  val=%d\n", regs.rdi, val);
 			auto* fx = machine.rw_memory_at<uint32_t>(addr, 4);
 
 			if ((futex_op & 0xF) == FUTEX_WAIT) {
-				printf("FUTEX: Waiting for unlock... uaddr=%u val=%u\n", *fx, val);
+				THPRINT("FUTEX: Waiting for unlock... uaddr=%u val=%u\n", *fx, val);
 				if (*fx == val) {
 					if (machine.threads().suspend_and_yield()) {
 						return;
@@ -214,7 +214,7 @@ void Machine::setup_multithreading()
 				}
 				regs.rax = 0;
 			} else if ((futex_op & 0xF) == FUTEX_WAKE) {
-				printf("FUTEX: Waking others on uaddr=0x%lX, val=%u\n", (long) addr, val);
+				THPRINT("FUTEX: Waking others on uaddr=0x%lX, val=%u\n", (long) addr, val);
 				if (machine.threads().suspend_and_yield()) {
 					return;
 				}
@@ -230,7 +230,7 @@ void Machine::setup_multithreading()
 			/* SYS set_tid_address */
 			auto regs = machine.registers();
 #ifdef ENABLE_GUEST_VERBOSE
-			printf("Set TID address: clear_child_tid=0x%llX\n", regs.rdi);
+			THPRINT("Set TID address: clear_child_tid=0x%llX\n", regs.rdi);
 #endif
 			auto& thread = machine.threads().get_thread();
 			/* Sets clear_tid and returns tid */
