@@ -97,7 +97,7 @@ std::string_view Machine::io_data() const
 	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
 }
 
-void Machine::setup_long_mode()
+void Machine::setup_long_mode(const Machine* other)
 {
 	static bool minit = false;
 	if (!minit) {
@@ -125,20 +125,35 @@ void Machine::setup_long_mode()
 		master_xregs.nr_xcrs = 1;
 	}
 
-	if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &master_sregs) < 0) {
-		throw std::runtime_error("KVM_SET_SREGS failed");
+	if (other == nullptr)
+	{
+		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &master_sregs) < 0) {
+			throw std::runtime_error("KVM_SET_SREGS failed");
+		}
+
+		uint64_t last_page = setup_amd64_paging(
+			memory, PT_ADDR, INTR_ASM_ADDR, IST_ADDR, m_binary);
+		this->ptmem = MemRange::New("Page tables",
+			PT_ADDR, last_page - PT_ADDR);
+
+		setup_amd64_segments(GDT_ADDR, memory.at(GDT_ADDR));
+		setup_amd64_tss(
+			TSS_ADDR, memory.at(TSS_ADDR), GDT_ADDR, memory.at(GDT_ADDR));
+		setup_amd64_exceptions(
+			IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
 	}
+	else
+	{
+		/* Copy the special registers of the master machine */
+		struct kvm_sregs sregs;
+		if (ioctl(other->vcpu.fd, KVM_GET_SREGS, &sregs) < 0) {
+			throw std::runtime_error("KVM_GET_SREGS failed");
+		}
+		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
+			throw std::runtime_error("KVM_SET_SREGS failed");
+		}
 
-	uint64_t last_page = setup_amd64_paging(
-		memory, PT_ADDR, INTR_ASM_ADDR, IST_ADDR, m_binary);
-	this->ptmem = MemRange::New("Page tables",
-		PT_ADDR, last_page - PT_ADDR);
-
-	setup_amd64_segments(GDT_ADDR, memory.at(GDT_ADDR));
-	setup_amd64_tss(
-		TSS_ADDR, memory.at(TSS_ADDR), GDT_ADDR, memory.at(GDT_ADDR));
-	setup_amd64_exceptions(
-		IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
+	}
 
 	/* Extended control registers */
 	if (ioctl(this->vcpu.fd, KVM_SET_XCRS, &master_xregs) < 0) {

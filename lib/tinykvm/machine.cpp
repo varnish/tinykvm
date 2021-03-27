@@ -2,12 +2,15 @@
 
 #include "kernel/amd64.hpp"
 #include "kernel/vdso.hpp"
+#include <cassert>
 #include <cstring>
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #include <stdexcept>
+#include "void_async.hpp"
 
 namespace tinykvm {
 	int Machine::kvm_fd = -1;
@@ -19,13 +22,11 @@ namespace tinykvm {
 Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_binary {binary}
 {
+	assert(kvm_fd != -1 && "Call Machine::init() first");
+
 	/* Automatically enable threads when SYS_clone is installed */
 	if (get_syscall_handler(56) != nullptr) {
 		m_mt.reset(new MultiThreading{*this});
-	}
-
-	if (UNLIKELY(kvm_fd == -1)) {
-		kvm_fd = kvm_open();
 	}
 
 	this->fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
@@ -59,7 +60,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->elf_loader(options);
 
 	this->vcpu.init(*this);
-	this->setup_long_mode();
+	this->setup_long_mode(nullptr);
 	struct tinykvm_x86regs regs {0};
 	/* Store the registers, so that Machine is ready to go */
 	this->setup_registers(regs);
@@ -67,6 +68,51 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 }
 Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 	: Machine(std::string_view{(const char*)&bin[0], bin.size()}, opts) {}
+
+Machine::Machine(const Machine& other, const MachineOptions& options)
+	: m_binary {other.m_binary},
+	  m_stopped {true},
+	  m_exit_address {other.m_exit_address},
+	  m_stack_address {other.m_stack_address},
+	  m_heap_address {other.m_heap_address},
+	  m_start_address {other.m_start_address},
+	  ptmem    {other.ptmem},
+	  m_mm     {other.m_mm},
+	  m_mt     {new MultiThreading{*other.m_mt}}
+{
+	assert(kvm_fd != -1 && "Call Machine::init() first");
+
+	this->fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
+	if (UNLIKELY(this->fd < 0)) {
+		throw std::runtime_error("Failed to KVM_CREATE_VM");
+	}
+
+	/* Create a CoW-mapping from the master machine */
+	this->memory = vMemory::From(other.memory);
+	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
+		throw std::runtime_error("Failed to install guest memory region");
+	}
+
+	/* MMIO syscall page */
+	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
+
+	/* vsyscall page */
+	this->vsyscall = vMemory::From(0xFFFF600000, (char*) vdso_page().data(), vdso_page().size());
+	if (UNLIKELY(install_memory(1, other.vsyscall) < 0)) {
+		throw std::runtime_error("Failed to install guest memory region");
+	}
+
+	this->vcpu.init(*this);
+	this->setup_long_mode(&other);
+
+	auto regs = other.registers();
+	this->set_registers(regs);
+}
+
+void Machine::init()
+{
+	Machine::kvm_fd = kvm_open();
+}
 
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
 {
@@ -116,6 +162,16 @@ Machine::~Machine()
 	if (fd > 0) {
 		close(fd);
 		close(vcpu.fd);
+	}
+	if (memory.fd != -1) {
+		close(memory.fd);
+		munmap(memory.ptr, memory.size);
+	} else {
+		/* We have to resort to cheating for forked machines,
+		   because munmap is extremely slow. */
+		void_async([mem = memory] {
+			munmap(mem.ptr, mem.size);
+		});
 	}
 }
 

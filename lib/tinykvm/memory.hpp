@@ -10,6 +10,7 @@ struct vMemory {
 	uint64_t safebase;
 	char*  ptr;
 	size_t size;
+	int    fd = -1;
 
 	/* Unsafe */
 	bool within(uint64_t addr, size_t asize) const noexcept {
@@ -26,6 +27,7 @@ struct vMemory {
 	void reset();
 	static vMemory New(uint64_t phys, uint64_t safe, size_t size);
 	static vMemory From(uint64_t phys, char* ptr, size_t size);
+	static vMemory From(const vMemory& other);
 };
 
 struct MemRange {

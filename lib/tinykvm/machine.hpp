@@ -74,8 +74,10 @@ struct Machine
 	const auto& mmap() const { return m_mm; }
 	auto& mmap() { return m_mm; }
 
+	static void init();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);
+	Machine(const Machine& other, const MachineOptions&);
 	~Machine();
 
 private:
@@ -98,19 +100,19 @@ private:
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
-	void setup_long_mode();
+	void setup_long_mode(const Machine* other);
 	void handle_exception(uint8_t intr);
 	long run_once();
 
 	int   fd;
-	bool  m_stopped = false;
+	bool  m_stopped = true;
 	vCPU  vcpu;
 	void* m_userdata = nullptr;
 
 	static std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls;
 	static unhandled_syscall_t m_unhandled_syscall;
 
-	std::string_view m_binary;
+	const std::string_view m_binary;
 	uint64_t m_exit_address;
 	uint64_t m_stack_address;
 	uint64_t m_heap_address;

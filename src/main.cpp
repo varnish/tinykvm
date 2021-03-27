@@ -4,8 +4,8 @@
 
 #include <tinykvm/rsp_client.hpp>
 
-#define NUM_GUESTS   500
-#define GUEST_MEMORY 0x8000000  /* 128MB memory */
+#define NUM_GUESTS   300
+#define GUEST_MEMORY 0x2000000  /* 32MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
 inline timespec time_now();
@@ -21,6 +21,7 @@ int main(int argc, char** argv)
 	std::vector<tinykvm::Machine*> vms;
 	vms.reserve(NUM_GUESTS);
 
+	tinykvm::Machine::init();
 	extern void setup_kvm_system_calls();
 	setup_kvm_system_calls();
 
@@ -119,22 +120,25 @@ int main(int argc, char** argv)
 	printf("Runtime: %ldns (%ld micros)\n", nanos_per_gr, nanos_per_gr / 1000);
 	printf("Destruct: %ldns (%ld micros)\n", nanos_per_gd, nanos_per_gd / 1000);
 
+	tinykvm::MachineOptions options {
+		.max_mem = GUEST_MEMORY,
+		.verbose_loader = false
+	};
+	tinykvm::Machine master_vm {binary, options};
+	master_vm.setup_linux(
+		{"kvmtest", "Hello World!\n"},
+		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+	std::vector<tinykvm::Machine*> forked_vms;
+
 	asm("" : : : "memory");
 	auto t4 = time_now();
 	asm("" : : : "memory");
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
-		tinykvm::MachineOptions options {
-			.max_mem = GUEST_MEMORY,
-			.verbose_loader = false
-		};
-		tinykvm::Machine vm {binary, options};
-		vm.setup_linux(
-			{"kvmtest", "Hello World!\n"},
-			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+		forked_vms.push_back(new tinykvm::Machine {master_vm, options});
 		/* Normal execution of _start -> main() */
-		vm.run();
+		//vm.run();
 	}
 
 	asm("" : : : "memory");
@@ -142,7 +146,7 @@ int main(int argc, char** argv)
 	asm("" : : : "memory");
 
 	auto nanos_per_gf = nanodiff(t4, t5) / NUM_GUESTS;
-	printf("Complete: %ldns (%ld micros)\n", nanos_per_gf, nanos_per_gf / 1000);
+	printf("Fork: %ldns (%ld micros)\n", nanos_per_gf, nanos_per_gf / 1000);
 }
 
 #include <stdexcept>
