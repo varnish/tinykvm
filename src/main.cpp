@@ -5,7 +5,7 @@
 #include <tinykvm/rsp_client.hpp>
 
 #define NUM_GUESTS   300
-#define GUEST_MEMORY 0x2000000  /* 32MB memory */
+#define GUEST_MEMORY 0x4000000  /* 64MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
 inline timespec time_now();
@@ -128,7 +128,8 @@ int main(int argc, char** argv)
 	master_vm.setup_linux(
 		{"kvmtest", "Hello World!\n"},
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
-	std::vector<tinykvm::Machine*> forked_vms;
+	/* Normal execution of _start -> main() */
+	master_vm.run();
 
 	asm("" : : : "memory");
 	auto t4 = time_now();
@@ -136,9 +137,8 @@ int main(int argc, char** argv)
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
-		forked_vms.push_back(new tinykvm::Machine {master_vm, options});
-		/* Normal execution of _start -> main() */
-		//vm.run();
+		tinykvm::Machine vm {master_vm, options};
+		vm.vmcall("test");
 	}
 
 	asm("" : : : "memory");

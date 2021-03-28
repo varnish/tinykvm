@@ -2,6 +2,7 @@
 #include "common.hpp"
 #include "forward.hpp"
 #include "memory.hpp"
+#include "memory_bank.hpp"
 #include "threads.hpp"
 #include <array>
 #include <vector>
@@ -97,6 +98,7 @@ private:
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	int install_memory(uint32_t idx, vMemory mem);
+	int delete_memory(uint32_t idx);
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
@@ -126,6 +128,7 @@ private:
 	uint64_t m_mm = 0;
 	std::unique_ptr<MultiThreading> m_mt = nullptr;
 
+	static MemoryBanks m_banks;
 	static int kvm_fd;
 };
 

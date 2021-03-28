@@ -32,6 +32,7 @@ std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 
 vMemory vMemory::New(uint64_t phys, uint64_t safe, size_t size)
 {
+#if 0
 	// open a temporary file with owner privs
 	int fd = memfd_create("tinykvm", 0);
 	if (fd < 0) {
@@ -40,9 +41,10 @@ vMemory vMemory::New(uint64_t phys, uint64_t safe, size_t size)
 	if (ftruncate(fd, size) < 0) {
 		throw std::runtime_error("Failed to truncate memfd (Out of memory?)");
 	}
+#endif
 
 	auto* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
-		MAP_SHARED | MAP_NORESERVE, fd, 0);
+		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
 	if (ptr == MAP_FAILED) {
 		throw std::runtime_error("Failed to allocate guest memory");
 	}
@@ -52,18 +54,21 @@ vMemory vMemory::New(uint64_t phys, uint64_t safe, size_t size)
 		.safebase = safe,
 		.ptr  = ptr,
 		.size = size,
-		.fd   = fd
+		.fd   = -1
 	};
 }
 
-vMemory vMemory::From(const vMemory& other)
+vMemory vMemory::From(const vMemory& other, MemoryBanks& bank)
 {
-	auto* ptr = (char*) mmap(NULL, other.size, PROT_READ | PROT_WRITE,
-		MAP_PRIVATE | MAP_NORESERVE, other.fd, 0);
-	if (ptr == MAP_FAILED) {
-		throw std::runtime_error("Failed to map other machines guest memory");
+	char* ptr = bank.get(other.size);
+	if (ptr == nullptr) {
+		ptr = (char*) mmap(NULL, other.size, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+		if (ptr == MAP_FAILED) {
+			throw std::runtime_error("Failed to map other machines guest memory");
+		}
+		madvise(ptr, other.size, MADV_MERGEABLE);
 	}
-	madvise(ptr, other.size, MADV_MERGEABLE);
 	return vMemory {
 		.physbase = other.physbase,
 		.safebase = other.safebase,
@@ -91,6 +96,21 @@ MemRange MemRange::New(
 		.size = size,
 		.name = name
 	};
+}
+
+void MemoryBanks::insert(char* ptr, std::size_t size)
+{
+	//madvise(ptr, size, MADV_FREE);
+	std::lock_guard<std::mutex> lk(m_guard);
+	m_mem.push_back({ptr, size});
+}
+char* MemoryBanks::get(std::size_t size)
+{
+	std::lock_guard<std::mutex> lk(m_guard);
+	if (m_mem.empty()) return nullptr;
+	auto result = m_mem.back();
+	m_mem.pop_back();
+	return result.ptr;
 }
 
 }

@@ -16,6 +16,7 @@ namespace tinykvm {
 	int Machine::kvm_fd = -1;
 	std::array<Machine::syscall_t, TINYKVM_MAX_SYSCALLS> Machine::m_syscalls {nullptr};
 	Machine::unhandled_syscall_t Machine::m_unhandled_syscall = [] (Machine&, unsigned) {};
+	MemoryBanks Machine::m_banks;
 	static int kvm_open();
 	long vcpu_mmap_size = 0;
 
@@ -88,7 +89,12 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	}
 
 	/* Create a CoW-mapping from the master machine */
-	this->memory = vMemory::From(other.memory);
+	this->memory = vMemory::From(other.memory, m_banks);
+	/* Copy the kernel stuff */
+	std::memcpy(memory.ptr, other.memory.ptr, ptmem.physbase + ptmem.size);
+	/* Copy everything after stack */
+	std::memcpy(memory.ptr + 0x200000, other.memory.ptr + 0x200000, memory.size - 0x200000);
+
 	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}
@@ -132,6 +138,17 @@ int Machine::install_memory(uint32_t idx, vMemory mem)
 	};
 	return ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg);
 }
+int Machine::delete_memory(uint32_t idx)
+{
+	const struct kvm_userspace_memory_region memreg {
+		.slot = idx,
+		.flags = 0u,
+		.guest_phys_addr = 0x0,
+		.memory_size = 0x0,
+		.userspace_addr = 0x0,
+	};
+	return ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg);
+}
 uint64_t Machine::translate(uint64_t virt) const
 {
 	struct kvm_translation tr;
@@ -167,11 +184,7 @@ Machine::~Machine()
 		close(memory.fd);
 		munmap(memory.ptr, memory.size);
 	} else {
-		/* We have to resort to cheating for forked machines,
-		   because munmap is extremely slow. */
-		void_async([mem = memory] {
-			munmap(mem.ptr, mem.size);
-		});
+		m_banks.insert(memory.ptr, memory.size);
 	}
 }
 

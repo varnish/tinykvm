@@ -4,6 +4,7 @@
 #include <string_view>
 
 namespace tinykvm {
+struct MemoryBanks;
 
 struct vMemory {
 	uint64_t physbase;
@@ -27,7 +28,7 @@ struct vMemory {
 	void reset();
 	static vMemory New(uint64_t phys, uint64_t safe, size_t size);
 	static vMemory From(uint64_t phys, char* ptr, size_t size);
-	static vMemory From(const vMemory& other);
+	static vMemory From(const vMemory& other, MemoryBanks& bank);
 };
 
 struct MemRange {

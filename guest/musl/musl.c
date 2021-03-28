@@ -14,6 +14,17 @@ int main()
 }
 
 #include <assert.h>
+static int t = 0;
+
+__attribute__((used))
+void test()
+{
+	assert(t == 0);
+	t = 1;
+	printf("Hello World!\n");
+}
+
+#include <assert.h>
 #include <pthread.h>
 
 static void* thread_function1(void* data)
