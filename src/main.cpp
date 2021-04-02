@@ -4,7 +4,7 @@
 
 #include <tinykvm/rsp_client.hpp>
 
-#define NUM_GUESTS   300
+#define NUM_GUESTS   400
 #define GUEST_MEMORY 0x4000000  /* 64MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);

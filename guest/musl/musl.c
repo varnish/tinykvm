@@ -3,11 +3,25 @@
 #include <string.h>
 static void test_threads();
 
+static long nprimes = 0;
+
 int main()
 {
 	char* test = (char *)malloc(14);
 	strcpy(test, "Hello World!\n");
 	printf("%.*s", 13, test);
+
+	static const int N = 1000000;
+	char prime[N];
+	memset(prime, 1, sizeof(prime));
+	for (long n = 2; n < N; n++)
+	{
+		if (prime[n]) {
+			nprimes += 1;
+			for (long i = 2*n; i < N; i += n)
+				prime[i] = 0;
+		}
+	}
 
 	//test_threads();
 	return 0;
@@ -22,6 +36,7 @@ void test()
 	assert(t == 0);
 	t = 1;
 	printf("Hello World!\n");
+	assert(nprimes == 78498);
 }
 
 #include <assert.h>

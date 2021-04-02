@@ -104,6 +104,12 @@ void Machine::copy_dirty_memory(const Machine& other)
 			// Copy the page if it's dirty or not writable but present
 			bool copy = (entry & PDE64_DIRTY) != 0 || (entry & PDE64_RW) == 0;
 			if (copy && memory.within(addr, size)) {
+				if (UNLIKELY(addr >= 0x100000 && addr < 0x200000)) {
+					return;
+				}
+				if (UNLIKELY(addr == IST_ADDR)) {
+					return;
+				}
 				std::memcpy(memory.ptr + addr, other.memory.ptr + addr, size);
 			}
 		});
