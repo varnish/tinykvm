@@ -103,6 +103,7 @@ private:
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const Machine* other);
+	void copy_dirty_memory(const Machine& other);
 	void handle_exception(uint8_t intr);
 	long run_once();
 

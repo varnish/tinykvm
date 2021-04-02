@@ -204,4 +204,43 @@ void print_pagetables(vMemory& memory, uint64_t pagetable_mem)
 	}
 }
 
+void foreach_page(const vMemory& memory, uint64_t pagetable_mem, foreach_page_t callback)
+{
+	auto* pml4 = memory.page_at(pagetable_mem);
+	for (size_t i = 0; i < 512; i++)
+	{
+		if (pml4[i] & PDE64_PRESENT) {
+			const uint64_t pdpt_base = i << 39;
+			const uint64_t pdpt_mem  = pml4[i] & ~(uint64_t) 0xFFF;
+			auto* pdpt = memory.page_at(pdpt_mem);
+			for (uint64_t j = 0; j < 512; j++)
+			{
+				if (pdpt[j] & PDE64_PRESENT) {
+					const uint64_t pd_addr = pdpt_base | (j << 30);
+					const uint64_t pd_mem  = pdpt[j] & ~0xFFF;
+					auto* pd = memory.page_at(pd_mem);
+					for (uint64_t k = 0; k < 512; k++)
+					{
+						if (pd[k] & PDE64_PRESENT) {
+							uint64_t pt_addr = pd_addr | (k << 21);
+							uint64_t pt_mem  = pd[k] & ~0x8000000000000FFF;
+							if (pd[k] & PDE64_PS) { // 2MB page
+								callback(pt_mem, pd[k], 1 << 21);
+							} else {
+								auto* pt = memory.page_at(pt_mem);
+								for (uint64_t e = 0; e < 512; e++) {
+									if (pt[e] & PDE64_PRESENT) {
+										const uint64_t pte_addr = pt_addr | (e << 12);
+										callback(pt[e] & ~0x8000000000000FFF, pt[e], 4096);
+									}
+								} // e
+							} // 2MB page
+						}
+					} // k
+				}
+			} // j
+		}
+	} // i
+} // foreach_page
+
 }

@@ -38,12 +38,6 @@
 #define EFER_LMA (1U << 10)
 #define EFER_NXE (1U << 11)
 
-/* 32-bit page directory entry bits */
-#define PDE32_PRESENT 1
-#define PDE32_RW (1U << 1)
-#define PDE32_USER (1U << 2)
-#define PDE32_PS (1U << 7)
-
 /* 64-bit page * entry bits */
 #define PDE64_PRESENT 1
 #define PDE64_RW (1U << 1)

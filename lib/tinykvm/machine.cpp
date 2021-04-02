@@ -90,10 +90,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 
 	/* Create a CoW-mapping from the master machine */
 	this->memory = vMemory::From(other.memory, m_banks);
-	/* Copy the kernel stuff */
-	std::memcpy(memory.ptr, other.memory.ptr, ptmem.physbase + ptmem.size);
-	/* Copy everything after stack */
-	std::memcpy(memory.ptr + 0x200000, other.memory.ptr + 0x200000, memory.size - 0x200000);
+	this->copy_dirty_memory(other);
 
 	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");

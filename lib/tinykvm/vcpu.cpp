@@ -97,6 +97,18 @@ std::string_view Machine::io_data() const
 	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
 }
 
+void Machine::copy_dirty_memory(const Machine& other)
+{
+	foreach_page(other.memory, 0x4000,
+		[this, &other] (uint64_t addr, uint64_t entry, size_t size) mutable {
+			// Copy the page if it's dirty or not writable but present
+			bool copy = (entry & PDE64_DIRTY) != 0 || (entry & PDE64_RW) == 0;
+			if (copy && memory.within(addr, size)) {
+				std::memcpy(memory.ptr + addr, other.memory.ptr + addr, size);
+			}
+		});
+}
+
 void Machine::setup_long_mode(const Machine* other)
 {
 	static bool minit = false;

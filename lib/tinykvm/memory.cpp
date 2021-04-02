@@ -16,7 +16,13 @@ char* vMemory::at(uint64_t addr, size_t asize)
 {
 	if (within(addr, asize))
 		return &ptr[addr - physbase];
-	throw MemoryException("Memory::safely_at() invalid region", addr, asize);
+	throw MemoryException("Memory::at() invalid region", addr, asize);
+}
+const uint64_t* vMemory::page_at(uint64_t addr) const
+{
+	if (within(addr, 4096))
+		return (const uint64_t*) &ptr[addr - physbase];
+	throw MemoryException("Memory::page_at() invalid region", addr, 4096);
 }
 char* vMemory::safely_at(uint64_t addr, size_t asize)
 {
