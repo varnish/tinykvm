@@ -1,6 +1,10 @@
-**/build*
+**/build_*
+**/build
 guest/interrupts
 guest/guest.elf
 guest/musl/musl
 guest/glibc/glibc
 guest/go/go
+
+guest/mini/mini.o
+guest/mini/mini
