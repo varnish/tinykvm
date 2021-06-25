@@ -1,4 +1,5 @@
 #include "machine.hpp"
+#include <cassert>
 #include <cstring>
 #include <stdexcept>
 #include <linux/kvm.h>
@@ -173,6 +174,12 @@ void Machine::setup_long_mode(const Machine* other)
 
 	}
 
+	page_at(memory, PT_ADDR,
+		IST_ADDR,
+		[] (uint64_t, uint64_t& entry, size_t) {
+			assert(entry & PDE64_RW);
+		});
+
 	/* Extended control registers */
 	if (ioctl(this->vcpu.fd, KVM_SET_XCRS, &master_xregs) < 0) {
 		throw std::runtime_error("KVM_SET_XCRS failed");
@@ -326,6 +333,7 @@ long Machine::run_once()
 		else if (vcpu.kvm_run->io.port == 0xFFFF) {
 			char *p = (char *) vcpu.kvm_run;
 			auto intr = *(uint8_t*) &p[vcpu.kvm_run->io.data_offset];
+			printf("Exception\n");
 			/* CPU Exception */
 			this->handle_exception(intr);
 			throw MachineException(std::string(exception_name(intr)), intr);
@@ -382,6 +390,25 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 	}
 
 	return run_once();
+}
+
+void Machine::prepare_copy_on_write()
+{
+	page_at(memory, PT_ADDR, 0x1fe000,
+		[] (uint64_t addr, uint64_t& entry, size_t) {
+			printf("Addr: 0x%lX\n", addr);
+			assert(entry & PDE64_RW);
+		});
+
+	foreach_page_makecow(this->memory, PT_ADDR);
+
+	print_pagetables(memory, PT_ADDR);
+
+	page_at(memory, PT_ADDR, 0x1fe000,
+		[] (uint64_t addr, uint64_t& entry, size_t) {
+			printf("Addr: 0x%lX\n", addr);
+			assert((entry & PDE64_RW) == 0);
+		});
 }
 
 }

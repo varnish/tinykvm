@@ -88,9 +88,8 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 		throw std::runtime_error("Failed to KVM_CREATE_VM");
 	}
 
-	/* Create a CoW-mapping from the master machine */
+	/* Reuse pre-CoWed pagetable from the master machine */
 	this->memory = vMemory::From(other.memory, m_banks);
-	this->copy_dirty_memory(other);
 
 	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
@@ -177,11 +176,8 @@ Machine::~Machine()
 		close(fd);
 		close(vcpu.fd);
 	}
-	if (memory.fd != -1) {
-		close(memory.fd);
+	if (memory.owned) {
 		munmap(memory.ptr, memory.size);
-	} else {
-		m_banks.insert(memory.ptr, memory.size);
 	}
 }
 

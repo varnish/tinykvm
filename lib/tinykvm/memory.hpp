@@ -11,14 +11,14 @@ struct vMemory {
 	uint64_t safebase;
 	char*  ptr;
 	size_t size;
-	int    fd = -1;
+	bool   owned = true;
 
 	/* Unsafe */
 	bool within(uint64_t addr, size_t asize) const noexcept {
 		return (addr >= physbase) && (addr + asize <= physbase + this->size);
 	}
 	char* at(uint64_t addr, size_t asize = 8);
-	const uint64_t* page_at(uint64_t addr) const;
+	uint64_t* page_at(uint64_t addr) const;
 	/* Safe */
 	bool safely_within(uint64_t addr, size_t asize) const noexcept {
 		return (addr >= safebase) && (addr + asize <= physbase + this->size);

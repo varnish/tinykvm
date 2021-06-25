@@ -1,10 +1,11 @@
 #include <tinykvm/machine.hpp>
 #include <cstring>
 #include <cstdio>
+#include <cassert>
 
 #include <tinykvm/rsp_client.hpp>
 
-#define NUM_GUESTS   400
+#define NUM_GUESTS   1
 #define GUEST_MEMORY 0x4000000  /* 64MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
@@ -130,14 +131,31 @@ int main(int argc, char** argv)
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 	/* Normal execution of _start -> main() */
 	master_vm.run();
+	/* Make the master VM able to mass-produce copies */
+	master_vm.prepare_copy_on_write();
+	master_vm.set_stack_address(0x1ff000);
 
 	asm("" : : : "memory");
 	auto t4 = time_now();
 	asm("" : : : "memory");
 
+	uint64_t forktime = 0;
+
+	printf("The 'test' function is at 0x%lX\n", master_vm.address_of("test"));
+	assert(master_vm.address_of("test") != 0);
+	printf("Call stack is at 0x%lX\n", master_vm.stack_address());
+
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
+		asm("" : : : "memory");
+		auto ft1 = time_now();
+		asm("" : : : "memory");
 		tinykvm::Machine vm {master_vm, options};
+		asm("" : : : "memory");
+		auto ft2 = time_now();
+		asm("" : : : "memory");
+		forktime += nanodiff(ft1, ft2);
+		//printf("Calling 'test'\n");
 		vm.vmcall("test");
 	}
 
@@ -145,8 +163,12 @@ int main(int argc, char** argv)
 	auto t5 = time_now();
 	asm("" : : : "memory");
 
-	auto nanos_per_gf = nanodiff(t4, t5) / NUM_GUESTS;
+	auto nanos_per_gf = forktime / NUM_GUESTS;
 	printf("Fork: %ldns (%ld micros)\n", nanos_per_gf, nanos_per_gf / 1000);
+	auto nanos_per_fc = nanodiff(t4, t5) / NUM_GUESTS;
+	printf("Fast copy: %ldns (%ld micros)\n", nanos_per_fc, nanos_per_fc / 1000);
+	printf("vmcall + destructor: %ldns (%ld micros)\n",
+		nanos_per_fc - nanos_per_gf, (nanos_per_fc - nanos_per_gf) / 1000);
 }
 
 #include <stdexcept>

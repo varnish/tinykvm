@@ -3,6 +3,7 @@
 #include "amd64.hpp"
 #include "vdso.hpp"
 #include "../util/elf.h"
+#include <cassert>
 #include <stdexcept>
 
 namespace tinykvm {
@@ -204,7 +205,7 @@ void print_pagetables(vMemory& memory, uint64_t pagetable_mem)
 	}
 }
 
-void foreach_page(const vMemory& memory, uint64_t pagetable_mem, foreach_page_t callback)
+void foreach_page(vMemory& memory, uint64_t pagetable_mem, foreach_page_t callback)
 {
 	auto* pml4 = memory.page_at(pagetable_mem);
 	for (size_t i = 0; i < 512; i++)
@@ -225,13 +226,13 @@ void foreach_page(const vMemory& memory, uint64_t pagetable_mem, foreach_page_t 
 							uint64_t pt_addr = pd_addr | (k << 21);
 							uint64_t pt_mem  = pd[k] & ~0x8000000000000FFF;
 							if (pd[k] & PDE64_PS) { // 2MB page
-								callback(pt_mem, pd[k], 1 << 21);
+								callback(pt_addr, pd[k], 1 << 21);
 							} else {
 								auto* pt = memory.page_at(pt_mem);
 								for (uint64_t e = 0; e < 512; e++) {
-									if (pt[e] & PDE64_PRESENT) {
+									if (pt[e] & PDE64_PRESENT) { // 4KB page
 										const uint64_t pte_addr = pt_addr | (e << 12);
-										callback(pt[e] & ~0x8000000000000FFF, pt[e], 4096);
+										callback(pte_addr, pt[e], 4096);
 									}
 								} // e
 							} // 2MB page
@@ -242,5 +243,57 @@ void foreach_page(const vMemory& memory, uint64_t pagetable_mem, foreach_page_t 
 		}
 	} // i
 } // foreach_page
+void foreach_page(const vMemory& mem, uint64_t pt_base, foreach_page_t callback)
+{
+	foreach_page(const_cast<vMemory&>(mem), pt_base, std::move(callback));
+}
+
+void foreach_page_makecow(vMemory& mem, uint64_t pt_base)
+{
+	foreach_page(mem, pt_base,
+		[pt_base] (uint64_t addr, uint64_t& entry, size_t) {
+			if (addr > pt_base && addr != 0xffe00000) {
+				if (entry & PDE64_RW) {
+					//printf("Removing W from 0x%lX\n", addr);
+					entry &= ~PDE64_RW;
+				}
+			}
+		});
+}
+
+void page_at(vMemory& memory, uint64_t pt_base, uint64_t addr, foreach_page_t callback)
+{
+	auto* pml4 = memory.page_at(pt_base);
+	const uint64_t i = (addr >> 39) & 511;
+	if (pml4[i] & PDE64_PRESENT) {
+		const uint64_t pdpt_base = i << 39;
+		const uint64_t pdpt_mem  = pml4[i] & ~(uint64_t) 0xFFF;
+		auto* pdpt = memory.page_at(pdpt_mem);
+		const uint64_t j = (addr >> 30) & 511;
+		if (pdpt[j] & PDE64_PRESENT) {
+			const uint64_t pd_addr = pdpt_base | (j << 30);
+			const uint64_t pd_mem  = pdpt[j] & ~0xFFF;
+			auto* pd = memory.page_at(pd_mem);
+			const uint64_t k = (addr >> 21) & 511;
+			if (pd[k] & PDE64_PRESENT) {
+				uint64_t pt_addr = pd_addr | (k << 21);
+				uint64_t pt_mem  = pd[k] & ~0x8000000000000FFF;
+				if (pd[k] & PDE64_PS) { // 2MB page
+					callback(pt_mem, pd[k], 1 << 21);
+					return;
+				} else {
+					auto* pt = memory.page_at(pt_mem);
+					const uint64_t e = (addr >> 12) & 511;
+					if (pt[e] & PDE64_PRESENT) { // 4KB page
+						const uint64_t pte_addr = pt_addr | (e << 12);
+						callback(pt[e] & ~0x8000000000000FFF, pt[e], 4096);
+						return;
+					} // pt
+				}
+			} // pd
+		} // pdpt
+	} // pml4
+	throw std::runtime_error("page_at: Could not find page");
+}
 
 }

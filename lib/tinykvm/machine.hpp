@@ -64,6 +64,7 @@ struct Machine
 	address_t heap_address() const noexcept { return this->m_heap_address; }
 	address_t exit_address() const noexcept { return this->m_exit_address; }
 	void set_exit_address(address_t addr) { this->m_exit_address = addr; }
+	void set_stack_address(address_t addr) { this->m_stack_address = addr; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
 
 	uint64_t address_of(const char*) const;
@@ -75,6 +76,7 @@ struct Machine
 	const auto& mmap() const { return m_mm; }
 	auto& mmap() { return m_mm; }
 
+	void prepare_copy_on_write();
 	static void init();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);
