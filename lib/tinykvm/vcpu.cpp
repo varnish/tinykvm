@@ -5,6 +5,7 @@
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #include "kernel/amd64.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
@@ -59,6 +60,15 @@ void Machine::vCPU::init(Machine& machine)
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
 		throw std::runtime_error("KVM_SET_CPUID2 failed");
+	}
+}
+void Machine::vCPU::deinit()
+{
+	if (this->fd > 0) {
+		close(this->fd);
+	}
+	if (this->kvm_run != nullptr) {
+		munmap(this->kvm_run, vcpu_mmap_size);
 	}
 }
 void Machine::vCPU::print_address_info(uint64_t addr)
@@ -171,7 +181,6 @@ void Machine::setup_long_mode(const Machine* other)
 		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
 			throw std::runtime_error("KVM_SET_SREGS failed");
 		}
-
 	}
 
 	page_at(memory, PT_ADDR,
@@ -306,6 +315,7 @@ long Machine::run(unsigned timeout)
 long Machine::run_once()
 {
 	if (ioctl(vcpu.fd, KVM_RUN, 0) < 0) {
+		/* NOTE: This is probably EINTR */
 		throw std::runtime_error("KVM_RUN failed");
 	}
 
@@ -352,8 +362,8 @@ long Machine::run_once()
 		}
 		printf("Unknown MMIO write at 0x%llX\n",
 			vcpu.kvm_run->mmio.phys_addr);
-		//[[fallthrough]];
 		return KVM_EXIT_MMIO;
+
 	default:
 		fprintf(stderr,	"Unexpected exit reason %d\n", vcpu.kvm_run->exit_reason);
 		throw MachineException("Unexpected KVM exit reason",
@@ -394,21 +404,8 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 
 void Machine::prepare_copy_on_write()
 {
-	page_at(memory, PT_ADDR, 0x1fe000,
-		[] (uint64_t addr, uint64_t& entry, size_t) {
-			printf("Addr: 0x%lX\n", addr);
-			assert(entry & PDE64_RW);
-		});
-
 	foreach_page_makecow(this->memory, PT_ADDR);
-
-	print_pagetables(memory, PT_ADDR);
-
-	page_at(memory, PT_ADDR, 0x1fe000,
-		[] (uint64_t addr, uint64_t& entry, size_t) {
-			printf("Addr: 0x%lX\n", addr);
-			assert((entry & PDE64_RW) == 0);
-		});
+	//print_pagetables(memory, PT_ADDR);
 }
 
 }

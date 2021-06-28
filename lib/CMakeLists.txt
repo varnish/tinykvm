@@ -12,6 +12,7 @@ set (SOURCES
 	tinykvm/machine_elf.cpp
 	tinykvm/machine_env.cpp
 	tinykvm/memory.cpp
+	tinykvm/memory_bank.cpp
 	tinykvm/rsp_client.cpp
 	tinykvm/threads.cpp
 	tinykvm/vcpu.cpp

@@ -1,7 +1,6 @@
 #include "machine.hpp"
 #include <cstring>
 #include <sys/mman.h>
-#include <stdexcept>
 #include <string>
 #include <unistd.h>
 
@@ -42,17 +41,17 @@ vMemory vMemory::New(uint64_t phys, uint64_t safe, size_t size)
 	// open a temporary file with owner privs
 	int fd = memfd_create("tinykvm", 0);
 	if (fd < 0) {
-		throw std::runtime_error("Failed to open mkstemp file");
+		throw MemoryException("Failed to open mkstemp file", 0, 0);
 	}
 	if (ftruncate(fd, size) < 0) {
-		throw std::runtime_error("Failed to truncate memfd (Out of memory?)");
+		throw MemoryException("Failed to truncate memfd (Out of memory?)", 0, size);
 	}
 #endif
 
 	auto* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
 		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
 	if (ptr == MAP_FAILED) {
-		throw std::runtime_error("Failed to allocate guest memory");
+		throw MemoryException("Failed to allocate guest memory", 0, size);
 	}
 	madvise(ptr, size, MADV_MERGEABLE);
 	return vMemory {
@@ -94,21 +93,6 @@ MemRange MemRange::New(
 		.size = size,
 		.name = name
 	};
-}
-
-void MemoryBanks::insert(char* ptr, std::size_t size)
-{
-	//madvise(ptr, size, MADV_FREE);
-	std::lock_guard<std::mutex> lk(m_guard);
-	m_mem.push_back({ptr, size});
-}
-char* MemoryBanks::get(std::size_t size)
-{
-	std::lock_guard<std::mutex> lk(m_guard);
-	if (m_mem.empty()) return nullptr;
-	auto result = m_mem.back();
-	m_mem.pop_back();
-	return result.ptr;
 }
 
 }

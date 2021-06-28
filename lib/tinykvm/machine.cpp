@@ -16,7 +16,6 @@ namespace tinykvm {
 	int Machine::kvm_fd = -1;
 	std::array<Machine::syscall_t, TINYKVM_MAX_SYSCALLS> Machine::m_syscalls {nullptr};
 	Machine::unhandled_syscall_t Machine::m_unhandled_syscall = [] (Machine&, unsigned) {};
-	MemoryBanks Machine::m_banks;
 	static int kvm_open();
 	long vcpu_mmap_size = 0;
 
@@ -105,10 +104,10 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	}
 
 	this->vcpu.init(*this);
+
 	this->setup_long_mode(&other);
 
-	auto regs = other.registers();
-	this->set_registers(regs);
+	this->set_registers(other.registers());
 }
 
 void Machine::init()
@@ -119,7 +118,10 @@ void Machine::init()
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
 {
 	sp = (sp - length) & ~0x7; // maintain word alignment
+	// TODO: fault-in new page
+	
 	std::memcpy(memory.safely_at(sp, length), data, length);
+
 	return sp;
 }
 
@@ -174,8 +176,8 @@ Machine::~Machine()
 {
 	if (fd > 0) {
 		close(fd);
-		close(vcpu.fd);
 	}
+	vcpu.deinit();
 	if (memory.owned) {
 		munmap(memory.ptr, memory.size);
 	}

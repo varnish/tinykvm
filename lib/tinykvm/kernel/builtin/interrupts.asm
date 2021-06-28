@@ -3,11 +3,11 @@ global vm64_exception
 
 %macro CPU_EXCEPT 1
 ALIGN 0x10
-	push QWORD [rsp]
 	;; exception trap
 	mov ax, %1
 	mov dx, 0xFFFF
 	out dx, ax
+	o64 iret
 %endmacro
 %macro CPU_EXCEPT_CODE 1
 ALIGN 0x10
@@ -15,6 +15,8 @@ ALIGN 0x10
 	mov ax, %1
 	mov dx, 0xFFFF
 	out dx, ax
+	pop rax
+	o64 iret
 %endmacro
 
 org 0x2000

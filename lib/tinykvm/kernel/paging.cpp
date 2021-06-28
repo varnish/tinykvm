@@ -53,7 +53,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	lowpage[0] = 0; /* Null-page at 0x0 */
 	/* Kernel area < 1MB */
 	for (unsigned i = 1; i < 256; i++) {
-		lowpage[i] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (i << 12);
+		lowpage[i] = PDE64_PRESENT | PDE64_NX | (i << 12);
 	}
 	/* Exception handlers */
 	lowpage[except_asm_addr >> 12] = PDE64_PRESENT | PDE64_USER | except_asm_addr;
@@ -250,15 +250,21 @@ void foreach_page(const vMemory& mem, uint64_t pt_base, foreach_page_t callback)
 
 void foreach_page_makecow(vMemory& mem, uint64_t pt_base)
 {
-	foreach_page(mem, pt_base,
+	for (uint64_t addr = 0x1f0000; addr < 0x200000; addr += 0x1000)
+	page_at(mem, pt_base, addr,
+		[] (uint64_t addr, uint64_t& entry, size_t) {
+			printf("Removing P from stack page at 0x%lX\n", addr);
+			entry &= ~PDE64_RW;
+		});
+/*	foreach_page(mem, pt_base,
 		[pt_base] (uint64_t addr, uint64_t& entry, size_t) {
 			if (addr > pt_base && addr != 0xffe00000) {
 				if (entry & PDE64_RW) {
-					//printf("Removing W from 0x%lX\n", addr);
-					entry &= ~PDE64_RW;
+					//printf("Removing P from 0x%lX\n", addr);
+					entry &= ~PDE64_PRESENT;
 				}
 			}
-		});
+		});*/
 }
 
 void page_at(vMemory& memory, uint64_t pt_base, uint64_t addr, foreach_page_t callback)

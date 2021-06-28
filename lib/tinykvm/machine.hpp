@@ -86,13 +86,14 @@ struct Machine
 private:
 	struct vCPU {
 		void init(Machine&);
+		void deinit();
 		void print_address_info(uint64_t addr);
 		tinykvm_x86regs registers() const;
 		void assign_registers(const struct tinykvm_x86regs&);
 		void get_special_registers(struct kvm_sregs&) const;
 
-		int fd;
-		struct kvm_run *kvm_run;
+		int fd = 0;
+		struct kvm_run *kvm_run = nullptr;
 	};
 	template <typename... Args> constexpr
 	tinykvm_x86regs setup_call(uint64_t addr, Args&&... args);
@@ -109,7 +110,7 @@ private:
 	void handle_exception(uint8_t intr);
 	long run_once();
 
-	int   fd;
+	int   fd = 0;
 	bool  m_stopped = true;
 	vCPU  vcpu;
 	void* m_userdata = nullptr;
@@ -123,15 +124,17 @@ private:
 	uint64_t m_heap_address;
 	uint64_t m_start_address;
 
-	vMemory memory; // guest memory
+	vMemory memory;  // guest memory
 	vMemory vsyscall; // vsyscall page
 	MemRange mmio_scall; // syscall MMIO slot
-	MemRange ptmem; // page tables
+	MemRange ptmem;  // page tables
+	MemoryBanks m_banks; // fault-in memory banks
+	size_t   m_bank_idx  = 0;
+	uint64_t m_bank_area = 0x0;
 
 	uint64_t m_mm = 0;
 	std::unique_ptr<MultiThreading> m_mt = nullptr;
 
-	static MemoryBanks m_banks;
 	static int kvm_fd;
 };
 
