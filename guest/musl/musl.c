@@ -27,13 +27,19 @@ int main()
 	return 0;
 }
 
+asm(".global rexit\n"
+	"rexit:\n"
+	"mov %rax, %rdi\n"
+	"mov $60, %rax\n"
+	"syscall");
+
 #include <assert.h>
 static int t = 0;
 
 __attribute__((used))
 void test()
 {
-	assert(t == 0);
+	//assert(t == 0);
 	t = 1;
 	printf("Hello World!\n");
 	assert(nprimes == 78498);

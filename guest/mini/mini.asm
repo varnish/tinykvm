@@ -1,8 +1,11 @@
 [BITS 64]
 global _start:function
 global test:function
+global rexit:function
 
 SECTION .text
+
+ALIGN 0x8
 _start:
 	mov di, 0x1337
 
@@ -10,14 +13,17 @@ _start:
 	push rdi
 
 	mov ax, 60  ;; exit
-	o64 syscall
+	syscall
 
+ALIGN 0x8
 test:
-	push QWORD 0x7347
+	mov rsp, 0x1ff000
+	push rax
 	pop rax
 	ret
 
-exit:
+ALIGN 0x8
+rexit:
 	mov rdi, rax
-	mov ax, 60  ;; exit
-	o64 syscall
+	mov rax, 60  ;; exit
+	syscall
