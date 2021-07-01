@@ -4,15 +4,18 @@
 
 namespace tinykvm {
 
-extern uint64_t setup_amd64_paging(vMemory&, uint64_t pagetable_base,
+extern uint64_t setup_amd64_paging(vMemory&,
 	uint64_t except_addr, uint64_t ist_addr, std::string_view binary);
-extern void print_pagetables(vMemory&, uint64_t pagetable_base);
+extern void print_pagetables(vMemory&);
 
 using foreach_page_t = std::function<void(uint64_t, uint64_t&, size_t)>;
-extern void foreach_page(vMemory&, uint64_t pt_base, foreach_page_t callback);
-extern void foreach_page(const vMemory&, uint64_t pt_base, foreach_page_t callback);
-extern void foreach_page_makecow(vMemory&, uint64_t pt_base);
+extern void foreach_page(vMemory&, foreach_page_t callback);
+extern void foreach_page(const vMemory&, foreach_page_t callback);
+extern void foreach_page_makecow(vMemory&);
 
-extern void page_at(vMemory&, uint64_t pt_base, uint64_t addr, foreach_page_t);
+extern void page_at(vMemory&, uint64_t addr, foreach_page_t);
+
+using page_allocator_t = std::function<void*()>;
+extern char * get_writable_page(vMemory&, uint64_t addr, page_allocator_t);
 
 }

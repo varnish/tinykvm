@@ -11,15 +11,9 @@
 #include "kernel/gdt.hpp"
 #include "kernel/tss.hpp"
 #include "kernel/paging.hpp"
+#include "kernel/memory_layout.hpp"
 
 namespace tinykvm {
-	static constexpr uint64_t GDT_ADDR = 0x1600;
-	static constexpr uint64_t TSS_ADDR = 0x1700;
-	static constexpr uint64_t IDT_ADDR = 0x1800;
-	static constexpr uint64_t INTR_ASM_ADDR = 0x2000;
-	static constexpr uint64_t IST_ADDR = 0x3000;
-	static constexpr uint64_t PT_ADDR  = 0x4000;
-
 	static struct kvm_sregs master_sregs;
 	static struct kvm_xcrs master_xregs;
 	static struct {
@@ -110,7 +104,7 @@ std::string_view Machine::io_data() const
 
 void Machine::copy_dirty_memory(const Machine& other)
 {
-	foreach_page(other.memory, 0x4000,
+	foreach_page(other.memory,
 		[this, &other] (uint64_t addr, uint64_t entry, size_t size) mutable {
 			// Copy the page if it's dirty or not writable but present
 			bool copy = (entry & PDE64_DIRTY) != 0 || (entry & PDE64_RW) == 0;
@@ -161,7 +155,7 @@ void Machine::setup_long_mode(const Machine* other)
 		}
 
 		uint64_t last_page = setup_amd64_paging(
-			memory, PT_ADDR, INTR_ASM_ADDR, IST_ADDR, m_binary);
+			memory, INTR_ASM_ADDR, IST_ADDR, m_binary);
 		this->ptmem = MemRange::New("Page tables",
 			PT_ADDR, last_page - PT_ADDR);
 
@@ -183,7 +177,7 @@ void Machine::setup_long_mode(const Machine* other)
 		}
 	}
 
-	page_at(memory, PT_ADDR,
+	page_at(memory,
 		IST_ADDR,
 		[] (uint64_t, uint64_t& entry, size_t) {
 			assert(entry & PDE64_RW);
@@ -404,8 +398,8 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 
 void Machine::prepare_copy_on_write()
 {
-	foreach_page_makecow(this->memory, PT_ADDR);
-	//print_pagetables(memory, PT_ADDR);
+	foreach_page_makecow(this->memory);
+	//print_pagetables(memory);
 }
 
 }

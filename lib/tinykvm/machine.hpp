@@ -33,6 +33,7 @@ struct Machine
 	void reset();
 
 	void copy_to_guest(address_t addr, const void*, size_t);
+	void copy_from_guest(void* dst, address_t addr, size_t);
 
 	template <typename T>
 	uint64_t stack_push(__u64& sp, const T&);
@@ -100,7 +101,8 @@ private:
 	void setup_registers(tinykvm_x86regs&);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
-	int install_memory(uint32_t idx, vMemory mem);
+	int install_memory(uint32_t idx, const vMemory&);
+	int install_memory(uint32_t idx, void* ptr, uint64_t base, uint64_t size);
 	int delete_memory(uint32_t idx);
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
@@ -112,6 +114,7 @@ private:
 
 	int   fd = 0;
 	bool  m_stopped = true;
+	bool  m_forked = false;
 	vCPU  vcpu;
 	void* m_userdata = nullptr;
 
@@ -128,7 +131,6 @@ private:
 	vMemory vsyscall; // vsyscall page
 	MemRange mmio_scall; // syscall MMIO slot
 	MemRange ptmem;  // page tables
-	MemoryBanks m_banks; // fault-in memory banks
 	size_t   m_bank_idx  = 0;
 	uint64_t m_bank_area = 0x0;
 

@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 #include <string>
 #include <unistd.h>
+#include "kernel/memory_layout.hpp"
 
 namespace tinykvm {
 
@@ -57,18 +58,19 @@ vMemory vMemory::New(uint64_t phys, uint64_t safe, size_t size)
 	return vMemory {
 		.physbase = phys,
 		.safebase = safe,
+		.page_tables = PT_ADDR,
 		.ptr  = ptr,
 		.size = size,
 		.owned = true
 	};
 }
 
-vMemory vMemory::From(const vMemory& other, MemoryBanks& bank)
+vMemory vMemory::From(const vMemory& other)
 {
-	(void) bank;
 	return vMemory {
 		.physbase = other.physbase,
 		.safebase = other.safebase,
+		.page_tables = PT_ADDR,
 		.ptr  = other.ptr,
 		.size = other.size,
 		.owned = false
@@ -80,6 +82,7 @@ vMemory vMemory::From(uint64_t phys, char* ptr, size_t size)
 	return vMemory {
 		.physbase = phys,
 		.safebase = phys,
+		.page_tables = PT_ADDR,
 		.ptr  = ptr,
 		.size = size
 	};

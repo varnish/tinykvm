@@ -10,7 +10,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <stdexcept>
-#include "void_async.hpp"
 
 namespace tinykvm {
 	int Machine::kvm_fd = -1;
@@ -20,7 +19,8 @@ namespace tinykvm {
 	long vcpu_mmap_size = 0;
 
 Machine::Machine(std::string_view binary, const MachineOptions& options)
-	: m_binary {binary}
+	: m_binary {binary},
+	  m_forked {false}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 
@@ -72,6 +72,7 @@ Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_binary {other.m_binary},
 	  m_stopped {true},
+	  m_forked  {true},
 	  m_exit_address {other.m_exit_address},
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address {other.m_heap_address},
@@ -88,7 +89,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	}
 
 	/* Reuse pre-CoWed pagetable from the master machine */
-	this->memory = vMemory::From(other.memory, m_banks);
+	this->memory = vMemory::From(other.memory);
 
 	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
@@ -118,23 +119,24 @@ void Machine::init()
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
 {
 	sp = (sp - length) & ~0x7; // maintain word alignment
-	// TODO: fault-in new page
-	
-	std::memcpy(memory.safely_at(sp, length), data, length);
-
+	copy_to_guest(sp, data, length);
 	return sp;
 }
 
-int Machine::install_memory(uint32_t idx, vMemory mem)
+int Machine::install_memory(uint32_t idx, void* ptr, uint64_t base, uint64_t size)
 {
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
-		.flags = (mem.ptr) ? 0u : (uint32_t) KVM_MEM_READONLY,
-		.guest_phys_addr = mem.physbase,
-		.memory_size = mem.size,
-		.userspace_addr = (uintptr_t) mem.ptr,
+		.flags = (ptr) ? 0u : (uint32_t) KVM_MEM_READONLY,
+		.guest_phys_addr = base,
+		.memory_size = size,
+		.userspace_addr = (uintptr_t) ptr,
 	};
 	return ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg);
+}
+int Machine::install_memory(uint32_t idx, const vMemory& mem)
+{
+	return install_memory(idx, mem.ptr, mem.physbase, mem.size);
 }
 int Machine::delete_memory(uint32_t idx)
 {

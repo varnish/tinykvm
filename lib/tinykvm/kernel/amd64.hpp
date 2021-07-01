@@ -1,3 +1,5 @@
+#define PAGE_SIZE  4096
+
 /* CR0 bits */
 #define CR0_PE 1u
 #define CR0_MP (1U << 1)

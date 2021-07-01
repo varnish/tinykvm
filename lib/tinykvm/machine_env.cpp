@@ -156,10 +156,4 @@ void Machine::setup_linux(
 	this->set_registers(regs);
 }
 
-void Machine::copy_to_guest(address_t addr, const void* src, size_t size)
-{
-	auto* dst = memory.safely_at(addr, size);
-	std::memcpy(dst, src, size);
-}
-
 }

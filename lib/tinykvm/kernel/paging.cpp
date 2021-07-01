@@ -9,10 +9,10 @@
 namespace tinykvm {
 
 uint64_t setup_amd64_paging(vMemory& memory,
-	uint64_t pagetable_base, uint64_t except_asm_addr, uint64_t ist_addr, std::string_view binary)
+	uint64_t except_asm_addr, uint64_t ist_addr, std::string_view binary)
 {
 	// guest physical
-	const uint64_t pml4_addr = pagetable_base;
+	const uint64_t pml4_addr = memory.page_tables;
 	const uint64_t pdpt_addr = pml4_addr + 0x1000;
 	const uint64_t pd1_addr  = pml4_addr + 0x2000;
 	const uint64_t pd2_addr  = pml4_addr + 0x3000;
@@ -20,7 +20,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	const uint64_t low1_addr = pml4_addr + 0x5000;
 
 	// userspace
-	char* pagetable = memory.at(pagetable_base);
+	char* pagetable = memory.at(memory.page_tables);
 	auto* pml4 = (uint64_t*) (pagetable + 0x0);
 	auto* pdpt = (uint64_t*) (pagetable + 0x1000);
 	auto* pd   = (uint64_t*) (pagetable + 0x2000);
@@ -194,9 +194,9 @@ void print_pdpt(vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
 	}
 }
 
-void print_pagetables(vMemory& memory, uint64_t pagetable_mem)
+void print_pagetables(vMemory& memory)
 {
-	uint64_t* pml4 = (uint64_t*) memory.at(pagetable_mem);
+	uint64_t* pml4 = (uint64_t*) memory.at(memory.page_tables);
 	for (size_t i = 0; i < 512; i++) {
 		if (pml4[i] & PDE64_PRESENT) {
 			printf("* 512GB PML4:\n");
@@ -205,9 +205,9 @@ void print_pagetables(vMemory& memory, uint64_t pagetable_mem)
 	}
 }
 
-void foreach_page(vMemory& memory, uint64_t pagetable_mem, foreach_page_t callback)
+void foreach_page(vMemory& memory, foreach_page_t callback)
 {
-	auto* pml4 = memory.page_at(pagetable_mem);
+	auto* pml4 = memory.page_at(memory.page_tables);
 	for (size_t i = 0; i < 512; i++)
 	{
 		if (pml4[i] & PDE64_PRESENT) {
@@ -243,20 +243,20 @@ void foreach_page(vMemory& memory, uint64_t pagetable_mem, foreach_page_t callba
 		}
 	} // i
 } // foreach_page
-void foreach_page(const vMemory& mem, uint64_t pt_base, foreach_page_t callback)
+void foreach_page(const vMemory& mem, foreach_page_t callback)
 {
-	foreach_page(const_cast<vMemory&>(mem), pt_base, std::move(callback));
+	foreach_page(const_cast<vMemory&>(mem), std::move(callback));
 }
 
-void foreach_page_makecow(vMemory& mem, uint64_t pt_base)
+void foreach_page_makecow(vMemory& mem)
 {
 	for (uint64_t addr = 0x1f0000; addr < 0x200000; addr += 0x1000)
-	page_at(mem, pt_base, addr,
+	page_at(mem, addr,
 		[] (uint64_t addr, uint64_t& entry, size_t) {
 			printf("Removing P from stack page at 0x%lX\n", addr);
 			entry &= ~PDE64_RW;
 		});
-/*	foreach_page(mem, pt_base,
+/*	foreach_page(mem,
 		[pt_base] (uint64_t addr, uint64_t& entry, size_t) {
 			if (addr > pt_base && addr != 0xffe00000) {
 				if (entry & PDE64_RW) {
@@ -267,9 +267,9 @@ void foreach_page_makecow(vMemory& mem, uint64_t pt_base)
 		});*/
 }
 
-void page_at(vMemory& memory, uint64_t pt_base, uint64_t addr, foreach_page_t callback)
+void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback)
 {
-	auto* pml4 = memory.page_at(pt_base);
+	auto* pml4 = memory.page_at(memory.page_tables);
 	const uint64_t i = (addr >> 39) & 511;
 	if (pml4[i] & PDE64_PRESENT) {
 		const uint64_t pdpt_base = i << 39;
