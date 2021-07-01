@@ -14,8 +14,6 @@ extern void foreach_page(const vMemory&, foreach_page_t callback);
 extern void foreach_page_makecow(vMemory&);
 
 extern void page_at(vMemory&, uint64_t addr, foreach_page_t);
-
-using page_allocator_t = std::function<void*()>;
-extern char * get_writable_page(vMemory&, uint64_t addr, page_allocator_t);
+extern char * writable_page_at(vMemory&, uint64_t addr);
 
 }

@@ -6,6 +6,13 @@
 
 namespace tinykvm {
 
+MemoryBanks::MemoryBanks(Machine& machine)
+	: m_machine { machine },
+	  m_arena_next { 0x700000000 },
+	  m_idx { 2 }
+{
+}
+
 MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 {
 	const size_t size = N_PAGES * 4096;
@@ -17,7 +24,7 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 	}
 	throw MemoryException("Failed to allocate memory bank", 0, size);
 }
-MemoryBank& MemoryBanks::get_available_bank(uint64_t next_addr)
+MemoryBank& MemoryBanks::get_available_bank()
 {
 	if (!m_mem.empty()) {
 		auto& last = m_mem.back();
@@ -25,7 +32,9 @@ MemoryBank& MemoryBanks::get_available_bank(uint64_t next_addr)
 			return last;
 		}
 	}
-	return this->allocate_new_bank(next_addr);
+	auto& bank = this->allocate_new_bank(m_arena_next);
+	m_arena_next += bank.n_pages * 4096;
+	return bank;
 }
 
 MemoryBank::Page MemoryBank::get_next_page()
@@ -33,7 +42,7 @@ MemoryBank::Page MemoryBank::get_next_page()
 	assert(n_used < n_pages);
 	uint64_t offset = 4096 * n_used;
 	n_used++;
-	return {mem + offset, addr + offset};
+	return {(uint64_t *)mem + offset, addr + offset};
 }
 
 } // tinykvm

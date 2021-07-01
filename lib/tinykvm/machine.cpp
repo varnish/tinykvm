@@ -20,7 +20,9 @@ namespace tinykvm {
 
 Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_binary {binary},
-	  m_forked {false}
+	  m_forked {false},
+	  memory { vMemory::New(*this, 0x0, 0x100000, options.max_mem) },
+	  vsyscall { vMemory::From(*this, 0xFFFF600000, (char*) vdso_page().data(), vdso_page().size()) }
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 
@@ -46,13 +48,11 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
 
 	/* Disallow viewing memory below 1MB */
-	this->memory = vMemory::New(0x0, 0x100000, options.max_mem);
 	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}
 
 	/* vsyscall page */
-	this->vsyscall = vMemory::From(0xFFFF600000, (char*) vdso_page().data(), vdso_page().size());
 	if (UNLIKELY(install_memory(1, this->vsyscall) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}
@@ -77,6 +77,8 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address {other.m_heap_address},
 	  m_start_address {other.m_start_address},
+	  memory { vMemory::From(*this, other.memory) },
+	  vsyscall { vMemory::From(*this, 0xFFFF600000, (char*) vdso_page().data(), vdso_page().size()) },
 	  ptmem    {other.ptmem},
 	  m_mm     {other.m_mm},
 	  m_mt     {new MultiThreading{*other.m_mt}}
@@ -89,8 +91,6 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	}
 
 	/* Reuse pre-CoWed pagetable from the master machine */
-	this->memory = vMemory::From(other.memory);
-
 	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}
@@ -99,7 +99,6 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
 
 	/* vsyscall page */
-	this->vsyscall = vMemory::From(0xFFFF600000, (char*) vdso_page().data(), vdso_page().size());
 	if (UNLIKELY(install_memory(1, other.vsyscall) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}

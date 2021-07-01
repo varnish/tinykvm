@@ -6,9 +6,13 @@
 #include "memory_bank.hpp"
 
 namespace tinykvm {
+struct Machine;
 struct MemoryBanks;
 
 struct vMemory {
+	static constexpr uint64_t PAGE_SIZE = 4096;
+
+	Machine& machine;
 	uint64_t physbase;
 	uint64_t safebase;
 	uint64_t page_tables;
@@ -33,10 +37,15 @@ struct vMemory {
 	char* safely_at(uint64_t addr, size_t asize);
 	std::string_view view(uint64_t addr, size_t asize) const;
 
+	char *get_writable_page(uint64_t addr);
+	MemoryBank::Page new_page();
+
 	void reset();
-	static vMemory New(uint64_t phys, uint64_t safe, size_t size);
-	static vMemory From(uint64_t phys, char* ptr, size_t size);
-	static vMemory From(const vMemory& other);
+	static vMemory New(Machine&, uint64_t phys, uint64_t safe, size_t size);
+	static vMemory From(Machine&, uint64_t phys, char* ptr, size_t size);
+	static vMemory From(Machine&, const vMemory& other);
+
+	vMemory(Machine&, uint64_t, uint64_t, char*, size_t, bool = true);
 };
 
 struct MemRange {

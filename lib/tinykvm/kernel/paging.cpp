@@ -8,6 +8,30 @@
 
 namespace tinykvm {
 
+using ptentry_pair = std::tuple<uint64_t, uint64_t, uint64_t>;
+inline ptentry_pair pdpt_from_index(size_t i, uint64_t* pml4) {
+	return {i << 39, pml4[i] & ~(uint64_t) 0xFFF, 1ul << 39};
+}
+inline ptentry_pair pd_from_index(size_t i, uint64_t pdpt_base, uint64_t* pdpt) {
+	return {pdpt_base | (i << 30), pdpt[i] & ~(uint64_t) 0xFFF, 1ul << 30};
+}
+inline ptentry_pair pt_from_index(size_t i, uint64_t pd_base, uint64_t* pd) {
+	return {pd_base | (i << 21), pd[i] & ~0x8000000000000FFF, 1ul << 21};
+}
+inline ptentry_pair pte_from_index(size_t i, uint64_t pt_base, uint64_t* pt) {
+	return {pt_base | (i << 12), pt[i] & ~0x8000000000000FFF, 1ul << 12};
+}
+
+inline uint64_t index_from_pdpt_entry(uint64_t addr) {
+	return (addr >> 30) & 511;
+}
+inline uint64_t index_from_pd_entry(uint64_t addr) {
+	return (addr >> 21) & 511;
+}
+inline uint64_t index_from_pt_entry(uint64_t addr) {
+	return (addr >> 12) & 511;
+}
+
 uint64_t setup_amd64_paging(vMemory& memory,
 	uint64_t except_asm_addr, uint64_t ist_addr, std::string_view binary)
 {
@@ -211,28 +235,25 @@ void foreach_page(vMemory& memory, foreach_page_t callback)
 	for (size_t i = 0; i < 512; i++)
 	{
 		if (pml4[i] & PDE64_PRESENT) {
-			const uint64_t pdpt_base = i << 39;
-			const uint64_t pdpt_mem  = pml4[i] & ~(uint64_t) 0xFFF;
+			const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
 			auto* pdpt = memory.page_at(pdpt_mem);
 			for (uint64_t j = 0; j < 512; j++)
 			{
 				if (pdpt[j] & PDE64_PRESENT) {
-					const uint64_t pd_addr = pdpt_base | (j << 30);
-					const uint64_t pd_mem  = pdpt[j] & ~0xFFF;
+					const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
 					auto* pd = memory.page_at(pd_mem);
 					for (uint64_t k = 0; k < 512; k++)
 					{
 						if (pd[k] & PDE64_PRESENT) {
-							uint64_t pt_addr = pd_addr | (k << 21);
-							uint64_t pt_mem  = pd[k] & ~0x8000000000000FFF;
+							const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
 							if (pd[k] & PDE64_PS) { // 2MB page
-								callback(pt_addr, pd[k], 1 << 21);
+								callback(pt_base, pd[k], pt_size);
 							} else {
 								auto* pt = memory.page_at(pt_mem);
 								for (uint64_t e = 0; e < 512; e++) {
+									const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
 									if (pt[e] & PDE64_PRESENT) { // 4KB page
-										const uint64_t pte_addr = pt_addr | (e << 12);
-										callback(pte_addr, pt[e], 4096);
+										callback(pte_base, pt[e], pte_size);
 									}
 								} // e
 							} // 2MB page
@@ -272,34 +293,108 @@ void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback)
 	auto* pml4 = memory.page_at(memory.page_tables);
 	const uint64_t i = (addr >> 39) & 511;
 	if (pml4[i] & PDE64_PRESENT) {
-		const uint64_t pdpt_base = i << 39;
-		const uint64_t pdpt_mem  = pml4[i] & ~(uint64_t) 0xFFF;
+		const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
 		auto* pdpt = memory.page_at(pdpt_mem);
-		const uint64_t j = (addr >> 30) & 511;
+		const uint64_t j = index_from_pdpt_entry(addr);
 		if (pdpt[j] & PDE64_PRESENT) {
-			const uint64_t pd_addr = pdpt_base | (j << 30);
-			const uint64_t pd_mem  = pdpt[j] & ~0xFFF;
+			const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
 			auto* pd = memory.page_at(pd_mem);
-			const uint64_t k = (addr >> 21) & 511;
+			const uint64_t k = index_from_pd_entry(addr);
 			if (pd[k] & PDE64_PRESENT) {
-				uint64_t pt_addr = pd_addr | (k << 21);
-				uint64_t pt_mem  = pd[k] & ~0x8000000000000FFF;
+				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
 				if (pd[k] & PDE64_PS) { // 2MB page
-					callback(pt_mem, pd[k], 1 << 21);
+					callback(pt_mem, pd[k], pt_size);
 					return;
 				} else {
 					auto* pt = memory.page_at(pt_mem);
-					const uint64_t e = (addr >> 12) & 511;
+					const uint64_t e = index_from_pt_entry(addr);
 					if (pt[e] & PDE64_PRESENT) { // 4KB page
-						const uint64_t pte_addr = pt_addr | (e << 12);
-						callback(pt[e] & ~0x8000000000000FFF, pt[e], 4096);
+						const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
+						callback(pte_base, pt[e], pte_size);
 						return;
 					} // pt
+					throw MemoryException("page_at: pt entry not present", addr, PDE64_PTE_SIZE);
 				}
 			} // pd
+			throw MemoryException("page_at: page table not present", addr, PDE64_PT_SIZE);
 		} // pdpt
+		throw MemoryException("page_at: page directory not present", addr, PDE64_PD_SIZE);
 	} // pml4
-	throw std::runtime_error("page_at: Could not find page");
+	throw MemoryException("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
+}
+
+#define PDE64_CLONED  (1ul << 11)
+
+inline bool is_cloned(uint64_t entry) {
+	return entry & PDE64_CLONED;
+}
+inline void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data) {
+	/* Allocate new page */
+	auto page = memory.new_page();
+	/* Copy all entries from old page */
+	std::copy(data, data + 512, page.pmem);
+	/* Set new entry, copy flags and set as cloned */
+	entry = page.addr | (entry & 0xFFF) | PDE64_CLONED;
+	data = page.pmem;
+}
+
+char * writable_page_at(vMemory& memory, uint64_t addr)
+{
+	auto* pml4 = memory.page_at(memory.page_tables);
+	const uint64_t i = (addr >> 39) & 511;
+	if (pml4[i] & PDE64_PRESENT) {
+		const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
+		auto* pdpt = memory.page_at(pdpt_mem);
+		/* Make copy of page if needed */
+		if (!is_cloned(pml4[i])) {
+			clone_and_update_entry(memory, pml4[i], pdpt);
+		}
+		const uint64_t j = index_from_pdpt_entry(addr);
+		if (pdpt[j] & PDE64_PRESENT) {
+			const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
+			auto* pd = memory.page_at(pd_mem);
+			/* Make copy of page if needed */
+			if (!is_cloned(pdpt[j])) {
+				clone_and_update_entry(memory, pdpt[j], pd);
+			}
+			const uint64_t k = index_from_pd_entry(addr);
+			if (pd[k] & PDE64_PRESENT) {
+				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
+				if (UNLIKELY(pd[k] & PDE64_PS)) { // 2MB page
+					/* Remove PS flag */
+					pd[k] &= ~PDE64_PS;
+					/* Copy flags from 2MB page */
+					uint64_t flags = pd[k] & 0xFFF;
+					/* Allocate page and fill 4k entries */
+					auto page = memory.new_page();
+					for (size_t e = 0; e < 512; e++) {
+						page.pmem[e] = pt_base | (e << 12) | flags;
+					}
+					/* Update 2MB entry */
+					pd[k] = page.addr | flags | PDE64_CLONED;
+				}
+				/* NOTE: Make sure we are re-reading pd[k] */
+				auto* pt = memory.page_at(pd[k] & ~0x8000000000000FFF);
+				/* Make copy of page if needed */
+				if (!is_cloned(pd[k])) {
+					clone_and_update_entry(memory, pd[k], pt);
+				}
+				const uint64_t e = index_from_pt_entry(addr);
+				if (pt[e] & PDE64_PRESENT) { // 4KB page
+					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
+					auto* data = memory.page_at(pte_mem);
+					if (!is_cloned(pt[e])) {
+						clone_and_update_entry(memory, pt[e], data);
+					}
+					return (char *)data;
+				} // pt
+				throw MemoryException("page_at: pt entry not present", addr, PDE64_PTE_SIZE);
+			} // pd
+			throw MemoryException("page_at: page table not present", addr, PDE64_PT_SIZE);
+		} // pdpt
+		throw MemoryException("page_at: page directory not present", addr, PDE64_PD_SIZE);
+	} // pml4
+	throw MemoryException("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
 }
 
 }
