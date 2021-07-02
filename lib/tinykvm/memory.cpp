@@ -88,6 +88,11 @@ MemRange MemRange::New(
 	};
 }
 
+VirtualMem vMemory::vmem() const
+{
+	return VirtualMem::New(physbase, ptr, size);
+}
+
 MemoryBank::Page vMemory::new_page()
 {
 	return banks.get_available_bank().get_next_page();

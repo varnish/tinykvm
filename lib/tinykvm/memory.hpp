@@ -1,9 +1,10 @@
 #pragma once
 #include "common.hpp"
+#include "memory_bank.hpp"
+#include "virtual_mem.hpp"
 #include <cstddef>
 #include <functional>
 #include <string_view>
-#include "memory_bank.hpp"
 
 namespace tinykvm {
 struct Machine;
@@ -39,6 +40,8 @@ struct vMemory {
 
 	char *get_writable_page(uint64_t addr);
 	MemoryBank::Page new_page();
+
+	VirtualMem vmem() const;
 
 	void reset();
 	static vMemory New(Machine&, uint64_t phys, uint64_t safe, size_t size);

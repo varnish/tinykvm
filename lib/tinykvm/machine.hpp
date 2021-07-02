@@ -77,6 +77,9 @@ struct Machine
 	const auto& mmap() const { return m_mm; }
 	auto& mmap() { return m_mm; }
 
+	int install_memory(uint32_t idx, const VirtualMem&);
+	int delete_memory(uint32_t idx);
+
 	void prepare_copy_on_write();
 	static void init();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
@@ -101,9 +104,6 @@ private:
 	void setup_registers(tinykvm_x86regs&);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
-	int install_memory(uint32_t idx, const vMemory&);
-	int install_memory(uint32_t idx, void* ptr, uint64_t base, uint64_t size);
-	int delete_memory(uint32_t idx);
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
@@ -128,7 +128,7 @@ private:
 	uint64_t m_start_address;
 
 	vMemory memory;  // guest memory
-	vMemory vsyscall; // vsyscall page
+	VirtualMem vsyscall; // vsyscall page
 	MemRange mmio_scall; // syscall MMIO slot
 	MemRange ptmem;  // page tables
 	size_t   m_bank_idx  = 0;

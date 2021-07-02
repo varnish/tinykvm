@@ -22,7 +22,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_binary {binary},
 	  m_forked {false},
 	  memory { vMemory::New(*this, 0x0, 0x100000, options.max_mem) },
-	  vsyscall { vMemory::From(*this, 0xFFFF600000, (char*) vdso_page().data(), vdso_page().size()) }
+	  vsyscall { VSYSCALL_AREA, (char*) vsys_page().data(), vsys_page().size() }
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 
@@ -48,7 +48,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
 
 	/* Disallow viewing memory below 1MB */
-	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
+	if (UNLIKELY(install_memory(0, memory.vmem()) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}
 
@@ -78,7 +78,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_heap_address {other.m_heap_address},
 	  m_start_address {other.m_start_address},
 	  memory { vMemory::From(*this, other.memory) },
-	  vsyscall { vMemory::From(*this, 0xFFFF600000, (char*) vdso_page().data(), vdso_page().size()) },
+	  vsyscall { VSYSCALL_AREA, (char*) vsys_page().data(), vsys_page().size() },
 	  ptmem    {other.ptmem},
 	  m_mm     {other.m_mm},
 	  m_mt     {new MultiThreading{*other.m_mt}}
@@ -91,7 +91,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	}
 
 	/* Reuse pre-CoWed pagetable from the master machine */
-	if (UNLIKELY(install_memory(0, this->memory) < 0)) {
+	if (UNLIKELY(install_memory(0, memory.vmem()) < 0)) {
 		throw std::runtime_error("Failed to install guest memory region");
 	}
 
@@ -122,20 +122,16 @@ uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
 	return sp;
 }
 
-int Machine::install_memory(uint32_t idx, void* ptr, uint64_t base, uint64_t size)
+int Machine::install_memory(uint32_t idx, const VirtualMem& mem)
 {
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
-		.flags = (ptr) ? 0u : (uint32_t) KVM_MEM_READONLY,
-		.guest_phys_addr = base,
-		.memory_size = size,
-		.userspace_addr = (uintptr_t) ptr,
+		.flags = (mem.ptr) ? 0u : (uint32_t) KVM_MEM_READONLY,
+		.guest_phys_addr = mem.physbase,
+		.memory_size = mem.size,
+		.userspace_addr = (uintptr_t) mem.ptr,
 	};
 	return ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg);
-}
-int Machine::install_memory(uint32_t idx, const vMemory& mem)
-{
-	return install_memory(idx, mem.ptr, mem.physbase, mem.size);
 }
 int Machine::delete_memory(uint32_t idx)
 {

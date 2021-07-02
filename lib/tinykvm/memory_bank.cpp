@@ -1,6 +1,7 @@
 #include "memory_bank.hpp"
 
 #include "common.hpp"
+#include "virtual_mem.hpp"
 #include <cassert>
 #include <malloc.h>
 

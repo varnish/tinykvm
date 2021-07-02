@@ -3,7 +3,7 @@
 #include <cstdint>
 
 namespace tinykvm {
-	static constexpr uint64_t VSYSCALL_AREA = 0xFFFFFFFFFF600000;
+	static constexpr uint64_t VSYSCALL_AREA = 0xFFFF600000;
 
-	const std::array<uint8_t, 4096>& vdso_page();
+	const std::array<uint8_t, 4096>& vsys_page();
 }
