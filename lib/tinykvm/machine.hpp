@@ -14,7 +14,6 @@ struct Machine
 	using address_t = uint64_t;
 	using syscall_t = void(*)(Machine&);
 	using unhandled_syscall_t = void(*)(Machine&, unsigned);
-	static constexpr address_t HIGHMEM_TRESHOLD = 0x100000000;
 
 	template <typename... Args>
 	long vmcall(const char*, Args&&...);
@@ -131,8 +130,6 @@ private:
 	VirtualMem vsyscall; // vsyscall page
 	MemRange mmio_scall; // syscall MMIO slot
 	MemRange ptmem;  // page tables
-	size_t   m_bank_idx  = 0;
-	uint64_t m_bank_area = 0x0;
 
 	uint64_t m_mm = 0;
 	std::unique_ptr<MultiThreading> m_mt = nullptr;

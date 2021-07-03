@@ -128,7 +128,7 @@ void Machine::setup_long_mode(const Machine* other)
 		if (ioctl(this->vcpu.fd, KVM_GET_SREGS, &master_sregs) < 0) {
 			throw std::runtime_error("KVM_GET_SREGS failed");
 		}
-		master_sregs.cr3 = PT_ADDR;
+		master_sregs.cr3 = memory.page_tables;
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE | CR4_FSGSBASE;
 		master_sregs.cr0 =
@@ -172,16 +172,18 @@ void Machine::setup_long_mode(const Machine* other)
 		if (ioctl(other->vcpu.fd, KVM_GET_SREGS, &sregs) < 0) {
 			throw std::runtime_error("KVM_GET_SREGS failed");
 		}
+		/* Page tables may be cloned at the start */
+		sregs.cr3 = memory.page_tables;
+
 		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
 			throw std::runtime_error("KVM_SET_SREGS failed");
 		}
-	}
 
-	page_at(memory,
-		IST_ADDR,
-		[] (uint64_t, uint64_t& entry, size_t) {
-			assert(entry & PDE64_RW);
-		});
+		/* Clone IST stack */
+		memory.get_writable_page(IST_ADDR);
+		/* It shouldn't be identity-mapped anymore */
+		assert(translate(IST_ADDR) != IST_ADDR);
+	}
 
 	/* Extended control registers */
 	if (ioctl(this->vcpu.fd, KVM_SET_XCRS, &master_xregs) < 0) {

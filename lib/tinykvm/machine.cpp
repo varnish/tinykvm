@@ -103,7 +103,13 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 		throw std::runtime_error("Failed to install guest memory region");
 	}
 
+	/* The vCPU needs to be initialized before we can */
 	this->vcpu.init(*this);
+
+	/* Clone PML4 page */
+	auto pml4 = memory.new_page();
+	std::memcpy(pml4.pmem, memory.page_at(memory.page_tables), PAGE_SIZE);
+	memory.page_tables = pml4.addr;
 
 	this->setup_long_mode(&other);
 

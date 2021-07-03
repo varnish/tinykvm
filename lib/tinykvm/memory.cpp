@@ -26,12 +26,21 @@ char* vMemory::at(uint64_t addr, size_t asize)
 {
 	if (within(addr, asize))
 		return &ptr[addr - physbase];
+	for (auto& bank : banks) {
+		if (bank.within(addr, asize)) {
+			return bank.at(addr);
+		}
+	}
 	throw MemoryException("Memory::at() invalid region", addr, asize);
 }
 uint64_t* vMemory::page_at(uint64_t addr) const
 {
-	if (within(addr, 4096))
-		return (uint64_t*) &ptr[addr - physbase];
+	if (within(addr, PAGE_SIZE))
+		return (uint64_t *)&ptr[addr - physbase];
+	for (const auto& bank : banks) {
+		if (bank.within(addr, PAGE_SIZE))
+			return (uint64_t *)bank.at(addr);
+	}
 	throw MemoryException("Memory::page_at() invalid region", addr, 4096);
 }
 char* vMemory::safely_at(uint64_t addr, size_t asize)
@@ -43,6 +52,12 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 	if (safely_within(addr, asize))
 		return {&ptr[addr - physbase], asize};
+	/* XXX: Security checks */
+	for (const auto& bank : banks) {
+		if (bank.within(addr, asize)) {
+			return bank.at(addr);
+		}
+	}
 	throw MemoryException("vMemory::view failed", addr, asize);
 }
 
@@ -100,23 +115,12 @@ MemoryBank::Page vMemory::new_page()
 
 char* vMemory::get_writable_page(uint64_t addr)
 {
-	/** TODO:
-	 * 1. Check if page is already forked
-	 **/
-	bool needs_replacement = false;
-	tinykvm::page_at(*this, addr,
-		[&needs_replacement] (uint64_t addr, uint64_t& entry, uint64_t size) {
-			if ((entry & PDE64_PRESENT) == 0)
-				throw MemoryException("get_writable_page(): page not present", addr, size);
-			needs_replacement = !(entry & (1 << 9));
-		});
-	/**
-	 * 2. Allocate memory bank page
-	 * 3. Get memory bank page physical address
-	 * 4. Recursively copy page tables
-	 * 5. Mark final entry as user-read-write-present
-	 **/
-	return nullptr;
+	printf("*** Need a writable page at 0x%lX\n", addr);
+	char* ret = writable_page_at(*this, addr);
+	printf("-> Translation of 0x%lX: 0x%lX\n",
+		addr, machine.translate(addr));
+	//print_pagetables(*this);
+	return ret;
 }
 
 }

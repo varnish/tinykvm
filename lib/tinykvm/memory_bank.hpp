@@ -11,6 +11,16 @@ struct MemoryBank {
 	uint16_t    n_used;
 	uint16_t    n_pages;
 
+	bool within(uint64_t a, uint64_t s) const noexcept {
+		return (a >= addr) && (a + s <= addr + this->size());
+	}
+	char* at(uint64_t vaddr) {
+		return &mem[vaddr - this->addr];
+	}
+	const char* at(uint64_t vaddr) const {
+		return &mem[vaddr - this->addr];
+	}
+	uint64_t size() const noexcept { return n_pages * 4096; }
 	bool empty() const noexcept { return n_used == n_pages; }
 	struct Page {
 		uint64_t* pmem;
@@ -25,6 +35,11 @@ struct MemoryBanks {
 	MemoryBanks(Machine&);
 
 	MemoryBank& get_available_bank();
+
+	auto begin() { return m_mem.begin(); }
+	auto end()   { return m_mem.end(); }
+	auto begin() const { return m_mem.cbegin(); }
+	auto end() const   { return m_mem.cend(); }
 
 private:
 	MemoryBank& allocate_new_bank(uint64_t addr);

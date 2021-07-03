@@ -109,23 +109,14 @@ inline uint64_t Machine::stack_push(__u64& sp, const T& type)
 
 inline std::string_view Machine::memory_at(uint64_t a, size_t s) const
 {
-	if (a < HIGHMEM_TRESHOLD)
-		return memory.view(a, s);
-	else
-		return memory.view(translate(a), s);
+	return memory.view(a, s);
 }
 template <typename T>
 inline T* Machine::rw_memory_at(uint64_t a, size_t s)
 {
-	if (a < HIGHMEM_TRESHOLD)
-		return (T*) memory.safely_at(a, s);
-	else
-		return (T*) memory.safely_at(translate(a), s);
+	return (T*) memory.safely_at(a, s);
 }
 inline bool Machine::memory_safe_at(uint64_t a, size_t s) const
 {
-	if (a < HIGHMEM_TRESHOLD)
-		return memory.safely_within(a, s);
-	else
-		return memory.safely_within(translate(a), s);
+	return memory.safely_within(a, s);
 }
