@@ -1,1 +1,1 @@
-objdump -b binary -mi386 -D interrupts
+objdump -b binary -mi386:x86-64 -D interrupts

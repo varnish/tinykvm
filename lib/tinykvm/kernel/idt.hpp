@@ -14,6 +14,7 @@ struct iasm_header {
 	uint16_t vm64_syscall;
 	uint16_t vm64_gettimeofday;
 	uint16_t vm64_exception;
+	uint16_t vm64_except_size;
 	uint16_t vm64_dso;
 };
 const iasm_header& interrupt_header();

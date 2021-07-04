@@ -1,30 +1,33 @@
 [BITS 64]
 global vm64_exception
 
+;; exception trap
 %macro CPU_EXCEPT 1
 ALIGN 0x10
-	;; exception trap
-	mov ax, %1
-	mov dx, 0xFFFF
+	push rdx
+	mov dx, 0xFF00 + %1
 	out dx, ax
-	o64 iret
+	pop rdx
+	iretq
 %endmacro
 %macro CPU_EXCEPT_CODE 1
 ALIGN 0x10
-	;; exception trap
-	mov ax, %1
-	mov dx, 0xFFFF
+	push rdx
+	mov dx, 0xFF00 + %1
 	out dx, ax
-	pop rax
-	o64 iret
+	pop rdx
+	add rsp, 8
+	iretq
 %endmacro
 
 org 0x2000
 dw .vm64_syscall
 dw .vm64_gettimeofday
 dw .vm64_exception
+dw .vm64_except1 - .vm64_exception
 dw .vm64_dso
 
+ALIGN 0x10
 .vm64_syscall:
 	cmp eax, 158 ;; PRCTL
 	je .vm64_prctl
@@ -64,6 +67,8 @@ dw .vm64_dso
 ALIGN 0x10
 .vm64_exception:
 	CPU_EXCEPT 0
+ALIGN 0x10
+.vm64_except1:
 	CPU_EXCEPT 1
 	CPU_EXCEPT 2
 	CPU_EXCEPT 3

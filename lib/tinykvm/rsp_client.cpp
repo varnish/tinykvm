@@ -39,6 +39,8 @@ RSP::RSP(Machine& m, uint16_t port)
 		close(server_fd);
 		throw std::runtime_error("GDB listener failed to listen on port");
 	}
+	/* We need to make sure the VM can be stepped through */
+	m_machine.stop(false);
 }
 std::unique_ptr<RSPClient> RSP::accept(int timeout_secs)
 {

@@ -132,7 +132,7 @@ void Machine::setup_long_mode(const Machine* other)
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE | CR4_FSGSBASE;
 		master_sregs.cr0 =
-			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_WP | CR0_AM | CR0_PG;
+			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG;
 		master_sregs.efer =
 			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
 		setup_amd64_segment_regs(master_sregs, GDT_ADDR);
@@ -157,7 +157,7 @@ void Machine::setup_long_mode(const Machine* other)
 		uint64_t last_page = setup_amd64_paging(
 			memory, INTR_ASM_ADDR, IST_ADDR, m_binary);
 		this->ptmem = MemRange::New("Page tables",
-			PT_ADDR, last_page - PT_ADDR);
+			memory.page_tables, last_page - memory.page_tables);
 
 		setup_amd64_segments(GDT_ADDR, memory.at(GDT_ADDR));
 		setup_amd64_tss(
@@ -304,6 +304,8 @@ void Machine::handle_exception(uint8_t intr)
 
 long Machine::run(unsigned timeout)
 {
+	print_pagetables(memory);
+	print_exception_handlers(memory.at(IDT_ADDR));
 	this->m_stopped = false;
 	while(run_once());
 	return 0;
@@ -336,10 +338,8 @@ long Machine::run_once()
 			if (this->m_stopped) return 0;
 			return KVM_EXIT_IO;
 		}
-		else if (vcpu.kvm_run->io.port == 0xFFFF) {
-			char *p = (char *) vcpu.kvm_run;
-			auto intr = *(uint8_t*) &p[vcpu.kvm_run->io.data_offset];
-			printf("Exception\n");
+		else if (vcpu.kvm_run->io.port >= 0xFF00) {
+			auto intr = vcpu.kvm_run->io.port - 0xFF00;
 			/* CPU Exception */
 			this->handle_exception(intr);
 			throw MachineException(std::string(exception_name(intr)), intr);
@@ -401,7 +401,6 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 void Machine::prepare_copy_on_write()
 {
 	foreach_page_makecow(this->memory);
-	//print_pagetables(memory);
 }
 
 }
