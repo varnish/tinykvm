@@ -179,8 +179,6 @@ void Machine::setup_long_mode(const Machine* other)
 			throw std::runtime_error("KVM_SET_SREGS failed");
 		}
 
-		/* XXX: IDT/GDT/TSS needs write? */
-		memory.get_writable_page(0x1000);
 		/* Clone IST stack */
 		memory.get_writable_page(IST_ADDR);
 		/* It shouldn't be identity-mapped anymore */

@@ -3,7 +3,7 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
-//#define ENABLE_GUEST_STDOUT
+#define ENABLE_GUEST_STDOUT
 //#define ENABLE_GUEST_VERBOSE
 //#define VERBOSE_MMAP
 #define PRINTMMAP(fmt, ...) /* */
@@ -14,7 +14,7 @@ void setup_kvm_system_calls()
 {
 	Machine::install_unhandled_syscall_handler(
 		[] (auto& machine, unsigned scall) {
-			SYSPRINT("Unhandled system call: %u\n", scall);
+			printf("Unhandled system call: %u\n", scall);
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
 			machine.set_registers(regs);

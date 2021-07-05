@@ -17,9 +17,6 @@ _start:
 
 ALIGN 0x8
 test:
-	mov rsp, 0x1ff000
-	push rax
-	pop rax
 	ret
 
 ALIGN 0x8

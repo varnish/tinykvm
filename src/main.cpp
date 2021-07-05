@@ -5,7 +5,7 @@
 
 #include <tinykvm/rsp_client.hpp>
 
-#define NUM_GUESTS   100
+#define NUM_GUESTS   1
 #define GUEST_MEMORY 0x4000000  /* 64MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
@@ -39,6 +39,35 @@ int main(int argc, char** argv)
 			{"kvmtest", "Hello World!\n"},
 			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 		/* Normal execution of _start -> main() */
+		if (getenv("DEBUG"))
+		{
+			if (getenv("TESTCALL")) {
+				vm.run();
+				auto regs = vm.setup_call(vm.address_of("test"));
+				vm.set_registers(regs);
+			}
+
+			tinykvm::RSP server {vm, 2159};
+			printf("Waiting for connection localhost:2159...\n");
+			auto client = server.accept();
+			if (client != nullptr) {
+				/* Debugging session of _start -> main() */
+				printf("Connected\n");
+				try {
+					//client->set_verbose(true);
+					while (client->process_one());
+				} catch (const tinykvm::MachineException& e) {
+					printf("EXCEPTION %s: %lu\n", e.what(), e.data());
+					vm.print_registers();
+				}
+			} else {
+				/* Normal execution of _start -> main() */
+				vm.run();
+			}
+			/* Exit after debugging */
+			return 0;
+		}
+		/* Normal execution of _start -> main() */
 		vm.run();
 		/* vmcall setup */
 		vmcall_address = vm.address_of("test");
@@ -71,42 +100,8 @@ int main(int argc, char** argv)
 
 	for (auto* vm : vms)
 	{
-		if (getenv("DEBUG"))
-		{
-			tinykvm::RSP server {*vm, 2159};
-			printf("Waiting for connection...\n");
-			auto client = server.accept();
-			if (client != nullptr) {
-				/* Debugging session of _start -> main() */
-				printf("Connected\n");
-				try {
-					//client->set_verbose(true);
-					while (client->process_one());
-				} catch (const tinykvm::MachineException& e) {
-					printf("EXCEPTION %s: %lu\n", e.what(), e.data());
-					vm->print_registers();
-					break;
-				}
-			} else {
-				/* Normal execution of _start -> main() */
-				vm->run();
-			}
-		} else {
-			/* Normal execution of _start -> main() */
-			vm->run();
-		}
-
-		if (false)
-		{
-			/* Execute public function */
-			struct Data {
-				char   buffer[128];
-				size_t len;
-			} data;
-			strcpy(data.buffer, "Hello Buffered World!\n");
-			data.len = strlen(data.buffer);
-			vm->vmcall(vm->address_of("empty"), data);
-		}
+		/* Normal execution of _start -> main() */
+		vm->run();
 	}
 
 	asm("" : : : "memory");
@@ -155,10 +150,12 @@ int main(int argc, char** argv)
 	/* Make the master VM able to mass-produce copies */
 	master_vm.prepare_copy_on_write();
 	master_vm.set_stack_address(0x1ff000);
+	master_vm.set_exit_address(exit_address);
 
 	printf("The 'test' function is at 0x%lX\n", master_vm.address_of("test"));
 	assert(master_vm.address_of("test") == vmcall_address);
 	printf("Call stack is at 0x%lX\n", master_vm.stack_address());
+	printf("Exit function is at 0x%lX\n", master_vm.exit_address());
 
 	asm("" : : : "memory");
 	auto ft0 = time_now();
@@ -175,8 +172,7 @@ int main(int argc, char** argv)
 		auto ft2 = time_now();
 		forktime += nanodiff(ft1, ft2);
 		asm("" : : : "memory");
-		printf("Calling 'test'\n");
-		//vm.vmcall("test");
+		//vm.vmcall(vmcall_address);
 		master_vm.vmcall(vmcall_address);
 	}
 
