@@ -79,6 +79,8 @@ struct Machine
 	int install_memory(uint32_t idx, const VirtualMem&);
 	int delete_memory(uint32_t idx);
 
+	template <typename... Args> constexpr
+	tinykvm_x86regs setup_call(uint64_t addr, Args&&... args);
 	void prepare_copy_on_write();
 	static void init();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
@@ -98,8 +100,6 @@ private:
 		int fd = 0;
 		struct kvm_run *kvm_run = nullptr;
 	};
-	template <typename... Args> constexpr
-	tinykvm_x86regs setup_call(uint64_t addr, Args&&... args);
 	void setup_registers(tinykvm_x86regs&);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);

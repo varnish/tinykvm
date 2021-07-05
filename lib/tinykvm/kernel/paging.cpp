@@ -84,10 +84,13 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	for (unsigned i = 1; i < 256; i++) {
 		lowpage[i] = PDE64_PRESENT | PDE64_NX | (i << 12);
 	}
+	/* XXX: This is a work-around for exception triple-faults */
+	lowpage[1] |= PDE64_RW;
 	/* Exception handlers */
 	lowpage[except_asm_addr >> 12] = PDE64_PRESENT | PDE64_USER | except_asm_addr;
 	/* Exception (IST) stack */
-	lowpage[ist_addr >> 12] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | PDE64_CLONEABLE | ist_addr;
+	const uint64_t ist_page = ist_addr >> 12;
+	lowpage[ist_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | ist_addr;
 
 	/* Stack area 1MB -> 2MB */
 	for (unsigned i = 256; i < 512; i++) {
@@ -216,8 +219,10 @@ void print_pdpt(vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pdpt[i] & PDE64_PRESENT) {
 			uint64_t addr = pdpt_base + (i << 30);
-			printf("|-* 1GB PDPT (0x%lX): 0x%lX\n",
-				addr, pdpt[i] & ~0xFFF);
+			printf("|-* 1GB PDPT (0x%lX): 0x%lX  W=%lu  E=%d  %s\n",
+				addr, pdpt[i] & ~0xFFF,
+				pdpt[i] & PDE64_RW, !(pdpt[i] & PDE64_NX),
+				(pdpt[i] & PDE64_USER) ? "USER" : "KERNEL");
 			print_pd(memory, addr, pdpt[i] & ~0xFFF);
 		}
 	}
@@ -228,7 +233,9 @@ void print_pagetables(vMemory& memory)
 	uint64_t* pml4 = (uint64_t*) memory.at(memory.page_tables);
 	for (size_t i = 0; i < 512; i++) {
 		if (pml4[i] & PDE64_PRESENT) {
-			printf("* 512GB PML4:\n");
+			printf("* 512GB PML4: W=%lu  E=%d  %s\n",
+				pml4[i] & PDE64_RW, !(pml4[i] & PDE64_NX),
+				(pml4[i] & PDE64_USER) ? "USER" : "KERNEL");
 			print_pdpt(memory, i << 39, pml4[i] & ~(uint64_t) 0xFFF);
 		}
 	}
@@ -279,16 +286,12 @@ void foreach_page(const vMemory& mem, foreach_page_t callback)
 void foreach_page_makecow(vMemory& mem)
 {
 	foreach_page(mem,
-		[&mem] (uint64_t addr, uint64_t& entry, size_t) {
+		[] (uint64_t addr, uint64_t& entry, size_t size) {
 			if (addr != 0xffe00000) {
 				if (entry & PDE64_RW) {
-					entry &= ~PDE64_RW;
+					entry &= ~(uint64_t) PDE64_RW;
 					entry |= PDE64_CLONEABLE;
 				}
-			} /* IST page */
-			else if (addr == 0x3000) {
-				entry &= ~PDE64_RW;
-				entry |= PDE64_CLONEABLE;
 			}
 		});
 }

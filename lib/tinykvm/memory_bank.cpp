@@ -25,8 +25,8 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 		m_mem.push_back({mem, addr, 0, N_PAGES});
 
 		VirtualMem vmem { addr, mem, size };
-		printf("Installing memory at 0x%lX from 0x%lX, %zu pages\n",
-			addr, (uintptr_t) mem, N_PAGES);
+		//printf("Installing memory at 0x%lX from 0x%lX, %zu pages\n",
+		//	addr, (uintptr_t) mem, N_PAGES);
 		m_machine.install_memory(m_idx++, vmem);
 
 		return m_mem.back();

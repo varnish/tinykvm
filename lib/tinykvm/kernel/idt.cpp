@@ -129,9 +129,9 @@ void print_exception_handlers(void* area)
 		addr.lo16 = entry.offset_1;
 		addr.hi16 = entry.offset_2;
 		addr.top32 = entry.offset_3;
-		printf("IDT %u: func=0x%lX sel=0x%X p=%d dpl=%d type=0x%X\n",
+		printf("IDT %u: func=0x%lX sel=0x%X p=%d dpl=%d type=0x%X ist=%u\n",
 			i, addr.whole, entry.selector, entry.type_attr >> 7,
-			(entry.type_attr >> 5) & 0x3, entry.type_attr & 0xF);
+			(entry.type_attr >> 5) & 0x3, entry.type_attr & 0xF, entry.ist);
 	}
 }
 

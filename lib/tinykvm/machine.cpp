@@ -123,7 +123,7 @@ void Machine::init()
 
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
 {
-	sp = (sp - length) & ~0x7; // maintain word alignment
+	sp = (sp - length) & ~(uint64_t) 0x7; // maintain word alignment
 	copy_to_guest(sp, data, length);
 	return sp;
 }

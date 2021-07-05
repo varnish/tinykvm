@@ -34,6 +34,7 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 	/* Set IOPL=3 to allow I/O instructions */
 	regs.rflags = 2 | (3 << 12);
 	regs.rip = addr;
+	regs.rbp = 0x0;
 	regs.rsp = this->stack_address();
 	[[maybe_unused]] unsigned iargs = 0;
 	([&] {
@@ -76,7 +77,7 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 		}
 	}(), ...);
 	/* Re-align stack for SSE */
-	regs.rsp &= ~0xF;
+	regs.rsp &= ~(uint64_t) 0xF;
 	/* Push return value last */
 	stack_push<uint64_t> (regs.rsp, this->m_exit_address);
 	return regs;

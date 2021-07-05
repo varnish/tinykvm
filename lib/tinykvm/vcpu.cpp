@@ -132,7 +132,7 @@ void Machine::setup_long_mode(const Machine* other)
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE | CR4_FSGSBASE;
 		master_sregs.cr0 =
-			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG;
+			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
 		master_sregs.efer =
 			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
 		setup_amd64_segment_regs(master_sregs, GDT_ADDR);
@@ -150,20 +150,20 @@ void Machine::setup_long_mode(const Machine* other)
 
 	if (other == nullptr)
 	{
-		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &master_sregs) < 0) {
-			throw std::runtime_error("KVM_SET_SREGS failed");
-		}
+		setup_amd64_exceptions(
+			IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
+		setup_amd64_segments(GDT_ADDR, memory.at(GDT_ADDR));
+		setup_amd64_tss(
+			TSS_ADDR, memory.at(TSS_ADDR), GDT_ADDR, memory.at(GDT_ADDR));
 
 		uint64_t last_page = setup_amd64_paging(
 			memory, INTR_ASM_ADDR, IST_ADDR, m_binary);
 		this->ptmem = MemRange::New("Page tables",
 			memory.page_tables, last_page - memory.page_tables);
 
-		setup_amd64_segments(GDT_ADDR, memory.at(GDT_ADDR));
-		setup_amd64_tss(
-			TSS_ADDR, memory.at(TSS_ADDR), GDT_ADDR, memory.at(GDT_ADDR));
-		setup_amd64_exceptions(
-			IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
+		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &master_sregs) < 0) {
+			throw std::runtime_error("KVM_SET_SREGS failed");
+		}
 	}
 	else
 	{
@@ -179,10 +179,15 @@ void Machine::setup_long_mode(const Machine* other)
 			throw std::runtime_error("KVM_SET_SREGS failed");
 		}
 
+		/* XXX: IDT/GDT/TSS needs write? */
+		memory.get_writable_page(0x1000);
 		/* Clone IST stack */
 		memory.get_writable_page(IST_ADDR);
 		/* It shouldn't be identity-mapped anymore */
 		assert(translate(IST_ADDR) != IST_ADDR);
+		page_at(memory, IST_ADDR, [] (auto, auto& entry, auto) {
+			assert(entry & (PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX));
+		});
 	}
 
 	/* Extended control registers */
@@ -252,12 +257,15 @@ void Machine::print_registers()
 	} catch (...) {}
 
 #if 0
+	print_pagetables(memory);
+#endif
+#if 0
 	printf("CR0 PE=%llu MP=%llu EM=%llu\n",
 		sregs.cr0 & 1, (sregs.cr0 >> 1) & 1, (sregs.cr0 >> 2) & 1);
 	printf("CR4 OSFXSR=%llu OSXMMEXCPT=%llu OSXSAVE=%llu\n",
 		(sregs.cr4 >> 9) & 1, (sregs.cr4 >> 10) & 1, (sregs.cr4 >> 18) & 1);
 #endif
-#if 0
+#if 1
 	printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
 	print_exception_handlers(memory.at(IDT_ADDR));
 #endif
@@ -304,8 +312,6 @@ void Machine::handle_exception(uint8_t intr)
 
 long Machine::run(unsigned timeout)
 {
-	print_pagetables(memory);
-	print_exception_handlers(memory.at(IDT_ADDR));
 	this->m_stopped = false;
 	while(run_once());
 	return 0;
@@ -359,6 +365,9 @@ long Machine::run_once()
 		printf("Unknown MMIO write at 0x%llX\n",
 			vcpu.kvm_run->mmio.phys_addr);
 		return KVM_EXIT_MMIO;
+
+	case KVM_EXIT_INTERNAL_ERROR:
+		throw MachineException("KVM internal error");
 
 	default:
 		fprintf(stderr,	"Unexpected exit reason %d\n", vcpu.kvm_run->exit_reason);
