@@ -11,8 +11,6 @@ int main()
 	strcpy(test, "Hello World!\n");
 	printf("%.*s", 13, test);
 
-	printf("isatty(1): %d\n", isatty(1));
-
 	static const int N = 1000000;
 	char prime[N];
 	memset(prime, 1, sizeof(prime));
@@ -41,13 +39,10 @@ static int t = 0;
 __attribute__((used))
 void test()
 {
-	//assert(t == 0);
+	assert(t == 0);
 	//t = 1;
-	//printf("Hello World!\n");
-	//fflush(stdout); // WHY?
-	//assert(nprimes == 78498);
-	extern void rexit();
-	rexit();
+	printf("Hello Test World!\n");
+	assert(nprimes == 78498);
 }
 
 #include <assert.h>

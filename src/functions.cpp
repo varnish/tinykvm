@@ -141,9 +141,7 @@ void setup_kvm_system_calls()
 		16, [] (auto& machine) { // IOCTL
 			/* SYS ioctl */
 			auto regs = machine.registers();
-			if (regs.rax > machine.max_address()) {
-				regs.rax = machine.max_address();
-			}
+			regs.rax = 0;
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -169,7 +167,7 @@ void setup_kvm_system_calls()
 					//printf(">>> Guest writes %zu bytes to %llu from iov %zu/%llu\n",
 					//	sv.size(), regs.rdi, i, regs.rdx);
 					static constexpr char gw[] = ">>> Guest says: ";
-					struct iovec vec[] = {
+					const struct iovec vec[] = {
 						{(void *)gw, sizeof(gw)-1},
 						{(void *)sv.begin(), sv.size()}
 					};
