@@ -275,14 +275,16 @@ void Machine::print_registers()
 void Machine::handle_exception(uint8_t intr)
 {
 	auto regs = registers();
-	fprintf(stderr, "*** CPU EXCEPTION: %s\n",
-		exception_name(intr));
 	if (intr == 14) { // Page fault
-		auto regs = registers();
-		if (memory.within(regs.rsp, 8))
+		struct kvm_sregs sregs;
+		get_special_registers(sregs);
+		fprintf(stderr, "*** %s on address 0x%llX\n",
+			exception_name(intr), sregs.cr2);
+		if (memory.within(regs.rsp + 8, 8))
 		{
-			auto code = *(uint64_t *)memory.at(regs.rsp, 8);
-			printf("Error code: 0x%lX\n", code);
+			auto code = *(uint64_t *)memory.at(regs.rsp + 8, 8);
+			printf("Error code: 0x%lX (%s)\n", code,
+				(code & 0x02) ? "memory write" : "memory read");
 			if (code & 0x01) {
 				printf("* Protection violation\n");
 			} else {
@@ -303,6 +305,9 @@ void Machine::handle_exception(uint8_t intr)
 		} else {
 			printf("Bullshit RSP: 0x%llX\n", regs.rsp);
 		}
+	} else {
+		fprintf(stderr, "*** CPU EXCEPTION: %s\n",
+			exception_name(intr));
 	}
 	this->print_registers();
 	//print_pagetables(memory, PT_ADDR);
@@ -324,7 +329,6 @@ long Machine::run_once()
 	switch (vcpu.kvm_run->exit_reason) {
 	case KVM_EXIT_HLT:
 		throw MachineException("Shutdown! HLT?", 5);
-		return 0;
 
 	case KVM_EXIT_DEBUG:
 		return KVM_EXIT_DEBUG;
