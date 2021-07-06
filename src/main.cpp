@@ -6,6 +6,7 @@
 #include <tinykvm/rsp_client.hpp>
 
 #define NUM_GUESTS   300
+#define NUM_RESETS   300
 #define GUEST_MEMORY 0x4000000  /* 64MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
@@ -158,6 +159,7 @@ int main(int argc, char** argv)
 	printf("Exit function is at 0x%lX\n", master_vm.exit_address());
 	printf("Heap address is at 0x%lX\n", master_vm.heap_address());
 
+	/* Benchmark the VM fast-forking feature */
 	asm("" : : : "memory");
 	auto ft0 = time_now();
 	asm("" : : : "memory");
@@ -184,28 +186,29 @@ int main(int argc, char** argv)
 	auto ft3 = time_now();
 	asm("" : : : "memory");
 
+	/* Benchmark the fork reset feature */
 	uint64_t frtime = 0;
 	uint64_t frtotal = 0;
 
-	for (unsigned i = 0; i < NUM_GUESTS; i++)
+	tinykvm::Machine fvm {master_vm, options};
+	fvm.vmcall(vmcall_address);
+
+	for (unsigned i = 0; i < NUM_RESETS; i++)
 	{
-		tinykvm::Machine vm {master_vm, options};
-		vm.vmcall(vmcall_address);
-		asm("" : : : "memory");
 		auto frt0 = time_now();
 		asm("" : : : "memory");
-		vm.reset_to(master_vm);
+		fvm.reset_to(master_vm);
 		asm("" : : : "memory");
 		auto frt1 = time_now();
 		asm("" : : : "memory");
-		vm.vmcall(vmcall_address);
+		fvm.vmcall(vmcall_address);
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		frtime += nanodiff(frt0, frt1);
 		frtotal += nanodiff(frt0, frt2);
 	}
-	frtime /= NUM_GUESTS;
-	frtotal /= NUM_GUESTS;
+	frtime /= NUM_RESETS;
+	frtotal /= NUM_RESETS;
 
 	auto nanos_per_gf = forktime / NUM_GUESTS;
 	auto nanos_per_fc = nanodiff(ft0, ft3) / NUM_GUESTS;

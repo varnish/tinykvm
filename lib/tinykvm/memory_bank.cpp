@@ -49,12 +49,18 @@ MemoryBank& MemoryBanks::get_available_bank()
 }
 void MemoryBanks::reset()
 {
-	m_idx = m_idx_begin;
-	m_arena_next = m_arena_begin;
-	for (const auto& bank : m_mem) {
-		m_machine.delete_memory(bank.idx);
+	/* We will attempt to keep one memory bank */
+	while (m_mem.size() > 1) {
+		m_machine.delete_memory(m_mem.back().idx);
+		m_mem.pop_back();
 	}
-	m_mem.clear();
+	if (!m_mem.empty()) {
+		m_mem.back().n_used = 0;
+		m_idx = m_mem.back().idx + 1;
+	} else {
+		m_idx = m_idx_begin;
+	}
+	m_arena_next = m_arena_begin;
 }
 
 MemoryBank::MemoryBank(char* p, uint64_t a, uint16_t np, uint16_t x)

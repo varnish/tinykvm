@@ -18,14 +18,49 @@ It implements a subset of the Linux system ABI.
 Static musl - Hello World
 ==============
 
+The time it takes to create the master VM:
 ```
-Construct: 260174ns (260 micros)
-Runtime: 91659ns (91 micros)
-Destruct: 1552ns (1 micros)
-Complete: 377121ns (377 micros)
+Construct: 315900ns (315 micros)
 ```
-500 TinyKVM guest VMs with warmup.
 
-It's not yet clear that we have to execute for a substantial amount of time before the hardware-accelerated virtual machines will have a performance benefit. These are also synthetic benchmarks, and we can fairly reasonably expect these trivial one-page programs to use 5-10x the amount of run-time in a production environment.
+Run-time to initialize the master VM:
+```
+Runtime: 2566188ns (2566 micros)
+```
 
-We will need to implement a fast forking constructor first to really know if we can avoid the guests startup time. May be able to use shm_open to CoW the master machines memory.
+Time to call the `test` function in the master VM:
+```
+vmcall(test): 12325ns (12 micros)
+```
+
+Time to destroy the master VM:
+```
+Destruct: 277226ns (277 micros)
+```
+
+Time to create a copy-on-write fork of the master VM:
+```
+VM fork: 145963ns (145 micros)
+```
+
+Time to call the `test` function in the forked VM:
+```
+Fork vmcall: 30034ns (30 micros)
+```
+
+Time to create, call into and destroy the fork:
+```
+Fork totals: 262976ns (262 micros)
+```
+
+Time needed to reset a fork to initial forked state:
+```
+Fast reset: 15557ns (15 micros)
+```
+
+Time to do a function call into a reset, forked VM:
+```
+Fast vmcall: 23328ns (22 micros)
+```
+
+These benchmarks are based on 300 tinyKVM guest VMs with no warmup.
