@@ -187,11 +187,9 @@ int main(int argc, char** argv)
 	asm("" : : : "memory");
 
 	/* Benchmark the fork reset feature */
+	tinykvm::Machine fvm {master_vm, options};
 	uint64_t frtime = 0;
 	uint64_t frtotal = 0;
-
-	tinykvm::Machine fvm {master_vm, options};
-	fvm.vmcall(vmcall_address);
 
 	for (unsigned i = 0; i < NUM_RESETS; i++)
 	{

@@ -4,7 +4,7 @@
 
 namespace tinykvm {
 
-void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len)
+void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool zeroes)
 {
 	if (m_forked)
 	{
@@ -13,7 +13,7 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len)
 		{
 			const size_t offset = addr & (vMemory::PAGE_SIZE-1);
 			const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
-			auto* page = memory.get_writable_page(addr & ~0xFFF);
+			auto* page = memory.get_writable_page(addr & ~0xFFF, zeroes);
 			std::copy(src, src + size, &page[offset]);
 
 			addr += size;

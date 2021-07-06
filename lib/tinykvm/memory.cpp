@@ -117,10 +117,10 @@ MemoryBank::Page vMemory::new_page()
 	return banks.get_available_bank().get_next_page();
 }
 
-char* vMemory::get_writable_page(uint64_t addr)
+char* vMemory::get_writable_page(uint64_t addr, bool zeroes)
 {
-//	printf("*** Need a writable page at 0x%lX\n", addr);
-	char* ret = writable_page_at(*this, addr);
+//	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
+	char* ret = writable_page_at(*this, addr, zeroes);
 //	printf("-> Translation of 0x%lX: 0x%lX\n",
 //		addr, machine.translate(addr));
 	//print_pagetables(*this);

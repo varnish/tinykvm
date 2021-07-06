@@ -14,6 +14,6 @@ extern void foreach_page(const vMemory&, foreach_page_t callback);
 extern void foreach_page_makecow(vMemory&);
 
 extern void page_at(vMemory&, uint64_t addr, foreach_page_t);
-extern char * writable_page_at(vMemory&, uint64_t addr);
+extern char * writable_page_at(vMemory&, uint64_t addr, bool zeroes = false);
 
 }

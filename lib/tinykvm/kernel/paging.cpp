@@ -346,8 +346,18 @@ inline void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& 
 	entry = page.addr | (entry & 0x8000000000000FFF) | flags;
 	data = page.pmem;
 }
+inline void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
+	/* Allocate new page */
+	auto page = memory.new_page();
+	assert((page.addr & 0x8000000000000FFF) == 0x0);
+	/* Zero all entries from old page */
+	std::memset(page.pmem, 0, PAGE_SIZE);
+	/* Set new entry, copy flags and set as cloned */
+	entry = page.addr | (entry & 0x8000000000000FFF) | flags;
+	data = page.pmem;
+}
 
-char * writable_page_at(vMemory& memory, uint64_t addr)
+char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 {
 	auto* pml4 = memory.page_at(memory.page_tables);
 	const uint64_t i = (addr >> 39) & 511;
@@ -398,7 +408,10 @@ char * writable_page_at(vMemory& memory, uint64_t addr)
 					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
 					auto* data = memory.page_at(pte_mem);
 					if (is_copy_on_write(pt[e])) {
-						clone_and_update_entry(memory, pt[e], data, PDE64_RW);
+						if (write_zeroes)
+							zero_and_update_entry(memory, pt[e], data, PDE64_RW);
+						else
+							clone_and_update_entry(memory, pt[e], data, PDE64_RW);
 						CLPRINT("Cloning a PT entry: 0x%lX\n", pt[e]);
 					}
 					CLPRINT("Returning data: %p\n", data);

@@ -179,17 +179,12 @@ void Machine::setup_long_mode(const Machine* other)
 			throw std::runtime_error("KVM_SET_SREGS failed");
 		}
 
-		/* Clone IST stack */
-		memory.get_writable_page(IST_ADDR);
+		/* Zero a new page for IST stack */
+		memory.get_writable_page(IST_ADDR, true);
 		/* It shouldn't be identity-mapped anymore */
 		assert(translate(IST_ADDR) != IST_ADDR);
 		page_at(memory, IST_ADDR, [] (auto, auto& entry, auto) {
 			assert(entry & (PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX));
-		});
-
-		//memory.get_writable_page(0x1000);
-		page_at(memory, 0x1000, [] (auto, auto& entry, auto) {
-			//entry |= PDE64_RW;
 		});
 	}
 

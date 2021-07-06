@@ -123,7 +123,7 @@ void Machine::reset_to(Machine& other)
 
 	/* Clone PML4 page */
 	auto pml4 = memory.new_page();
-	std::memcpy(pml4.pmem, memory.page_at(memory.page_tables), PAGE_SIZE);
+	std::memcpy(pml4.pmem, other.memory.page_at(other.memory.page_tables), PAGE_SIZE);
 	memory.page_tables = pml4.addr;
 
 	this->setup_long_mode(&other);
@@ -139,7 +139,7 @@ void Machine::init()
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
 {
 	sp = (sp - length) & ~(uint64_t) 0x7; // maintain word alignment
-	copy_to_guest(sp, data, length);
+	copy_to_guest(sp, data, length, true);
 	return sp;
 }
 

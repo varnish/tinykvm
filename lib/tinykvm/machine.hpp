@@ -31,7 +31,8 @@ struct Machine
 	bool stopped() const noexcept { return m_stopped; }
 	void reset_to(Machine&);
 
-	void copy_to_guest(address_t addr, const void*, size_t);
+	/* When zeroes == true, new pages will be zeroed instead of duplicated */
+	void copy_to_guest(address_t addr, const void*, size_t, bool zeroes = false);
 	void copy_from_guest(void* dst, address_t addr, size_t);
 
 	template <typename T>

@@ -15,7 +15,7 @@ It implements a subset of the Linux system ABI.
 0x200000 - Binary, heap
 ```
 
-Static musl - Hello World
+Static -O2 musl - Hello World
 ==============
 
 The time it takes to create the master VM:
@@ -38,6 +38,9 @@ Time to destroy the master VM:
 Destruct: 277226ns (277 micros)
 ```
 
+VM fast-forking
+==============
+
 Time to create a copy-on-write fork of the master VM:
 ```
 VM fork: 145963ns (145 micros)
@@ -53,14 +56,23 @@ Time to create, call into and destroy the fork:
 Fork totals: 262976ns (262 micros)
 ```
 
+These benchmarks are based on 300 tinyKVM guest VMs with no warmup.
+
+
+VM fork resetting
+==============
+
+By reusing each fork, and just resetting them between usage, keeping some of the most costly things to re-initialize, we can save a bunch of time, and in the end we will initialize faster than competitors WASM implementations.
+
+
 Time needed to reset a fork to initial forked state:
 ```
-Fast reset: 15557ns (15 micros)
+Fast reset: 13629ns (13 micros)
 ```
 
 Time to do a function call into a reset, forked VM:
 ```
-Fast vmcall: 23328ns (22 micros)
+Fast vmcall: 21315ns (21 micros)
 ```
 
-These benchmarks are based on 300 tinyKVM guest VMs with no warmup.
+For a total create+call time of 34 microseconds, which is much less than the official 50 microseconds for a WASM request.
