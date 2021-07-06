@@ -5,7 +5,7 @@
 
 #include <tinykvm/rsp_client.hpp>
 
-#define NUM_GUESTS   1
+#define NUM_GUESTS   300
 #define GUEST_MEMORY 0x4000000  /* 64MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
@@ -156,11 +156,13 @@ int main(int argc, char** argv)
 	assert(master_vm.address_of("test") == vmcall_address);
 	printf("Call stack is at 0x%lX\n", master_vm.stack_address());
 	printf("Exit function is at 0x%lX\n", master_vm.exit_address());
+	printf("Heap address is at 0x%lX\n", master_vm.heap_address());
 
 	asm("" : : : "memory");
 	auto ft0 = time_now();
 	asm("" : : : "memory");
 	uint64_t forktime = 0;
+	uint64_t calltime = 0;
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
@@ -172,8 +174,10 @@ int main(int argc, char** argv)
 		auto ft2 = time_now();
 		forktime += nanodiff(ft1, ft2);
 		asm("" : : : "memory");
-		//vm.vmcall(vmcall_address);
-		master_vm.vmcall(vmcall_address);
+		vm.vmcall(vmcall_address);
+		asm("" : : : "memory");
+		auto ft3 = time_now();
+		calltime += nanodiff(ft2, ft3);
 	}
 
 	asm("" : : : "memory");
@@ -181,11 +185,13 @@ int main(int argc, char** argv)
 	asm("" : : : "memory");
 
 	auto nanos_per_gf = forktime / NUM_GUESTS;
-	printf("Fork: %ldns (%ld micros)\n", nanos_per_gf, nanos_per_gf / 1000);
 	auto nanos_per_fc = nanodiff(ft0, ft3) / NUM_GUESTS;
-	printf("Fast copy: %ldns (%ld micros)\n", nanos_per_fc, nanos_per_fc / 1000);
+	printf("Fast copy: %ldns (%ld micros)\n", nanos_per_gf, nanos_per_gf / 1000);
+	printf("vmcall: %ldns (%ld micros)\n",
+		calltime / NUM_GUESTS, calltime / NUM_GUESTS / 1000);
 	printf("vmcall + destructor: %ldns (%ld micros)\n",
 		nanos_per_fc - nanos_per_gf, (nanos_per_fc - nanos_per_gf) / 1000);
+	printf("Fast fork totals: %ldns (%ld micros)\n", nanos_per_fc, nanos_per_fc / 1000);
 }
 
 #include <stdexcept>
