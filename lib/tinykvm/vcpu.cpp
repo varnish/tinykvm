@@ -132,7 +132,7 @@ void Machine::setup_long_mode(const Machine* other)
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE | CR4_FSGSBASE;
 		master_sregs.cr0 =
-			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
+			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG;
 		master_sregs.efer =
 			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
 		setup_amd64_segment_regs(master_sregs, GDT_ADDR);
@@ -185,6 +185,11 @@ void Machine::setup_long_mode(const Machine* other)
 		assert(translate(IST_ADDR) != IST_ADDR);
 		page_at(memory, IST_ADDR, [] (auto, auto& entry, auto) {
 			assert(entry & (PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX));
+		});
+
+		//memory.get_writable_page(0x1000);
+		page_at(memory, 0x1000, [] (auto, auto& entry, auto) {
+			//entry |= PDE64_RW;
 		});
 	}
 

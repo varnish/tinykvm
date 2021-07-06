@@ -29,7 +29,7 @@ struct Machine
 	long run_with_breakpoints(std::array<uint64_t, 4> bps);
 	void stop(bool = true);
 	bool stopped() const noexcept { return m_stopped; }
-	void reset();
+	void reset_to(Machine&);
 
 	void copy_to_guest(address_t addr, const void*, size_t);
 	void copy_from_guest(void* dst, address_t addr, size_t);

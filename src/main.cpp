@@ -184,14 +184,39 @@ int main(int argc, char** argv)
 	auto ft3 = time_now();
 	asm("" : : : "memory");
 
+	uint64_t frtime = 0;
+	uint64_t frtotal = 0;
+
+	for (unsigned i = 0; i < NUM_GUESTS; i++)
+	{
+		tinykvm::Machine vm {master_vm, options};
+		vm.vmcall(vmcall_address);
+		asm("" : : : "memory");
+		auto frt0 = time_now();
+		asm("" : : : "memory");
+		vm.reset_to(master_vm);
+		asm("" : : : "memory");
+		auto frt1 = time_now();
+		asm("" : : : "memory");
+		vm.vmcall(vmcall_address);
+		asm("" : : : "memory");
+		auto frt2 = time_now();
+		frtime += nanodiff(frt0, frt1);
+		frtotal += nanodiff(frt0, frt2);
+	}
+	frtime /= NUM_GUESTS;
+	frtotal /= NUM_GUESTS;
+
 	auto nanos_per_gf = forktime / NUM_GUESTS;
 	auto nanos_per_fc = nanodiff(ft0, ft3) / NUM_GUESTS;
-	printf("Fast copy: %ldns (%ld micros)\n", nanos_per_gf, nanos_per_gf / 1000);
+	printf("VM fork: %ldns (%ld micros)\n", nanos_per_gf, nanos_per_gf / 1000);
 	printf("vmcall: %ldns (%ld micros)\n",
 		calltime / NUM_GUESTS, calltime / NUM_GUESTS / 1000);
 	printf("vmcall + destructor: %ldns (%ld micros)\n",
 		nanos_per_fc - nanos_per_gf, (nanos_per_fc - nanos_per_gf) / 1000);
-	printf("Fast fork totals: %ldns (%ld micros)\n", nanos_per_fc, nanos_per_fc / 1000);
+	printf("VM fork totals: %ldns (%ld micros)\n", nanos_per_fc, nanos_per_fc / 1000);
+	printf("Fast reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
+	printf("Fast vmcall: %ldns (%ld micros)\n", frtotal, frtotal / 1000);
 }
 
 #include <stdexcept>

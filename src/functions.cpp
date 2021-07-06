@@ -3,7 +3,7 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
-//#define ENABLE_GUEST_STDOUT
+#define ENABLE_GUEST_STDOUT
 //#define ENABLE_GUEST_VERBOSE
 //#define VERBOSE_MMAP
 #define PRINTMMAP(fmt, ...) /* */

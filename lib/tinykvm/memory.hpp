@@ -44,6 +44,7 @@ struct vMemory {
 	VirtualMem vmem() const;
 
 	void reset();
+	void fork_reset();
 	static vMemory New(Machine&, uint64_t phys, uint64_t safe, size_t size);
 	static vMemory From(Machine&, uint64_t phys, char* ptr, size_t size);
 	static vMemory From(Machine&, const vMemory& other);

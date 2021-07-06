@@ -6,10 +6,11 @@ namespace tinykvm {
 struct Machine;
 
 struct MemoryBank {
-	char*       mem;
-	uint64_t	addr;
-	uint16_t    n_used;
-	uint16_t    n_pages;
+	char*    mem;
+	uint64_t addr;
+	uint16_t       n_used = 0;
+	const uint16_t n_pages;
+	const uint16_t idx;
 
 	bool within(uint64_t a, uint64_t s) const noexcept {
 		return (a >= addr) && (a + s <= addr + this->size());
@@ -27,14 +28,18 @@ struct MemoryBank {
 		uint64_t  addr;
 	};
 	Page get_next_page();
+
+	MemoryBank(char*, uint64_t, uint16_t n, uint16_t idx);
+	~MemoryBank();
 };
 
 struct MemoryBanks {
-	static const unsigned N_PAGES = 16;
+	static constexpr unsigned N_PAGES = 16;
 
 	MemoryBanks(Machine&);
 
 	MemoryBank& get_available_bank();
+	void reset();
 
 	auto begin() { return m_mem.begin(); }
 	auto end()   { return m_mem.end(); }
@@ -46,6 +51,8 @@ private:
 
 	std::vector<MemoryBank> m_mem;
 	Machine& m_machine;
+	const uint64_t m_arena_begin;
+	const size_t   m_idx_begin;
 	uint64_t m_arena_next;
 	size_t   m_idx;
 };

@@ -39,10 +39,10 @@ static int t = 0;
 __attribute__((used))
 void test()
 {
-	assert(t == 0);
+	//assert(t == 0);
 	//t = 1;
-	printf("Hello Test World!\n");
-	assert(nprimes == 78498);
+	//printf("Hello Test World!\n");
+	//assert(nprimes == 78498);
 }
 
 #include <assert.h>

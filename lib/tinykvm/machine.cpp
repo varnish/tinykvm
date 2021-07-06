@@ -116,6 +116,21 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->set_registers(other.registers());
 }
 
+void Machine::reset_to(Machine& other)
+{
+	assert(m_forked);
+	memory.fork_reset();
+
+	/* Clone PML4 page */
+	auto pml4 = memory.new_page();
+	std::memcpy(pml4.pmem, memory.page_at(memory.page_tables), PAGE_SIZE);
+	memory.page_tables = pml4.addr;
+
+	this->setup_long_mode(&other);
+
+	this->set_registers(other.registers());
+}
+
 void Machine::init()
 {
 	Machine::kvm_fd = kvm_open();
@@ -167,12 +182,6 @@ void Machine::setup_registers(tinykvm_x86regs& regs)
 	regs.rflags = 2 | (3 << 12);
 	regs.rip = this->start_address();
 	regs.rsp = this->stack_address();
-}
-
-void Machine::reset()
-{
-	//m_mt.reset(new MultiThreading{*this});
-	//memory.reset();
 }
 
 Machine::~Machine()

@@ -21,6 +21,10 @@ void vMemory::reset()
 {
 	std::memset(this->ptr, 0, this->size);
 }
+void vMemory::fork_reset()
+{
+	banks.reset();
+}
 
 char* vMemory::at(uint64_t addr, size_t asize)
 {
@@ -115,10 +119,10 @@ MemoryBank::Page vMemory::new_page()
 
 char* vMemory::get_writable_page(uint64_t addr)
 {
-	printf("*** Need a writable page at 0x%lX\n", addr);
+//	printf("*** Need a writable page at 0x%lX\n", addr);
 	char* ret = writable_page_at(*this, addr);
-	printf("-> Translation of 0x%lX: 0x%lX\n",
-		addr, machine.translate(addr));
+//	printf("-> Translation of 0x%lX: 0x%lX\n",
+//		addr, machine.translate(addr));
 	//print_pagetables(*this);
 	return ret;
 }
