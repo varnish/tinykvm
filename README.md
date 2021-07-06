@@ -75,4 +75,4 @@ Time to do a function call into a reset, forked VM:
 Fast vmcall: 21315ns (21 micros)
 ```
 
-For a total create+call time of 34 microseconds, which is much less than the official 50 microseconds for a WASM request.
+For a total reset+call time of 34 microseconds, which is much less than the official 60 microseconds for a Lucet WASM request. We don't have any destruction cost for this mode of operation. However, the context switching itself seems to be lower on Lucet.
