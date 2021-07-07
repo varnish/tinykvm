@@ -30,7 +30,7 @@ inline void Machine::get_special_registers(struct kvm_sregs& sregs) const {
 template <typename... Args> inline constexpr
 tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 {
-	struct tinykvm_x86regs regs {0};
+	struct tinykvm_x86regs regs {};
 	/* Set IOPL=3 to allow I/O instructions */
 	regs.rflags = 2 | (3 << 12);
 	regs.rip = addr;
