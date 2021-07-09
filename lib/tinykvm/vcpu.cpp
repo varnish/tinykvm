@@ -248,10 +248,10 @@ void Machine::print_registers()
 	auto regs = registers();
 	printf("RIP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rsp);
 	try {
-		printf("Possible return: 0x%lX\n",
-			*(uint64_t *)memory.at(regs.rsp + 0x0, 8));
-		printf("Possible return: 0x%lX\n",
-			*(uint64_t *)memory.at(regs.rsp + 0x08, 8));
+		printf("Return RIP: 0x%lX\n",
+			*(uint64_t *)memory.at(regs.rsp, 8));
+		printf("Return stack: 0x%lX\n",
+			*(uint64_t *)memory.at(regs.rsp, 32));
 	} catch (...) {}
 
 #if 0
@@ -263,7 +263,7 @@ void Machine::print_registers()
 	printf("CR4 OSFXSR=%llu OSXMMEXCPT=%llu OSXSAVE=%llu\n",
 		(sregs.cr4 >> 9) & 1, (sregs.cr4 >> 10) & 1, (sregs.cr4 >> 18) & 1);
 #endif
-#if 1
+#if 0
 	printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
 	print_exception_handlers(memory.at(IDT_ADDR));
 #endif
@@ -275,14 +275,15 @@ void Machine::print_registers()
 void Machine::handle_exception(uint8_t intr)
 {
 	auto regs = registers();
-	if (intr == 14) { // Page fault
+	// Page fault
+	if (intr == 14) {
 		struct kvm_sregs sregs;
 		get_special_registers(sregs);
 		fprintf(stderr, "*** %s on address 0x%llX\n",
 			exception_name(intr), sregs.cr2);
-		if (memory.within(regs.rsp + 8, 8))
+		if (memory.within(regs.rsp-8, 8))
 		{
-			auto code = *(uint64_t *)memory.at(regs.rsp + 8, 8);
+			auto code = *(uint64_t *)memory.at(regs.rsp-8, 8);
 			printf("Error code: 0x%lX (%s)\n", code,
 				(code & 0x02) ? "memory write" : "memory read");
 			if (code & 0x01) {
@@ -341,13 +342,15 @@ long Machine::run_once()
 
 	case KVM_EXIT_IO:
 		if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT) {
-		if (vcpu.kvm_run->io.port < TINYKVM_MAX_SYSCALLS) {
-			this->system_call(vcpu.kvm_run->io.port);
+		if (vcpu.kvm_run->io.port == 0x0) {
+			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
+			const uint16_t intr = *(uint16_t *)data;
+			this->system_call(intr);
 			if (this->m_stopped) return 0;
 			return KVM_EXIT_IO;
 		}
-		else if (vcpu.kvm_run->io.port >= 0xFF00) {
-			auto intr = vcpu.kvm_run->io.port - 0xFF00;
+		else if (vcpu.kvm_run->io.port >= 0x80) {
+			auto intr = vcpu.kvm_run->io.port - 0x80;
 			/* CPU Exception */
 			this->handle_exception(intr);
 			throw MachineException(std::string(exception_name(intr)), intr);
@@ -391,7 +394,7 @@ long Machine::step_one()
 }
 long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 {
-	struct kvm_guest_debug dbg {0};
+	struct kvm_guest_debug dbg {};
 
 	dbg.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_USE_HW_BP;
 	for (size_t i = 0; i < bp.size(); i++) {

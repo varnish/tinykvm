@@ -1,22 +1,27 @@
 [BITS 64]
 global vm64_exception
 
-;; exception trap
+;; CPU exception frame:
+;; 1. stack    rsp+32
+;; 2. rflags   rsp+24
+;; 3. cs       rsp+16
+;; 4. rip      rsp+8
+;; 5. code     rsp+0
 %macro CPU_EXCEPT 1
 ALIGN 0x10
-	push rdx
-	mov dx, 0xFF00 + %1
-	out dx, ax
-	pop rdx
+	out 0x80 + %1, ax
 	iretq
 %endmacro
 %macro CPU_EXCEPT_CODE 1
 ALIGN 0x10
-	push rdx
-	mov dx, 0xFF00 + %1
-	out dx, ax
-	pop rdx
 	add rsp, 8
+	out 0x80 + %1, ax
+	iretq
+%endmacro
+%macro CPU_EXCEPT_PF 1
+ALIGN 0x10
+	add rsp, 8
+	out 0x80 + %1, ax
 	iretq
 %endmacro
 
@@ -31,8 +36,7 @@ ALIGN 0x10
 .vm64_syscall:
 	cmp eax, 158 ;; PRCTL
 	je .vm64_prctl
-	add eax, 0xffffa000
-	mov DWORD [eax], 0
+	out 0, eax
 	o64 sysret
 
 .vm64_prctl:
@@ -53,11 +57,12 @@ ALIGN 0x10
 	pop rsi
 	o64 sysret
 .vm64_prctl_trap:
-	out 158, ax
+	out 0, ax
 	jmp .vm64_prctl_end
 
 .vm64_gettimeofday:
-	out 96, ax
+	mov ax, 96 ;; gettimeofday
+	out 0, ax
 	ret
 
 .vm64_dso:
@@ -82,7 +87,7 @@ ALIGN 0x10
 	CPU_EXCEPT_CODE 11
 	CPU_EXCEPT_CODE 12
 	CPU_EXCEPT_CODE 13
-	CPU_EXCEPT_CODE 14
+	CPU_EXCEPT_PF 14
 	CPU_EXCEPT 15
 	CPU_EXCEPT 16
 	CPU_EXCEPT_CODE 17

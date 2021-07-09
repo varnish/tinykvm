@@ -545,14 +545,25 @@ void RSPClient::handle_writereg()
 void RSPClient::report_gprs()
 {
 	auto regs = m_machine->registers();
-	char data[1024];
+	char data[384];
+	const char* end = &data[sizeof(data)];
 	char* d = data;
 	/* GPRs, RIP, RFLAGS, segments */
 	for (size_t i = 0; i < 17; i++) {
-		putreg(d, &data[sizeof(data)], (uint64_t) reg_at(regs, i));
+		/* Machine using the exception/interrupt stack */
+		if ((i == 16) && (regs.rsp >= 0x3000 && regs.rsp < 0x4000))
+		{
+			char* rip = m_machine->unsafe_memory_at(regs.rsp, 8);
+			putreg(d, end, *(uint64_t *)rip);
+		} else if ((i == 7) && (regs.rsp >= 0x3000 && regs.rsp < 0x4000)) {
+			char* rip = m_machine->unsafe_memory_at(regs.rsp+24, 8);
+			putreg(d, end, *(uint64_t *)rip);
+		} else {
+			putreg(d, end, (uint64_t) reg_at(regs, i));
+		}
 	}
 	for (size_t i = 17; i < 24; i++) {
-		putreg(d, &data[sizeof(data)], (uint32_t) reg32_at(*m_machine, regs, i));
+		putreg(d, end, (uint32_t) reg32_at(*m_machine, regs, i));
 	}
 	*d++ = 0;
 	send(data);
