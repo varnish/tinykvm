@@ -7,7 +7,7 @@
 
 #define NUM_GUESTS   300
 #define NUM_RESETS   300
-#define GUEST_MEMORY 0x4000000  /* 64MB memory */
+#define GUEST_MEMORY 0x40000000  /* 1024MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
 inline timespec time_now();
@@ -42,7 +42,7 @@ int main(int argc, char** argv)
 		/* Normal execution of _start -> main() */
 		if (getenv("DEBUG"))
 		{
-			if (getenv("TESTCALL")) {
+			if (getenv("VMCALL")) {
 				vm.run();
 				auto regs = vm.setup_call(vm.address_of("test"));
 				vm.set_registers(regs);
@@ -187,7 +187,9 @@ int main(int argc, char** argv)
 	asm("" : : : "memory");
 
 	/* Benchmark the fork reset feature */
+	printf("Benchmarking fast reset...\n");
 	tinykvm::Machine fvm {master_vm, options};
+	fvm.vmcall(vmcall_address);
 	uint64_t frtime = 0;
 	uint64_t frtotal = 0;
 

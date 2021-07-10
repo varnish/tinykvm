@@ -6,8 +6,21 @@
 //#define ENABLE_GUEST_STDOUT
 //#define ENABLE_GUEST_VERBOSE
 //#define VERBOSE_MMAP
+//#define VERBOSE_SYSCALLS
+
+
+
+#ifdef VERBOSE_MMAP
+#define PRINTMMAP(fmt, ...) printf(fmt, __VA_ARGS__);
+#else
 #define PRINTMMAP(fmt, ...) /* */
+#endif
+
+#ifdef VERBOSE_SYSCALLS
+#define SYSPRINT(fmt, ...) printf(fmt, __VA_ARGS__);
+#else
 #define SYSPRINT(fmt, ...) /* */
+#endif
 using namespace tinykvm;
 
 void setup_kvm_system_calls()
@@ -31,16 +44,19 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		1, [] (auto& machine) { // WRITE
-#ifdef ENABLE_GUEST_STDOUT
 			auto regs = machine.registers();
 			auto view = machine.memory_at(regs.rsi, regs.rdx);
 			if (!view.empty()) {
+#ifdef ENABLE_GUEST_STDOUT
 				fwrite(view.begin(), view.size(), 1, stdout);
+#endif
+				regs.rax = regs.rsi;
 			} else {
 				fprintf(stderr, "Invalid memory from guest: 0x%llX:%llu\n",
 					regs.rsi, regs.rdx);
+				regs.rax = -EFAULT;
 			}
-#endif
+			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		5, [] (auto& machine) { // FSTAT
@@ -141,6 +157,7 @@ void setup_kvm_system_calls()
 		16, [] (auto& machine) { // IOCTL
 			/* SYS ioctl */
 			auto regs = machine.registers();
+			SYSPRINT("ioctl(0x%llX)\n", regs.rdi);
 			regs.rax = 0;
 			machine.set_registers(regs);
 		});
