@@ -132,7 +132,7 @@ void Machine::setup_long_mode(const Machine* other)
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE | CR4_FSGSBASE;
 		master_sregs.cr0 =
-			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG;
+			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
 		master_sregs.efer =
 			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
 		setup_amd64_segment_regs(master_sregs, GDT_ADDR);
@@ -402,8 +402,8 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 		if (bp[i] != 0x0)
 			dbg.arch.debugreg[7] |= 0x3 << (2 * i);
 	}
-	printf("Continue with BPs at 0x%lX, 0x%lX, 0x%lX and 0x%lX\n",
-		bp[0], bp[1], bp[2], bp[3]);
+	//printf("Continue with BPs at 0x%lX, 0x%lX, 0x%lX and 0x%lX\n",
+	//	bp[0], bp[1], bp[2], bp[3]);
 
 	if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
 		throw std::runtime_error("KVM_RUN failed");

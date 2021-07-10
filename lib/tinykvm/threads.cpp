@@ -5,7 +5,13 @@
 #include <linux/futex.h>
 #include <cassert>
 #include <stdexcept>
+
+//#define DEBUG_THREADS
+#ifdef DEBUG_THREADS
+#define THPRINT(fmt, ...) fprintf(stderr, fmt, __VA_ARGS__);
+#else
 #define THPRINT(fmt, ...) /* fmt */
+#endif
 
 namespace tinykvm {
 
