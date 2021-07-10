@@ -1,23 +1,27 @@
+#include <assert.h>
 #include <malloc.h>
 #include <stdio.h>
 #include <string.h>
 static void test_threads();
 extern "C" int gettid();
+extern "C" int rexit();
 
+static int threads_test_suite_ok = 0;
 int main()
 {
-	/*char* test = (char *)malloc(14);
+	char* test = (char *)malloc(14);
 	strcpy(test, "Hello World!\n");
-	printf("%.*s", 13, test);*/
+	printf("%.*s", 13, test);
 
 	test_threads();
 	return 0;
 }
 
-__attribute__((used))
+extern "C" __attribute__((used))
 void test()
 {
-	/* */
+	/* Verify that the threads test-suite passed */
+	assert(threads_test_suite_ok == 1);
 }
 
 asm(".global rexit\n"
@@ -26,7 +30,6 @@ asm(".global rexit\n"
 	"mov $60, %rax\n"
 	"syscall");
 
-#include <cassert>
 #include <pthread.h>
 #include <sys/types.h>
 #include <stdexcept>
@@ -151,4 +154,5 @@ void test_threads()
 	delete cpp_thread;
 
 	printf("SUCCESS\n");
+	threads_test_suite_ok = 1;
 }

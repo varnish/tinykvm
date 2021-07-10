@@ -45,6 +45,10 @@ int main(int argc, char** argv)
 			if (getenv("VMCALL")) {
 				vm.run();
 				auto regs = vm.setup_call(vm.address_of("test"));
+				if (regs.rip == 0x0) {
+					fprintf(stderr, "Error: The test function is missing\n");
+					exit(1);
+				}
 				vm.set_registers(regs);
 			}
 
@@ -72,9 +76,15 @@ int main(int argc, char** argv)
 		vm.run();
 		/* vmcall setup */
 		vmcall_address = vm.address_of("test");
-		assert(vmcall_address != 0);
+		if (vmcall_address == 0x0) {
+			fprintf(stderr, "Error: The test function is missing\n");
+			exit(1);
+		}
 		exit_address = vm.address_of("rexit");
-		assert(exit_address != 0);
+		if (exit_address == 0x0) {
+			fprintf(stderr, "Error: The exit function is missing\n");
+			exit(1);
+		}
 	}
 
 	asm("" : : : "memory");
