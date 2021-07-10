@@ -3,6 +3,7 @@
 guest/interrupts
 guest/guest.elf
 guest/musl/musl
+guest/musl/glibc
 guest/glibc/glibc
 guest/go/go
 

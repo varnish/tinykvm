@@ -3,30 +3,6 @@
 #include <string.h>
 static void test_threads();
 
-static long nprimes = 0;
-
-int main()
-{
-	char* test = (char *)malloc(14);
-	strcpy(test, "Hello World!\n");
-	printf("%.*s", 13, test);
-
-	static const int N = 1000000;
-	char prime[N];
-	memset(prime, 1, sizeof(prime));
-	for (long n = 2; n < N; n++)
-	{
-		if (prime[n]) {
-			nprimes += 1;
-			for (long i = 2*n; i < N; i += n)
-				prime[i] = 0;
-		}
-	}
-
-	//test_threads();
-	return 0;
-}
-
 asm(".global rexit\n"
 	"rexit:\n"
 	"mov %rax, %rdi\n"
@@ -36,13 +12,44 @@ asm(".global rexit\n"
 #include <assert.h>
 static int t = 0;
 
+
+
+static long nprimes = 0;
+
+__attribute__((noinline))
+void test_ud2()
+{
+	asm("ud2");
+}
+
+int main(int argc, char** argv)
+{
+	char* test = (char *)malloc(14);
+	strcpy(test, argv[1]);
+	printf("%.*s\n", 13, test);
+	free(test);
+
+	static const int N = 1000000;
+	char prime[N];
+	memset(prime, 1, sizeof(prime));
+	for (long n = 2; n < N; n++)
+	{
+		if (prime[n]) {
+			nprimes += 1;
+			for (long i = n*n; i < N; i += n)
+				prime[i] = 0;
+		}
+	}
+
+	//test_threads();
+	//test_ud2();
+	return 0;
+}
+
 __attribute__((used))
 void test()
 {
-	//assert(t == 0);
-	//t = 1;
-	//printf("Hello Test World!\n");
-	//assert(nprimes == 78498);
+	assert(nprimes == 78498);
 }
 
 #include <assert.h>

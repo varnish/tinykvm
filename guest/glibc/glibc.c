@@ -6,13 +6,25 @@ extern "C" int gettid();
 
 int main()
 {
-	char* test = (char *)malloc(14);
+	/*char* test = (char *)malloc(14);
 	strcpy(test, "Hello World!\n");
-	printf("%.*s", 13, test);
+	printf("%.*s", 13, test);*/
 
-	//test_threads();
+	test_threads();
 	return 0;
 }
+
+__attribute__((used))
+void test()
+{
+	/* */
+}
+
+asm(".global rexit\n"
+	"rexit:\n"
+	"mov %rax, %rdi\n"
+	"mov $60, %rax\n"
+	"syscall");
 
 #include <cassert>
 #include <pthread.h>
@@ -88,7 +100,7 @@ void test_threads()
 	int res;
 	pthread_mutex_init(&mtx, NULL);
 
-	printf("*** Testing pthread_create and sched_yield...\n");
+	//printf("*** Testing pthread_create and sched_yield...\n");
 	res = pthread_create(&t1, NULL, thread_function1, &x);
 	if (res < 0) {
 		printf("Failed to create thread!\n");
