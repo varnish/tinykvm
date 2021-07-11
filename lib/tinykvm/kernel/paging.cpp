@@ -105,7 +105,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 
 	/* Arena memory mapping at 0xC000000000 */
 	for (unsigned i = 0; i < 512; i++) {
-		uint64_t dst = 0x2800000 + (i << 21);
+		uint64_t dst = 0x8'000'000 + (i << 21);
 		arena_pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | dst;
 	}
 

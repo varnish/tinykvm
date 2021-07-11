@@ -5,8 +5,8 @@
 #include <linux/futex.h>
 #include <cassert>
 #include <stdexcept>
-
 //#define DEBUG_THREADS
+
 #ifdef DEBUG_THREADS
 #define THPRINT(fmt, ...) fprintf(stderr, fmt, __VA_ARGS__);
 #else
@@ -252,7 +252,7 @@ void Machine::setup_multithreading()
 		273, [] (auto& machine) {
 			/* SYS set_robust_list */
 			auto regs = machine.registers();
-			regs.rax = 0;
+			regs.rax = -ENOSYS;
 			machine.set_registers(regs);
 		});
 } // setup_multithreading
