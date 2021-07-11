@@ -7,8 +7,7 @@
 //#define ENABLE_GUEST_VERBOSE
 //#define VERBOSE_MMAP
 //#define VERBOSE_SYSCALLS
-
-
+static const uint64_t BRK_MAX = 0x100000;
 
 #ifdef VERBOSE_MMAP
 #define PRINTMMAP(fmt, ...) printf(fmt, __VA_ARGS__);
@@ -94,7 +93,9 @@ void setup_kvm_system_calls()
 			}
 			else {
 				auto& mm = machine.mmap();
-				if (mm < machine.heap_address()) mm = machine.heap_address();
+				const uint64_t mmap_start = machine.heap_address() + BRK_MAX;
+				if (mm < mmap_start)
+					mm = mmap_start;
 				regs.rax = mm;
 				// XXX: MAP_ANONYMOUS -->
 				//memset(machine.rw_memory_at(regs.rax, regs.rsi), 0, regs.rsi);
@@ -123,13 +124,14 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		12, [] (auto& machine) { // BRK
 			auto regs = machine.registers();
-			if (regs.rdi > machine.max_address()) {
-				regs.rax = machine.max_address();
+			if (regs.rdi > machine.heap_address() + BRK_MAX) {
+				regs.rax = machine.heap_address() + BRK_MAX;
 			} else if (regs.rdi < machine.heap_address()) {
 				regs.rax = machine.heap_address();
 			} else {
 				regs.rax = regs.rdi;
 			}
+			SYSPRINT("brk(0x%llX) = 0x%llX\n", regs.rdi, regs.rax);
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -137,13 +139,17 @@ void setup_kvm_system_calls()
 			/* SYS sigaction */
 			auto regs = machine.registers();
 			regs.rax = 0;
+			SYSPRINT("sigaction(signum=%x, act=0x%llX, oldact=0x%llx) = 0x%llX\n",
+				(int) regs.rdi, regs.rsi, regs.rdx, regs.rax);
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		14, [] (auto& machine) {
 			/* SYS sigprocmask */
 			auto regs = machine.registers();
-			regs.rax = 0xfffffffffffff001;
+			regs.rax = 0;
+			SYSPRINT("sigprocmask(how=%x, set=0x%llX, oldset=0x%llx) = 0x%llX\n",
+				(int) regs.rdi, regs.rsi, regs.rdx, regs.rax);
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -151,14 +157,25 @@ void setup_kvm_system_calls()
 			/* SYS sigaltstack */
 			auto regs = machine.registers();
 			regs.rax = 0xfffffffffffff001;
+			SYSPRINT("sigaltstack(ss=0x%llX, old_ss=0x%llx) = 0x%llX\n",
+				regs.rdi, regs.rsi, regs.rax);
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		16, [] (auto& machine) { // IOCTL
-			/* SYS ioctl */
 			auto regs = machine.registers();
-			SYSPRINT("ioctl(0x%llX)\n", regs.rdi);
-			regs.rax = 0;
+			switch (regs.rsi) {
+				case 0x5401: /* TCGETS */
+					regs.rax = 0;
+					break;
+				case 0x5413: /* TIOCGWINSZ */
+					regs.rax = 80;
+					break;
+				default:
+					regs.rax = EINVAL;
+			}
+			SYSPRINT("ioctl(fd=0x%llX, req=0x%llx) = 0x%llX\n",
+				regs.rdi, regs.rsi, regs.rax);
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -236,15 +253,16 @@ void setup_kvm_system_calls()
 			auto regs = machine.registers();
 			if (machine.memory_safe_at(regs.rdi, sizeof(struct utsname)))
 			{
-				auto* uts = machine.rw_memory_at<struct utsname>(regs.rdi, sizeof(struct utsname));
-				strcpy(uts->sysname, "Linux");
-				strcpy(uts->release, "3.2.0");
+				struct utsname uts {};
+				strcpy(uts.sysname, "Linux");
+				strcpy(uts.release, "3.2.0");
+				machine.copy_to_guest(regs.rdi, &uts, sizeof(uts));
 				regs.rax = 0;
-				machine.set_registers(regs);
-				return;
+			} else {
+				fprintf(stderr,
+					"SYSCALL utsname failed on 0x%llX\n", regs.rdi);
+				regs.rax = -EFAULT;
 			}
-			fprintf(stderr, "SYSCALL utsname failed on 0x%llX\n", regs.rdi);
-			regs.rax = -EFAULT;
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -256,8 +274,9 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		96, [] (auto& machine) { // gettimeofday
 			auto regs = machine.registers();
-			auto tv = (struct timeval *)machine.rw_memory_at(regs.rdi, sizeof(struct timeval));
-			regs.rax = gettimeofday(tv, nullptr);
+			struct timeval tv;
+			regs.rax = gettimeofday(&tv, nullptr);
+			machine.copy_to_guest(regs.rdi, &tv, sizeof(tv));
 			if (regs.rax < 0) regs.rax = -errno;
 			machine.set_registers(regs);
 		});
