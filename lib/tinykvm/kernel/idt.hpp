@@ -14,5 +14,6 @@ struct iasm_header {
 	uint16_t vm64_exception;
 	uint16_t vm64_except_size;
 	uint16_t vm64_dso;
+	uint16_t vm64_rexit;
 };
 const iasm_header& interrupt_header();

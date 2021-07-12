@@ -31,6 +31,7 @@ dw .vm64_gettimeofday
 dw .vm64_exception
 dw .vm64_except1 - .vm64_exception
 dw .vm64_dso
+dw .vm64_rexit
 
 ALIGN 0x10
 .vm64_syscall:
@@ -61,13 +62,18 @@ ALIGN 0x10
 	jmp .vm64_prctl_end
 
 .vm64_gettimeofday:
-	mov ax, 96 ;; gettimeofday
-	out 0, ax
+	out 96, ax ;; gettimeofday
 	ret
 
 .vm64_dso:
 	mov rax, .vm64_gettimeofday
 	ret
+
+.vm64_rexit:
+	mov rdi, rax
+.vm64_rexit_retry:
+	out 60, ax
+	jmp .vm64_rexit_retry
 
 ALIGN 0x10
 .vm64_exception:

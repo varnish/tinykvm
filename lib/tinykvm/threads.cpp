@@ -161,7 +161,7 @@ void Machine::setup_multithreading()
 			const auto ptid  = regs.rdx;
 			const auto ctid  = regs.r10;
 			const auto tls   = regs.r8;
-			const auto func  = regs.r12; /* NOTE: Only a guess */
+			const auto func  = regs.r9; /* NOTE: Only a guess */
 
 			auto& parent = machine.threads().get_thread();
 			auto& thread = machine.threads().create(flags, ctid, ptid, stack, tls);

@@ -164,6 +164,9 @@ void Machine::setup_long_mode(const Machine* other)
 		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &master_sregs) < 0) {
 			throw std::runtime_error("KVM_SET_SREGS failed");
 		}
+
+		/* Set the machine exit address (master VM only) */
+		set_exit_address(interrupt_header().vm64_rexit);
 	}
 	else
 	{
@@ -185,6 +188,7 @@ void Machine::setup_long_mode(const Machine* other)
 		assert(translate(IST_ADDR) != IST_ADDR);
 		page_at(memory, IST_ADDR, [] (auto, auto& entry, auto) {
 			assert(entry & (PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX));
+			(void) entry;
 		});
 	}
 
@@ -346,6 +350,11 @@ long Machine::run_once()
 			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
 			const uint16_t intr = *(uint16_t *)data;
 			this->system_call(intr);
+			if (this->m_stopped) return 0;
+			return KVM_EXIT_IO;
+		}
+		else if (vcpu.kvm_run->io.port < 0x80) {
+			this->system_call(vcpu.kvm_run->io.port);
 			if (this->m_stopped) return 0;
 			return KVM_EXIT_IO;
 		}

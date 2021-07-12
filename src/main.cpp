@@ -29,7 +29,6 @@ int main(int argc, char** argv)
 
 	/* Warmup */
 	uint64_t vmcall_address = 0x0;
-	uint64_t exit_address = 0x0;
 	{
 		tinykvm::MachineOptions options {
 			.max_mem = GUEST_MEMORY,
@@ -80,11 +79,6 @@ int main(int argc, char** argv)
 			fprintf(stderr, "Error: The test function is missing\n");
 			exit(1);
 		}
-		exit_address = vm.address_of("rexit");
-		if (exit_address == 0x0) {
-			fprintf(stderr, "Error: The exit function is missing\n");
-			exit(1);
-		}
 	}
 
 	asm("" : : : "memory");
@@ -99,7 +93,6 @@ int main(int argc, char** argv)
 		};
 		vms.push_back(new tinykvm::Machine {binary, options});
 		auto& vm = *vms.back();
-		vm.set_exit_address(exit_address);
 		vm.setup_linux(
 			{"kvmtest", "Hello World!\n"},
 			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
@@ -161,12 +154,10 @@ int main(int argc, char** argv)
 	/* Make the master VM able to mass-produce copies */
 	master_vm.prepare_copy_on_write();
 	master_vm.set_stack_address(0x1ff000);
-	master_vm.set_exit_address(exit_address);
 
 	printf("The 'test' function is at 0x%lX\n", master_vm.address_of("test"));
 	assert(master_vm.address_of("test") == vmcall_address);
 	printf("Call stack is at 0x%lX\n", master_vm.stack_address());
-	printf("Exit function is at 0x%lX\n", master_vm.exit_address());
 	printf("Heap address is at 0x%lX\n", master_vm.heap_address());
 
 	/* Benchmark the VM fast-forking feature */
