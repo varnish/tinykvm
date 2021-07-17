@@ -12,6 +12,7 @@
 
 /**
 **/
+#define HIDE_CPU_EXCEPTIONS
 
 namespace tinykvm {
 
@@ -500,16 +501,22 @@ reg_at(struct tinykvm_x86regs& regs, size_t idx)
 static __u32&
 reg32_at(Machine& m, struct tinykvm_x86regs& regs, size_t idx)
 {
-	static __u32 cs = 0x8;
+	struct kvm_sregs sregs;
+	m.get_special_registers(sregs);
+
+	static __u32 seg = 0x0;
 	static __u32 fs = 0x0, gs = 0x0;
 	switch (idx) {
 	case 17:
 		return *(__u32 *)&regs.rflags;
 	case 18:
+		return seg = sregs.cs.selector;
 	case 19:
+		return seg = sregs.ss.selector;
 	case 20:
+		return seg = sregs.ds.selector;
 	case 21:
-		return cs;
+		return seg = sregs.es.selector;
 	case 22:
 		fs = m.get_fsgs().first;
 		return fs;
@@ -550,6 +557,7 @@ void RSPClient::report_gprs()
 	char* d = data;
 	/* GPRs, RIP, RFLAGS, segments */
 	for (size_t i = 0; i < 17; i++) {
+#ifdef HIDE_CPU_EXCEPTIONS
 		/* Machine using the exception/interrupt stack */
 		if ((i == 16) && (regs.rsp >= 0x3000 && regs.rsp < 0x4000))
 		{
@@ -559,8 +567,11 @@ void RSPClient::report_gprs()
 			char* rip = m_machine->unsafe_memory_at(regs.rsp+24, 8);
 			putreg(d, end, *(uint64_t *)rip);
 		} else {
+#endif
 			putreg(d, end, (uint64_t) reg_at(regs, i));
+#ifdef HIDE_CPU_EXCEPTIONS
 		}
+#endif
 	}
 	for (size_t i = 17; i < 24; i++) {
 		putreg(d, end, (uint32_t) reg32_at(*m_machine, regs, i));

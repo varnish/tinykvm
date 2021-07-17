@@ -34,24 +34,36 @@ int main(int argc, char** argv)
 			.max_mem = GUEST_MEMORY,
 			.verbose_loader = false
 		};
-		tinykvm::Machine vm {binary, options};
-		vm.setup_linux(
+		tinykvm::Machine master_vm {binary, options};
+		master_vm.setup_linux(
 			{"kvmtest", "Hello World!\n"},
 			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+
+		vmcall_address = master_vm.address_of("bench");
+		if (vmcall_address == 0x0) {
+			fprintf(stderr, "Error: The test function is missing\n");
+			exit(1);
+		}
+
 		/* Normal execution of _start -> main() */
 		if (getenv("DEBUG"))
 		{
+			auto* vm = &master_vm;
+
 			if (getenv("VMCALL")) {
-				vm.run();
-				auto regs = vm.setup_call(vm.address_of("test"));
-				if (regs.rip == 0x0) {
-					fprintf(stderr, "Error: The test function is missing\n");
-					exit(1);
-				}
-				vm.set_registers(regs);
+				master_vm.run();
+			}
+			if (getenv("FORK")) {
+				master_vm.prepare_copy_on_write();
+				vm = new tinykvm::Machine {master_vm, options};
+				auto regs = vm->setup_call(vmcall_address);
+				vm->set_registers(regs);
+			} else {
+				auto regs = master_vm.setup_call(vmcall_address);
+				master_vm.set_registers(regs);
 			}
 
-			tinykvm::RSP server {vm, 2159};
+			tinykvm::RSP server {*vm, 2159};
 			printf("Waiting for connection localhost:2159...\n");
 			auto client = server.accept();
 			if (client != nullptr) {
@@ -62,23 +74,17 @@ int main(int argc, char** argv)
 					while (client->process_one());
 				} catch (const tinykvm::MachineException& e) {
 					printf("EXCEPTION %s: %lu\n", e.what(), e.data());
-					vm.print_registers();
+					vm->print_registers();
 				}
 			} else {
-				/* Normal execution of _start -> main() */
-				vm.run();
+				/* Resume execution normally */
+				vm->run();
 			}
 			/* Exit after debugging */
 			return 0;
 		}
 		/* Normal execution of _start -> main() */
-		vm.run();
-		/* vmcall setup */
-		vmcall_address = vm.address_of("test");
-		if (vmcall_address == 0x0) {
-			fprintf(stderr, "Error: The test function is missing\n");
-			exit(1);
-		}
+		master_vm.run();
 	}
 
 	asm("" : : : "memory");
@@ -114,8 +120,6 @@ int main(int argc, char** argv)
 
 	for (auto* vm : vms)
 	{
-		/* FIXME: Bandaid for broken handmade mini-ELF */
-		vm->set_stack_address(0x1ff000);
 		/* One function call into the VM */
 		vm->vmcall(vmcall_address);
 	}
@@ -153,12 +157,13 @@ int main(int argc, char** argv)
 	master_vm.run();
 	/* Make the master VM able to mass-produce copies */
 	master_vm.prepare_copy_on_write();
-	master_vm.set_stack_address(0x1ff000);
 
-	printf("The 'test' function is at 0x%lX\n", master_vm.address_of("test"));
+	printf("The 'test' function is at 0x%lX\n", vmcall_address);
 	assert(master_vm.address_of("test") == vmcall_address);
 	printf("Call stack is at 0x%lX\n", master_vm.stack_address());
 	printf("Heap address is at 0x%lX\n", master_vm.heap_address());
+
+	printf("Benchmarking VM fork + vmcall 0x%lX\n", vmcall_address);
 
 	/* Benchmark the VM fast-forking feature */
 	asm("" : : : "memory");

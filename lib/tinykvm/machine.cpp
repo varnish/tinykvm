@@ -19,8 +19,8 @@ namespace tinykvm {
 	long vcpu_mmap_size = 0;
 
 Machine::Machine(std::string_view binary, const MachineOptions& options)
-	: m_binary {binary},
-	  m_forked {false},
+	: m_forked {false},
+	  m_binary {binary},
 	  memory { vMemory::New(*this, 0x0, 0x100000, options.max_mem) },
 	  vsyscall { VSYSCALL_AREA, (char*) vsys_page().data(), vsys_page().size() }
 {
@@ -31,19 +31,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 		m_mt.reset(new MultiThreading{*this});
 	}
 
-	this->fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
-	if (UNLIKELY(this->fd < 0)) {
-		throw std::runtime_error("Failed to KVM_CREATE_VM");
-	}
-
-	if (ioctl(this->fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
-		throw std::runtime_error("Failed to KVM_SET_TSS_ADDR");
-	}
-
-	__u64 map_addr = 0xffffc000;
-	if (ioctl(this->fd, KVM_SET_IDENTITY_MAP_ADDR, &map_addr) < 0) {
-		throw std::runtime_error("Failed KVM_SET_IDENTITY_MAP_ADDR");
-	}
+	this->fd = create_kvm_vm();
 
 	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
 
@@ -61,7 +49,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->vcpu.init(*this);
 	this->setup_long_mode(nullptr);
-	struct tinykvm_x86regs regs {0};
+	struct tinykvm_x86regs regs {};
 	/* Store the registers, so that Machine is ready to go */
 	this->setup_registers(regs);
 	this->set_registers(regs);
@@ -70,9 +58,9 @@ Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 	: Machine(std::string_view{(const char*)&bin[0], bin.size()}, opts) {}
 
 Machine::Machine(const Machine& other, const MachineOptions& options)
-	: m_binary {other.m_binary},
-	  m_stopped {true},
+	: m_stopped {true},
 	  m_forked  {true},
+	  m_binary {other.m_binary},
 	  m_exit_address {other.m_exit_address},
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address {other.m_heap_address},
@@ -85,10 +73,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 
-	this->fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
-	if (UNLIKELY(this->fd < 0)) {
-		throw std::runtime_error("Failed to KVM_CREATE_VM");
-	}
+	this->fd = create_kvm_vm();
 
 	/* Reuse pre-CoWed pagetable from the master machine */
 	if (UNLIKELY(install_memory(0, memory.vmem()) < 0)) {
@@ -112,8 +97,6 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	memory.page_tables = pml4.addr;
 
 	this->setup_long_mode(&other);
-
-	this->set_registers(other.registers());
 }
 
 void Machine::reset_to(Machine& other)
@@ -129,11 +112,6 @@ void Machine::reset_to(Machine& other)
 	this->setup_long_mode(&other);
 
 	this->set_registers(other.registers());
-}
-
-void Machine::init()
-{
-	Machine::kvm_fd = kvm_open();
 }
 
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
@@ -216,6 +194,31 @@ int kvm_open()
 
 	extern void initialize_vcpu_stuff(int kvm_fd);
 	initialize_vcpu_stuff(fd);
+
+	return fd;
+}
+
+__attribute__ ((cold))
+void Machine::init()
+{
+	Machine::kvm_fd = kvm_open();
+}
+
+int Machine::create_kvm_vm()
+{
+	int fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
+	if (UNLIKELY(fd < 0)) {
+		throw std::runtime_error("Failed to KVM_CREATE_VM");
+	}
+
+	/*if (ioctl(fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
+		throw std::runtime_error("Failed to KVM_SET_TSS_ADDR");
+	}*/
+
+	/*__u64 map_addr = 0xffffc000;
+	if (ioctl(fd, KVM_SET_IDENTITY_MAP_ADDR, &map_addr) < 0) {
+		throw std::runtime_error("Failed KVM_SET_IDENTITY_MAP_ADDR");
+	}*/
 
 	return fd;
 }

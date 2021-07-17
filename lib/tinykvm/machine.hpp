@@ -43,6 +43,7 @@ struct Machine
 	tinykvm_x86regs registers() const;
 	void set_registers(const tinykvm_x86regs&);
 	void get_special_registers(struct kvm_sregs&) const;
+	void set_special_registers(const struct kvm_sregs&);
 	std::pair<__u64, __u64> get_fsgs() const;
 	void set_tls_base(__u64 baseaddr);
 	void print_registers();
@@ -97,10 +98,12 @@ private:
 		tinykvm_x86regs registers() const;
 		void assign_registers(const struct tinykvm_x86regs&);
 		void get_special_registers(struct kvm_sregs&) const;
+		void set_special_registers(const struct kvm_sregs&);
 
 		int fd = 0;
 		struct kvm_run *kvm_run = nullptr;
 	};
+	void reset_special_regs();
 	void setup_registers(tinykvm_x86regs&);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
@@ -135,6 +138,7 @@ private:
 	uint64_t m_mm = 0;
 	std::unique_ptr<MultiThreading> m_mt = nullptr;
 
+	static int create_kvm_vm();
 	static int kvm_fd;
 };
 

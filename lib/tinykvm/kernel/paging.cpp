@@ -260,9 +260,8 @@ void foreach_page(vMemory& memory, foreach_page_t callback)
 					{
 						if (pd[k] & PDE64_PRESENT) {
 							const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
-							if (pd[k] & PDE64_PS) { // 2MB page
-								callback(pt_base, pd[k], pt_size);
-							} else {
+							callback(pt_base, pd[k], pt_size);
+							if (!(pd[k] & PDE64_PS)) { // not 2MB page
 								auto* pt = memory.page_at(pt_mem);
 								for (uint64_t e = 0; e < 512; e++) {
 									const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
@@ -288,7 +287,8 @@ void foreach_page_makecow(vMemory& mem)
 	foreach_page(mem,
 		[] (uint64_t addr, uint64_t& entry, size_t size) {
 			if (addr != 0xffe00000) {
-				if (entry & PDE64_RW) {
+				const uint64_t flags = (PDE64_PRESENT | PDE64_RW);
+				if ((entry & flags) == flags) {
 					entry &= ~(uint64_t) PDE64_RW;
 					entry |= PDE64_CLONEABLE;
 				}
@@ -331,6 +331,9 @@ void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback)
 	throw MemoryException("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
 }
 
+/* We want to remove the CLONEABLE bit after a page has been duplicated */
+static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~(uint64_t) PDE64_CLONEABLE;
+
 inline bool is_copy_on_write(uint64_t entry) {
 	/* Copy this page if it's marked cloneable
 	   and it's not already writable. */
@@ -343,7 +346,7 @@ inline void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& 
 	/* Copy all entries from old page */
 	std::memcpy(page.pmem, data, PAGE_SIZE);
 	/* Set new entry, copy flags and set as cloned */
-	entry = page.addr | (entry & 0x8000000000000FFF) | flags;
+	entry = page.addr | (entry & PDE64_CLONED_MASK) | flags;
 	data = page.pmem;
 }
 inline void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
@@ -353,12 +356,13 @@ inline void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& d
 	/* Zero all entries from old page */
 	std::memset(page.pmem, 0, PAGE_SIZE);
 	/* Set new entry, copy flags and set as cloned */
-	entry = page.addr | (entry & 0x8000000000000FFF) | flags;
+	entry = page.addr | (entry & PDE64_CLONED_MASK) | flags;
 	data = page.pmem;
 }
 
 char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 {
+	CLPRINT("Creating a writable page for 0x%lX\n", addr);
 	auto* pml4 = memory.page_at(memory.page_tables);
 	const uint64_t i = (addr >> 39) & 511;
 	if (pml4[i] & PDE64_PRESENT) {
@@ -367,7 +371,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 		/* Make copy of page if needed */
 		if (is_copy_on_write(pml4[i])) {
 			clone_and_update_entry(memory, pml4[i], pdpt, PDE64_RW);
-			CLPRINT("Cloning a PML4 entry %lu: 0x%lX at %p\n", i, pml4[i], pdpt);
+			CLPRINT("-> Cloning a PML4 entry %lu: 0x%lX at %p\n", i, pml4[i], pdpt);
 			assert(!is_copy_on_write(pml4[i]) && (pml4[i] & PDE64_PRESENT));
 		}
 		const uint64_t j = index_from_pdpt_entry(addr);
@@ -377,13 +381,13 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 			/* Make copy of page if needed */
 			if (is_copy_on_write(pdpt[j])) {
 				clone_and_update_entry(memory, pdpt[j], pd, PDE64_RW);
-				CLPRINT("Cloning a PDPT entry: 0x%lX\n", pdpt[j]);
+				CLPRINT("-> Cloning a PDPT entry: 0x%lX\n", pdpt[j]);
 			}
 			const uint64_t k = index_from_pd_entry(addr);
 			if (pd[k] & PDE64_PRESENT) {
 				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
 				if (UNLIKELY(pd[k] & PDE64_PS)) { // 2MB page
-					CLPRINT("Splitting a 2MB PD entry into 4KB pages\n");
+					CLPRINT("-> Splitting a 2MB PD entry into 4KB pages\n");
 					/* Remove PS flag */
 					pd[k] &= ~PDE64_PS;
 					/* Copy flags from 2MB page */
@@ -401,7 +405,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 				/* Make copy of page if needed */
 				if (is_copy_on_write(pd[k])) {
 					clone_and_update_entry(memory, pd[k], pt, PDE64_RW);
-					CLPRINT("Cloning a PD entry: 0x%lX\n", pd[k]);
+					CLPRINT("-> Cloning a PD entry: 0x%lX\n", pd[k]);
 				}
 				const uint64_t e = index_from_pt_entry(addr);
 				if (pt[e] & PDE64_PRESENT) { // 4KB page
@@ -412,9 +416,9 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 							zero_and_update_entry(memory, pt[e], data, PDE64_RW);
 						else
 							clone_and_update_entry(memory, pt[e], data, PDE64_RW);
-						CLPRINT("Cloning a PT entry: 0x%lX\n", pt[e]);
+						CLPRINT("-> Cloning a PT entry: 0x%lX\n", pt[e]);
 					}
-					CLPRINT("Returning data: %p\n", data);
+					CLPRINT("-> Returning data: %p\n", data);
 					return (char *)data;
 				} // pt
 				throw MemoryException("page_at: pt entry not present", addr, PDE64_PTE_SIZE);

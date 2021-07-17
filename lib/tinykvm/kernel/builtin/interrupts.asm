@@ -14,14 +14,14 @@ ALIGN 0x10
 %endmacro
 %macro CPU_EXCEPT_CODE 1
 ALIGN 0x10
-	add rsp, 8
 	out 0x80 + %1, ax
+	add rsp, 8
 	iretq
 %endmacro
 %macro CPU_EXCEPT_PF 1
 ALIGN 0x10
-	add rsp, 8
 	out 0x80 + %1, ax
+	add rsp, 8
 	iretq
 %endmacro
 

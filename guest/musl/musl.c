@@ -3,17 +3,6 @@
 #include <string.h>
 static void test_threads();
 
-asm(".global rexit\n"
-	"rexit:\n"
-	"mov %rax, %rdi\n"
-	"mov $60, %rax\n"
-	"syscall");
-
-#include <assert.h>
-static int t = 0;
-
-
-
 static long nprimes = 0;
 
 __attribute__((noinline))
@@ -46,9 +35,14 @@ int main(int argc, char** argv)
 	return 0;
 }
 
+#include <assert.h>
+static int t = 0;
+
 __attribute__((used))
-void test()
+void bench()
 {
+	assert(t == 0);
+	//t = 1;
 	assert(nprimes == 78498);
 }
 

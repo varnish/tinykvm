@@ -95,6 +95,22 @@ void Machine::vCPU::get_special_registers(struct kvm_sregs& sregs) const
 		throw std::runtime_error("KVM_GET_SREGS failed");
 	}
 }
+void Machine::vCPU::set_special_registers(const struct kvm_sregs& sregs)
+{
+	if (ioctl(this->fd, KVM_SET_SREGS, &sregs) < 0) {
+		throw std::runtime_error("KVM_GET_SREGS failed");
+	}
+}
+
+void Machine::reset_special_regs()
+{
+	struct kvm_sregs sregs;
+	get_special_registers(sregs);
+
+	setup_amd64_segment_regs(sregs, GDT_ADDR);
+
+	set_special_registers(sregs);
+}
 
 std::string_view Machine::io_data() const
 {
@@ -184,12 +200,18 @@ void Machine::setup_long_mode(const Machine* other)
 
 		/* Zero a new page for IST stack */
 		memory.get_writable_page(IST_ADDR, true);
+
+#ifndef NDEBUG
 		/* It shouldn't be identity-mapped anymore */
 		assert(translate(IST_ADDR) != IST_ADDR);
+		//printf("Translate 0x%lX => 0x%lX\n", IST_ADDR, translate(IST_ADDR));
 		page_at(memory, IST_ADDR, [] (auto, auto& entry, auto) {
 			assert(entry & (PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX));
 			(void) entry;
 		});
+
+		//print_pagetables(this->memory);
+#endif
 	}
 
 	/* Extended control registers */
@@ -249,8 +271,17 @@ void Machine::print_registers()
 		return;
 	}
 
+	printf("CR0: 0x%llX  CR3: 0x%llX\n", sregs.cr0, sregs.cr3);
+	printf("CR2: 0x%llX  CR4: 0x%llX\n", sregs.cr2, sregs.cr4);
+
 	auto regs = registers();
-	printf("RIP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rsp);
+	printf("RAX: 0x%llX  RBX: 0x%llX  RCX: 0x%llX\n", regs.rax, regs.rbx, regs.rcx);
+	printf("RDX: 0x%llX  RSI: 0x%llX  RDI: 0x%llX\n", regs.rdx, regs.rsi, regs.rdi);
+	printf("RIP: 0x%llX  RBP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rbp, regs.rsp);
+
+	printf("SS: 0x%X  CS: 0x%X  DS: 0x%X  FS: 0x%X  GS: 0x%X\n",
+		sregs.ss.selector, sregs.cs.selector, sregs.ds.selector, sregs.fs.selector, sregs.gs.selector);
+
 	try {
 		printf("Return RIP: 0x%lX\n",
 			*(uint64_t *)memory.at(regs.rsp, 8));
@@ -269,10 +300,10 @@ void Machine::print_registers()
 #endif
 #if 0
 	printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
-	print_exception_handlers(memory.at(IDT_ADDR));
+	print_exception_handlers(memory.at(sregs.idt.base));
 #endif
 #if 0
-	print_gdt_entries(memory.at(GDT_ADDR), 7);
+	print_gdt_entries(memory.at(sregs.gdt.base), 7);
 #endif
 }
 
@@ -360,6 +391,16 @@ long Machine::run_once()
 		}
 		else if (vcpu.kvm_run->io.port >= 0x80) {
 			auto intr = vcpu.kvm_run->io.port - 0x80;
+			if (intr == 14)
+			{
+				/* Page fault handling */
+				struct kvm_sregs sregs;
+				get_special_registers(sregs);
+				fprintf(stderr, "*** %s on address 0x%llX\n",
+					exception_name(intr), sregs.cr2);
+
+				return KVM_EXIT_IO;
+			}
 			/* CPU Exception */
 			this->handle_exception(intr);
 			throw MachineException(std::string(exception_name(intr)), intr);
@@ -424,6 +465,7 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 void Machine::prepare_copy_on_write()
 {
 	foreach_page_makecow(this->memory);
+	//print_pagetables(this->memory);
 }
 
 }

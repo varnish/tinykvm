@@ -59,7 +59,7 @@ void Machine::setup_argv(
 	const std::vector<std::string>& args,
 	const std::vector<std::string>& env)
 {
-	struct tinykvm_x86regs regs {0};
+	struct tinykvm_x86regs regs {};
 	this->setup_registers(regs);
 	this->setup_argv(regs.rsp, args, env);
 	// Set registers back
@@ -149,7 +149,7 @@ void Machine::setup_linux(
 	const std::vector<std::string>& args,
 	const std::vector<std::string>& env)
 {
-	struct tinykvm_x86regs regs {0};
+	struct tinykvm_x86regs regs {};
 	this->setup_registers(regs);
 	this->setup_linux(regs.rsp, args, env);
 	// Set registers back
