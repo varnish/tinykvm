@@ -243,8 +243,8 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		60, [] (auto& machine) { // EXIT
-			auto regs = machine.registers();
 #ifdef ENABLE_GUEST_VERBOSE
+			auto regs = machine.registers();
 			printf("Machine exited with return value 0x%llX\n", regs.rdi);
 #endif
 			machine.stop();

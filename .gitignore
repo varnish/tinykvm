@@ -7,5 +7,6 @@ guest/musl/glibc
 guest/glibc/glibc
 guest/go/go
 
+guest/tests/test
 guest/mini/mini.o
 guest/mini/mini

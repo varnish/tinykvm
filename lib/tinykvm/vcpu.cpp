@@ -350,7 +350,9 @@ long Machine::run(unsigned timeout)
 {
 	this->m_stopped = false;
 	while(run_once());
-	return 0;
+	/* Return KVM_SYNC_REGS.RDI: vcpu.kvm_run->s.regs.regs.rdi */
+	auto regs = registers();
+	return regs.rdi;
 }
 long Machine::run_once()
 {
@@ -411,8 +413,7 @@ long Machine::run_once()
 		if (mmio_scall.within(vcpu.kvm_run->mmio.phys_addr, 1)) {
 			unsigned scall = vcpu.kvm_run->mmio.phys_addr - mmio_scall.begin();
 			system_call(scall);
-			if (this->m_stopped) return 0;
-			return KVM_EXIT_MMIO;
+			return (this->m_stopped) ? 0 : KVM_EXIT_MMIO;
 		}
 		printf("Unknown MMIO write at 0x%llX\n",
 			vcpu.kvm_run->mmio.phys_addr);

@@ -17,3 +17,9 @@ if (FLTO)
 	target_compile_options(bench PRIVATE "-flto=thin")
 	set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=lld")
 endif()
+
+add_executable(tinytest
+	src/tests.cpp
+	src/functions.cpp
+)
+target_link_libraries(tinytest tinykvm)
