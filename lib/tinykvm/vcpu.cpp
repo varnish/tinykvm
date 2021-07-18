@@ -180,9 +180,6 @@ void Machine::setup_long_mode(const Machine* other)
 		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &master_sregs) < 0) {
 			throw std::runtime_error("KVM_SET_SREGS failed");
 		}
-
-		/* Set the machine exit address (master VM only) */
-		set_exit_address(interrupt_header().vm64_rexit);
 	}
 	else
 	{
@@ -466,6 +463,10 @@ void Machine::prepare_copy_on_write()
 {
 	foreach_page_makecow(this->memory);
 	//print_pagetables(this->memory);
+}
+
+Machine::address_t Machine::exit_address() const noexcept {
+	return interrupt_header().vm64_rexit;
 }
 
 }

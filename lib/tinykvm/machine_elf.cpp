@@ -82,13 +82,9 @@ void Machine::elf_loader(const MachineOptions& options)
 
 	//this->relocate_section(".rela.plt", ".symtab");
 
-	// the default exit function is simply 'exit'
-	this->m_exit_address = this->address_of("exit");
-
 	if (options.verbose_loader) {
 	printf("* Entry is at %p\n", (void*) m_start_address);
 	printf("* Stack is at %p\n", (void*) m_stack_address);
-	printf("* Exit is at %p\n", (void*) m_exit_address);
 	}
 }
 

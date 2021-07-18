@@ -27,6 +27,7 @@ void setup_kvm_system_calls()
 	Machine::install_unhandled_syscall_handler(
 		[] (auto& machine, unsigned scall) {
 			SYSPRINT("Unhandled system call: %u\n", scall);
+			(void) scall;
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
 			machine.set_registers(regs);

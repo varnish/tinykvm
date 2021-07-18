@@ -84,7 +84,7 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 	/* Re-align stack for SSE */
 	regs.rsp &= ~(uint64_t) 0xF;
 	/* Push return value last */
-	stack_push<uint64_t> (regs.rsp, this->m_exit_address);
+	stack_push<uint64_t> (regs.rsp, exit_address());
 	return regs;
 }
 

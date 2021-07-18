@@ -16,7 +16,6 @@ namespace tinykvm {
 	std::array<Machine::syscall_t, TINYKVM_MAX_SYSCALLS> Machine::m_syscalls {nullptr};
 	Machine::unhandled_syscall_t Machine::m_unhandled_syscall = [] (Machine&, unsigned) {};
 	static int kvm_open();
-	long vcpu_mmap_size = 0;
 
 Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_forked {false},
@@ -61,7 +60,6 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_stopped {true},
 	  m_forked  {true},
 	  m_binary {other.m_binary},
-	  m_exit_address {other.m_exit_address},
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address {other.m_heap_address},
 	  m_start_address {other.m_start_address},
