@@ -21,24 +21,14 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_forked {false},
 	  m_binary {binary},
 	  memory { vMemory::New(*this, 0x0, 0x100000, options.max_mem) },
-	  vsyscall { VSYSCALL_AREA, (char*) vsys_page().data(), vsys_page().size() }
+	  m_mt   {new MultiThreading{*this}}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 
-	/* Automatically enable threads when SYS_clone is installed */
-	if (get_syscall_handler(56) != nullptr) {
-		m_mt.reset(new MultiThreading{*this});
-	}
-
 	this->fd = create_kvm_vm();
-
-	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
 
 	/* Disallow viewing memory below 1MB */
 	install_memory(0, memory.vmem());
-
-	/* vsyscall page */
-	install_memory(1, this->vsyscall);
 
 	this->elf_loader(options);
 
@@ -59,9 +49,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address {other.m_heap_address},
 	  m_start_address {other.m_start_address},
-	  memory { vMemory::From(*this, other.memory) },
-	  vsyscall { VSYSCALL_AREA, (char*) vsys_page().data(), vsys_page().size() },
-	  ptmem    {other.ptmem},
+	  memory   {*this, other.memory},
 	  m_mm     {other.m_mm},
 	  m_mt     {new MultiThreading{*other.m_mt}}
 {
@@ -72,12 +60,6 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 
 	/* Reuse pre-CoWed pagetable from the master machine */
 	this->install_memory(0, memory.vmem());
-
-	/* MMIO syscall page */
-	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
-
-	/* vsyscall page */
-	this->install_memory(1, other.vsyscall);
 
 	/* Clone PML4 page */
 	auto pml4 = memory.new_page();

@@ -21,6 +21,10 @@ vMemory::vMemory(Machine& m, uint64_t ph, uint64_t sf, char* p, size_t s, bool o
 {
 	this->page_tables = PT_ADDR;
 }
+vMemory::vMemory(Machine& m, const vMemory& other)
+	: vMemory{m, other.physbase, other.safebase, other.ptr, other.size, false}
+{
+}
 
 void vMemory::reset()
 {
@@ -108,16 +112,6 @@ vMemory vMemory::New(Machine& m, uint64_t phys, uint64_t safe, size_t size)
 	}
 	madvise(ptr, size, MADV_MERGEABLE);
 	return vMemory(m, phys, safe, ptr, size);
-}
-
-vMemory vMemory::From(Machine& m, const vMemory& other)
-{
-	return vMemory(m, other.physbase, other.safebase, other.ptr, other.size, false);
-}
-
-vMemory vMemory::From(Machine& m, uint64_t phys, char* ptr, size_t size)
-{
-	return vMemory(m, phys, phys, ptr, size);
 }
 
 MemRange MemRange::New(

@@ -137,9 +137,6 @@ private:
 	uint64_t m_start_address;
 
 	vMemory memory;  // guest memory
-	VirtualMem vsyscall; // vsyscall page
-	MemRange mmio_scall; // syscall MMIO slot
-	MemRange ptmem;  // page tables
 
 	uint64_t m_mm = 0;
 	std::unique_ptr<MultiThreading> m_mt = nullptr;

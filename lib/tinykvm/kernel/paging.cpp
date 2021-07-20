@@ -191,7 +191,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	// vsyscall gettimeofday: 0xFFFFFFFFFF600000
 	vdso_pdpt[511] = PDE64_PRESENT | PDE64_USER | vsyscall_pd_addr;
 	vsyscall_pd[507] = PDE64_PRESENT | PDE64_USER | vsyscall_pt_addr;
-	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | 0xFFFF600000;
+	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | 0x4000;
 
 	return free_page;
 }

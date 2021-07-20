@@ -5,8 +5,8 @@
 
 #include <tinykvm/rsp_client.hpp>
 
-#define NUM_GUESTS   300
-#define NUM_RESETS   300
+#define NUM_GUESTS   200
+#define NUM_RESETS   200
 #define GUEST_MEMORY 0x40000000  /* 1024MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
@@ -181,8 +181,14 @@ int main(int argc, char** argv)
 		asm("" : : : "memory");
 		auto ft2 = time_now();
 		forktime += nanodiff(ft1, ft2);
+	}
+	tinykvm::Machine cvm {master_vm, options};
+	for (unsigned i = 0; i < NUM_GUESTS; i++)
+	{
 		asm("" : : : "memory");
-		vm.vmcall(vmcall_address);
+		auto ft2 = time_now();
+		asm("" : : : "memory");
+		cvm.vmcall(vmcall_address);
 		asm("" : : : "memory");
 		auto ft3 = time_now();
 		calltime += nanodiff(ft2, ft3);

@@ -157,8 +157,9 @@ void Machine::setup_long_mode(const Machine* other)
 
 		uint64_t last_page = setup_amd64_paging(
 			memory, INTR_ASM_ADDR, IST_ADDR, m_binary);
-		this->ptmem = MemRange::New("Page tables",
-			memory.page_tables, last_page - memory.page_tables);
+		//this->ptmem = MemRange::New("Page tables",
+		//	memory.page_tables, last_page - memory.page_tables);
+		(void) last_page;
 
 		vcpu.set_special_registers(master_sregs);
 	}
@@ -384,11 +385,11 @@ long Machine::run_once()
 		return KVM_EXIT_IO;
 
 	case KVM_EXIT_MMIO:
-		if (mmio_scall.within(vcpu.kvm_run->mmio.phys_addr, 1)) {
+		/*if (mmio_scall.within(vcpu.kvm_run->mmio.phys_addr, 1)) {
 			unsigned scall = vcpu.kvm_run->mmio.phys_addr - mmio_scall.begin();
 			system_call(scall);
 			return (this->m_stopped) ? 0 : KVM_EXIT_MMIO;
-		}
+		}*/
 		printf("Unknown MMIO write at 0x%llX\n",
 			vcpu.kvm_run->mmio.phys_addr);
 		return KVM_EXIT_MMIO;
