@@ -33,13 +33,15 @@ inline void Machine::set_special_registers(const struct kvm_sregs& sregs) {
 template <typename... Args> inline constexpr
 tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 {
-	/* Special registers are clobbered by system calls */
-	this->reset_special_regs();
+	if (this->m_userspaced == false) {
+		/* Special registers can be clobbered by system calls */
+		this->reset_special_regs();
+	}
+	this->m_userspaced = false;
 	struct tinykvm_x86regs regs {};
 	/* Set IOPL=3 to allow I/O instructions */
 	regs.rflags = 2 | (3 << 12);
 	regs.rip = addr;
-	regs.rbp = 0x0;
 	regs.rsp = this->stack_address();
 	[[maybe_unused]] unsigned iargs = 0;
 	([&] {

@@ -77,8 +77,8 @@ struct Machine
 	const auto& mmap() const { return m_mm; }
 	auto& mmap() { return m_mm; }
 
-	int install_memory(uint32_t idx, const VirtualMem&);
-	int delete_memory(uint32_t idx);
+	void install_memory(uint32_t idx, const VirtualMem&);
+	void delete_memory(uint32_t idx);
 
 	template <typename... Args> constexpr
 	tinykvm_x86regs setup_call(uint64_t addr, Args&&... args);
@@ -110,13 +110,14 @@ private:
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const Machine* other);
-	void copy_dirty_memory(const Machine& other);
 	void handle_exception(uint8_t intr);
 	long run_once();
 
 	int   fd = 0;
 	bool  m_stopped = true;
+	bool  m_prepped = false;
 	bool  m_forked = false;
+	bool  m_userspaced = false;
 	vCPU  vcpu;
 	void* m_userdata = nullptr;
 

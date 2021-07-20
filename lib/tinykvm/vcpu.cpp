@@ -1,7 +1,6 @@
 #include "machine.hpp"
 #include <cassert>
 #include <cstring>
-#include <stdexcept>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -21,20 +20,20 @@ namespace tinykvm {
 		__u32 padding;
 		struct kvm_cpuid_entry2 entries[100];
 	} kvm_cpuid;
-	static long vcpu_mmap_size;
+	static long vcpu_mmap_size = 0;
 
-__attribute__ ((cold))
+TINYKVM_COLD()
 void initialize_vcpu_stuff(int kvm_fd)
 {
 	vcpu_mmap_size = ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
 	if (vcpu_mmap_size <= 0) {
-		throw std::runtime_error("Failed to KVM_GET_VCPU_MMAP_SIZE");
+		throw MachineException("Failed to KVM_GET_VCPU_MMAP_SIZE");
 	}
 
 	/* Retrieve KVM-host CPUID features */
 	kvm_cpuid.nent = sizeof(kvm_cpuid.entries) / sizeof(kvm_cpuid.entries[0]);
 	if (ioctl(kvm_fd, KVM_GET_SUPPORTED_CPUID, &kvm_cpuid) < 0) {
-		throw std::runtime_error("KVM_GET_SUPPORTED_CPUID failed");
+		throw MachineException("KVM_GET_SUPPORTED_CPUID failed");
 	}
 }
 
@@ -42,20 +41,47 @@ void Machine::vCPU::init(Machine& machine)
 {
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, 0);
 	if (UNLIKELY(this->fd < 0)) {
-		throw std::runtime_error("Failed to KVM_CREATE_VCPU");
+		throw MachineException("Failed to KVM_CREATE_VCPU");
 	}
 
 	this->kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
 	if (UNLIKELY(this->kvm_run == MAP_FAILED)) {
-		throw std::runtime_error("Failed to create KVM run-time mapped memory");
+		throw MachineException("Failed to create KVM run-time mapped memory");
 	}
 
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
-		throw std::runtime_error("KVM_SET_CPUID2 failed");
+		throw MachineException("KVM_SET_CPUID2 failed");
+	}
+
+	static bool minit = false;
+	if (!minit) {
+		minit = true;
+		if (ioctl(this->fd, KVM_GET_SREGS, &master_sregs) < 0) {
+			throw MachineException("KVM_GET_SREGS failed");
+		}
+		master_sregs.cr3 = PT_ADDR;
+		master_sregs.cr4 =
+			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE | CR4_FSGSBASE;
+		master_sregs.cr0 =
+			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
+		master_sregs.efer =
+			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
+		setup_amd64_segment_regs(master_sregs, GDT_ADDR);
+		setup_amd64_tss_regs(master_sregs, TSS_ADDR);
+		setup_amd64_exception_regs(master_sregs, IDT_ADDR);
+
+		if (ioctl(this->fd, KVM_GET_XCRS, &master_xregs) < 0) {
+			throw MachineException("KVM_GET_XCRS failed");
+		}
+		/* Enable AVX instructions */
+		master_xregs.xcrs[0].xcr = 0;
+		master_xregs.xcrs[0].value |= 0x7; // FPU, SSE, YMM
+		master_xregs.nr_xcrs = 1;
 	}
 }
+
 void Machine::vCPU::deinit()
 {
 	if (this->fd > 0) {
@@ -65,6 +91,8 @@ void Machine::vCPU::deinit()
 		munmap(this->kvm_run, vcpu_mmap_size);
 	}
 }
+
+TINYKVM_COLD()
 void Machine::vCPU::print_address_info(uint64_t addr)
 {
 	struct kvm_translation tr;
@@ -79,26 +107,26 @@ tinykvm_x86regs Machine::vCPU::registers() const
 {
 	struct tinykvm_x86regs regs;
 	if (ioctl(this->fd, KVM_GET_REGS, &regs) < 0) {
-		throw std::runtime_error("KVM_SET_REGS failed");
+		throw MachineException("KVM_SET_REGS failed");
 	}
 	return regs;
 }
 void Machine::vCPU::assign_registers(const struct tinykvm_x86regs& regs)
 {
 	if (ioctl(this->fd, KVM_SET_REGS, &regs) < 0) {
-		throw std::runtime_error("KVM_SET_REGS failed");
+		throw MachineException("KVM_SET_REGS failed");
 	}
 }
 void Machine::vCPU::get_special_registers(struct kvm_sregs& sregs) const
 {
 	if (ioctl(this->fd, KVM_GET_SREGS, &sregs) < 0) {
-		throw std::runtime_error("KVM_GET_SREGS failed");
+		throw MachineException("KVM_GET_SREGS failed");
 	}
 }
 void Machine::vCPU::set_special_registers(const struct kvm_sregs& sregs)
 {
 	if (ioctl(this->fd, KVM_SET_SREGS, &sregs) < 0) {
-		throw std::runtime_error("KVM_GET_SREGS failed");
+		throw MachineException("KVM_GET_SREGS failed");
 	}
 }
 
@@ -118,82 +146,32 @@ std::string_view Machine::io_data() const
 	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
 }
 
-void Machine::copy_dirty_memory(const Machine& other)
-{
-	foreach_page(other.memory,
-		[this, &other] (uint64_t addr, uint64_t entry, size_t size) mutable {
-			// Copy the page if it's dirty or not writable but present
-			bool copy = (entry & PDE64_DIRTY) != 0 || (entry & PDE64_RW) == 0;
-			if (copy && memory.within(addr, size)) {
-				if (UNLIKELY(addr >= 0x100000 && addr < 0x200000)) {
-					return;
-				}
-				if (UNLIKELY(addr == IST_ADDR)) {
-					return;
-				}
-				std::memcpy(memory.ptr + addr, other.memory.ptr + addr, size);
-			}
-		});
-}
-
 void Machine::setup_long_mode(const Machine* other)
 {
-	static bool minit = false;
-	if (!minit) {
-		minit = true;
-		if (ioctl(this->vcpu.fd, KVM_GET_SREGS, &master_sregs) < 0) {
-			throw std::runtime_error("KVM_GET_SREGS failed");
-		}
-		master_sregs.cr3 = memory.page_tables;
-		master_sregs.cr4 =
-			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE | CR4_FSGSBASE;
-		master_sregs.cr0 =
-			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
-		master_sregs.efer =
-			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
-		setup_amd64_segment_regs(master_sregs, GDT_ADDR);
-		setup_amd64_tss_regs(master_sregs, TSS_ADDR);
-		setup_amd64_exception_regs(master_sregs, IDT_ADDR);
-
-		if (ioctl(this->vcpu.fd, KVM_GET_XCRS, &master_xregs) < 0) {
-			throw std::runtime_error("KVM_GET_XCRS failed");
-		}
-		/* Enable AVX instructions */
-		master_xregs.xcrs[0].xcr = 0;
-		master_xregs.xcrs[0].value |= 0x7; // FPU, SSE, YMM
-		master_xregs.nr_xcrs = 1;
-	}
-
 	if (other == nullptr)
 	{
 		setup_amd64_exceptions(
 			IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
 		setup_amd64_segments(GDT_ADDR, memory.at(GDT_ADDR));
-		setup_amd64_tss(
-			TSS_ADDR, memory.at(TSS_ADDR), GDT_ADDR, memory.at(GDT_ADDR));
+		setup_amd64_tss(TSS_ADDR, memory.at(TSS_ADDR), memory.at(GDT_ADDR));
 
 		uint64_t last_page = setup_amd64_paging(
 			memory, INTR_ASM_ADDR, IST_ADDR, m_binary);
 		this->ptmem = MemRange::New("Page tables",
 			memory.page_tables, last_page - memory.page_tables);
 
-		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &master_sregs) < 0) {
-			throw std::runtime_error("KVM_SET_SREGS failed");
-		}
+		vcpu.set_special_registers(master_sregs);
 	}
 	else
 	{
-		/* Copy the special registers of the master machine */
+		/* Inherit the special registers of the master machine */
 		struct kvm_sregs sregs;
-		if (ioctl(other->vcpu.fd, KVM_GET_SREGS, &sregs) < 0) {
-			throw std::runtime_error("KVM_GET_SREGS failed");
-		}
-		/* Page tables may be cloned at the start */
+		other->vcpu.get_special_registers(sregs);
+
+		/* Page table entry will be cloned at the start */
 		sregs.cr3 = memory.page_tables;
 
-		if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
-			throw std::runtime_error("KVM_SET_SREGS failed");
-		}
+		vcpu.set_special_registers(sregs);
 
 		/* Zero a new page for IST stack */
 		memory.get_writable_page(IST_ADDR, true);
@@ -203,17 +181,16 @@ void Machine::setup_long_mode(const Machine* other)
 		assert(translate(IST_ADDR) != IST_ADDR);
 		//printf("Translate 0x%lX => 0x%lX\n", IST_ADDR, translate(IST_ADDR));
 		page_at(memory, IST_ADDR, [] (auto, auto& entry, auto) {
-			assert(entry & (PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX));
+			assert(entry & (PDE64_PRESENT | PDE64_RW | PDE64_NX));
 			(void) entry;
 		});
-
 		//print_pagetables(this->memory);
 #endif
 	}
 
 	/* Extended control registers */
 	if (ioctl(this->vcpu.fd, KVM_SET_XCRS, &master_xregs) < 0) {
-		throw std::runtime_error("KVM_SET_XCRS failed");
+		throw MachineException("KVM_SET_XCRS failed");
 	}
 
 	/* Enable SYSCALL/SYSRET instructions */
@@ -230,43 +207,32 @@ void Machine::setup_long_mode(const Machine* other)
 	msrs.entries[1].data  = interrupt_header().vm64_syscall;
 
 	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 2) {
-		throw std::runtime_error("KVM_SET_MSRS: failed to set STAR/LSTAR");
+		throw MachineException("KVM_SET_MSRS: failed to set STAR/LSTAR");
 	}
 }
 
 std::pair<__u64, __u64> Machine::get_fsgs() const
 {
 	struct kvm_sregs sregs;
-	if (ioctl(this->vcpu.fd, KVM_GET_SREGS, &sregs) < 0) {
-		fprintf(stderr, "Unable to retrieve special registers\n");
-		return {0x0, 0x0};
-	}
+	vcpu.get_special_registers(sregs);
 
 	return {sregs.fs.base, sregs.gs.base};
 }
 void Machine::set_tls_base(__u64 baseaddr)
 {
 	struct kvm_sregs sregs;
-	if (ioctl(this->vcpu.fd, KVM_GET_SREGS, &sregs) < 0) {
-		fprintf(stderr, "Unable to retrieve special registers\n");
-		return;
-	}
+	vcpu.get_special_registers(sregs);
 
 	sregs.fs.base = baseaddr;
 
-	if (ioctl(this->vcpu.fd, KVM_SET_SREGS, &sregs) < 0) {
-		fprintf(stderr, "Unable to set special registers\n");
-		return;
-	}
+	vcpu.set_special_registers(sregs);
 }
 
+TINYKVM_COLD()
 void Machine::print_registers()
 {
 	struct kvm_sregs sregs;
-	if (ioctl(this->vcpu.fd, KVM_GET_SREGS, &sregs) < 0) {
-		fprintf(stderr, "Unable to retrieve registers\n");
-		return;
-	}
+	vcpu.get_special_registers(sregs);
 
 	printf("CR0: 0x%llX  CR3: 0x%llX\n", sregs.cr0, sregs.cr3);
 	printf("CR2: 0x%llX  CR4: 0x%llX\n", sregs.cr2, sregs.cr4);
@@ -281,9 +247,9 @@ void Machine::print_registers()
 
 	try {
 		printf("Return RIP: 0x%lX\n",
-			*(uint64_t *)memory.at(regs.rsp, 8));
+			*(uint64_t *)memory.at(regs.rsp+8, 8));
 		printf("Return stack: 0x%lX\n",
-			*(uint64_t *)memory.at(regs.rsp, 32));
+			*(uint64_t *)memory.at(regs.rsp+32, 8));
 	} catch (...) {}
 
 #if 0
@@ -304,6 +270,7 @@ void Machine::print_registers()
 #endif
 }
 
+TINYKVM_COLD()
 void Machine::handle_exception(uint8_t intr)
 {
 	auto regs = registers();
@@ -313,9 +280,9 @@ void Machine::handle_exception(uint8_t intr)
 		get_special_registers(sregs);
 		fprintf(stderr, "*** %s on address 0x%llX\n",
 			exception_name(intr), sregs.cr2);
-		if (memory.within(regs.rsp-8, 8))
+		if (memory.within(regs.rsp, 8))
 		{
-			auto code = *(uint64_t *)memory.at(regs.rsp-8, 8);
+			auto code = *(uint64_t *)memory.at(regs.rsp, 8);
 			printf("Error code: 0x%lX (%s)\n", code,
 				(code & 0x02) ? "memory write" : "memory read");
 			if (code & 0x01) {
@@ -358,7 +325,7 @@ long Machine::run_once()
 {
 	if (ioctl(vcpu.fd, KVM_RUN, 0) < 0) {
 		/* NOTE: This is probably EINTR */
-		throw std::runtime_error("KVM_RUN failed");
+		throw MachineException("KVM_RUN failed");
 	}
 
 	switch (vcpu.kvm_run->exit_reason) {
@@ -379,16 +346,22 @@ long Machine::run_once()
 		if (vcpu.kvm_run->io.port == 0x0) {
 			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
 			const uint16_t intr = *(uint16_t *)data;
-			this->system_call(intr);
-			if (this->m_stopped) return 0;
-			return KVM_EXIT_IO;
+			if (intr != 0xFFFF) {
+				this->system_call(intr);
+				if (this->m_stopped) return 0;
+				return KVM_EXIT_IO;
+			} else {
+				this->m_stopped = true;
+				this->m_userspaced = true;
+				return 0;
+			}
 		}
 		else if (vcpu.kvm_run->io.port < 0x80) {
 			this->system_call(vcpu.kvm_run->io.port);
 			if (this->m_stopped) return 0;
 			return KVM_EXIT_IO;
 		}
-		else if (vcpu.kvm_run->io.port >= 0x80) {
+		else if (vcpu.kvm_run->io.port < 0xFF) {
 			auto intr = vcpu.kvm_run->io.port - 0x80;
 			if (intr == 14)
 			{
@@ -398,11 +371,14 @@ long Machine::run_once()
 				fprintf(stderr, "*** %s on address 0x%llX\n",
 					exception_name(intr), sregs.cr2);
 
+				const uint64_t addr = sregs.cr2 & ~(uint64_t) 0x8000000000000FFF;
+				memory.get_writable_page(addr, false);
+
 				return KVM_EXIT_IO;
 			}
 			/* CPU Exception */
 			this->handle_exception(intr);
-			throw MachineException(std::string(exception_name(intr)), intr);
+			throw MachineException(exception_name(intr), intr);
 		}
 		fprintf(stderr,	"Unknown IO port %d\n",
 			vcpu.kvm_run->io.port);
@@ -429,17 +405,20 @@ long Machine::run_once()
 	}
 }
 
+TINYKVM_COLD()
 long Machine::step_one()
 {
 	struct kvm_guest_debug dbg;
 	dbg.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
 
 	if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
-		throw std::runtime_error("KVM_RUN failed");
+		throw MachineException("KVM_RUN failed");
 	}
 
 	return run_once();
 }
+
+TINYKVM_COLD()
 long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 {
 	struct kvm_guest_debug dbg {};
@@ -454,7 +433,7 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 	//	bp[0], bp[1], bp[2], bp[3]);
 
 	if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
-		throw std::runtime_error("KVM_RUN failed");
+		throw MachineException("KVM_RUN failed");
 	}
 
 	return run_once();
@@ -462,6 +441,8 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 
 void Machine::prepare_copy_on_write()
 {
+	assert(this->m_prepped == false);
+	this->m_prepped = true;
 	foreach_page_makecow(this->memory);
 	//print_pagetables(this->memory);
 }

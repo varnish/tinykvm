@@ -3,7 +3,6 @@
 #include "memory_bank.hpp"
 #include "virtual_mem.hpp"
 #include <cstddef>
-#include <functional>
 #include <string_view>
 
 namespace tinykvm {
@@ -23,7 +22,6 @@ struct vMemory {
 	bool   owned = true;
 	/* Dynamic page memory */
 	MemoryBanks banks; // fault-in memory banks
-	std::function<void(int)> install_memory_at;
 
 	/* Unsafe */
 	bool within(uint64_t addr, size_t asize) const noexcept {

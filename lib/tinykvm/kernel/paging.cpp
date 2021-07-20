@@ -6,19 +6,26 @@
 #include <cassert>
 #include <cstring>
 #include <stdexcept>
+//#define VERBOSE_PAGETABLES
 
+#ifdef VERBOSE_PAGETABLES
+#define CLPRINT(fmt, ...) printf(fmt, ##__VA_ARGS__);
+#else
 #define CLPRINT(...) /* ... */
-//#define CLPRINT(fmt, ...) printf(fmt, ##__VA_ARGS__);
-#define PDE64_CLONEABLE  (1ul << 10)
+#endif
+#define PDE64_CLONEABLE  (1ull << 11)
 
 namespace tinykvm {
+
+/* We want to remove the CLONEABLE bit after a page has been duplicated */
+static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~(uint64_t) PDE64_CLONEABLE;
 
 using ptentry_pair = std::tuple<uint64_t, uint64_t, uint64_t>;
 inline ptentry_pair pdpt_from_index(size_t i, uint64_t* pml4) {
 	return {i << 39, pml4[i] & ~(uint64_t) 0xFFF, 1ul << 39};
 }
 inline ptentry_pair pd_from_index(size_t i, uint64_t pdpt_base, uint64_t* pdpt) {
-	return {pdpt_base | (i << 30), pdpt[i] & ~(uint64_t) 0xFFF, 1ul << 30};
+	return {pdpt_base | (i << 30), pdpt[i] & ~0x8000000000000FFF, 1ul << 30};
 }
 inline ptentry_pair pt_from_index(size_t i, uint64_t pd_base, uint64_t* pd) {
 	return {pd_base | (i << 21), pd[i] & ~0x8000000000000FFF, 1ul << 21};
@@ -80,17 +87,21 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
 
 	lowpage[0] = 0; /* Null-page at 0x0 */
-	/* Kernel area < 1MB */
-	for (unsigned i = 1; i < 256; i++) {
-		lowpage[i] = PDE64_PRESENT | PDE64_NX | (i << 12);
-	}
-	/* XXX: This is a work-around for exception triple-faults */
-	lowpage[1] |= PDE64_RW;
+	/* XXX: This is a work-around for exception triple-faults.
+		Here lies GDT, IDT and TSS. Some write access needed? */
+	lowpage[1] = PDE64_PRESENT | PDE64_NX | PDE64_RW | (1 << 12);
 	/* Exception handlers */
-	lowpage[except_asm_addr >> 12] = PDE64_PRESENT | PDE64_USER | except_asm_addr;
+	const uint64_t except_page = except_asm_addr >> 12;
+	lowpage[except_page] = PDE64_PRESENT | PDE64_USER | except_asm_addr;
+
 	/* Exception (IST) stack */
 	const uint64_t ist_page = ist_addr >> 12;
-	lowpage[ist_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | ist_addr;
+	lowpage[ist_page] = PDE64_PRESENT | PDE64_RW | PDE64_NX | ist_addr;
+
+	/* Kernel area < 1MB */
+	for (unsigned i = 4; i < 256; i++) {
+		lowpage[i] = PDE64_PRESENT | PDE64_NX | (i << 12);
+	}
 
 	/* Stack area 1MB -> 2MB */
 	for (unsigned i = 256; i < 512; i++) {
@@ -185,18 +196,21 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	return free_page;
 }
 
+TINYKVM_COLD()
 void print_pte(vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
 {
 	uint64_t* pt = (uint64_t*) memory.at(pte_mem);
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pt[i] & PDE64_PRESENT) {
-			printf("    |-- 4k PT (0x%lX): 0x%lX  W=%lu  E=%d  %s\n",
+			printf("    |-- 4k PT (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s\n",
 				pte_addr + (i << 12), pt[i] & ~0x8000000000000FFF,
 				pt[i] & PDE64_RW, !(pt[i] & PDE64_NX),
-				(pt[i] & PDE64_USER) ? "USER" : "KERNEL");
+				(pt[i] & PDE64_USER) ? "USER" : "KERNEL",
+				(pt[i] & PDE64_CLONEABLE) ? "CLONEABLE" : "");
 		}
 	}
 }
+TINYKVM_COLD()
 void print_pd(vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
 {
 	uint64_t* pd = (uint64_t*) memory.at(pd_mem);
@@ -204,38 +218,44 @@ void print_pd(vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
 		if (pd[i] & PDE64_PRESENT) {
 			uint64_t addr = pd_addr + (i << 21);
 			uint64_t mem  = pd[i] & ~0x8000000000000FFF;
-			printf("  |-* 2MB PD (0x%lX): 0x%lX  W=%lu  E=%d  %s\n",
+			printf("  |-* 2MB PD (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s\n",
 				addr, mem,
 				pd[i] & PDE64_RW, !(pd[i] & PDE64_NX),
-				(pd[i] & PDE64_USER) ? "USER" : "KERNEL");
-			if (!(pd[i] & PDE64_PS))
+				(pd[i] & PDE64_USER) ? "USER" : "KERNEL",
+				(pd[i] & PDE64_CLONEABLE) ? "CLONEABLE" : "");
+			if (!(pd[i] & PDE64_PS)) {
 				print_pte(memory, addr, mem);
+			}
 		}
 	}
 }
+TINYKVM_COLD()
 void print_pdpt(vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
 {
 	uint64_t* pdpt = (uint64_t*) memory.at(pdpt_mem);
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pdpt[i] & PDE64_PRESENT) {
 			uint64_t addr = pdpt_base + (i << 30);
-			printf("|-* 1GB PDPT (0x%lX): 0x%lX  W=%lu  E=%d  %s\n",
+			printf("|-* 1GB PDPT (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s\n",
 				addr, pdpt[i] & ~0xFFF,
 				pdpt[i] & PDE64_RW, !(pdpt[i] & PDE64_NX),
-				(pdpt[i] & PDE64_USER) ? "USER" : "KERNEL");
+				(pdpt[i] & PDE64_USER) ? "USER" : "KERNEL",
+				(pdpt[i] & PDE64_CLONEABLE) ? "CLONEABLE" : "");
 			print_pd(memory, addr, pdpt[i] & ~0xFFF);
 		}
 	}
 }
 
+TINYKVM_COLD()
 void print_pagetables(vMemory& memory)
 {
 	uint64_t* pml4 = (uint64_t*) memory.at(memory.page_tables);
 	for (size_t i = 0; i < 512; i++) {
 		if (pml4[i] & PDE64_PRESENT) {
-			printf("* 512GB PML4: W=%lu  E=%d  %s\n",
+			printf("* 512GB PML4: W=%lu  E=%d  %s  %s\n",
 				pml4[i] & PDE64_RW, !(pml4[i] & PDE64_NX),
-				(pml4[i] & PDE64_USER) ? "USER" : "KERNEL");
+				(pml4[i] & PDE64_USER) ? "USER" : "KERNEL",
+				(pml4[i] & PDE64_CLONEABLE) ? "CLONEABLE" : "");
 			print_pdpt(memory, i << 39, pml4[i] & ~(uint64_t) 0xFFF);
 		}
 	}
@@ -331,9 +351,6 @@ void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback)
 	throw MemoryException("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
 }
 
-/* We want to remove the CLONEABLE bit after a page has been duplicated */
-static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~(uint64_t) PDE64_CLONEABLE;
-
 inline bool is_copy_on_write(uint64_t entry) {
 	/* Copy this page if it's marked cloneable
 	   and it's not already writable. */
@@ -397,11 +414,11 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 					for (size_t e = 0; e < 512; e++) {
 						page.pmem[e] = pt_base | (e << 12) | flags;
 					}
-					/* Update 2MB entry */
-					pd[k] = page.addr | flags;
+					/* Update 2MB entry, remove cloneable flag */
+					pd[k] = page.addr | (flags & PDE64_CLONED_MASK);
 				}
 				/* NOTE: Make sure we are re-reading pd[k] */
-				auto* pt = memory.page_at(pd[k] & ~0x8000000000000FFF);
+				auto* pt = memory.page_at(pd[k] & ~(uint64_t)0x8000000000000FFF);
 				/* Make copy of page if needed */
 				if (is_copy_on_write(pd[k])) {
 					clone_and_update_entry(memory, pd[k], pt, PDE64_RW);

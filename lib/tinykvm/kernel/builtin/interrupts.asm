@@ -1,6 +1,7 @@
 [BITS 64]
 global vm64_exception
 
+org 0x2000
 ;; CPU exception frame:
 ;; 1. stack    rsp+32
 ;; 2. rflags   rsp+24
@@ -21,11 +22,9 @@ ALIGN 0x10
 %macro CPU_EXCEPT_PF 1
 ALIGN 0x10
 	out 0x80 + %1, ax
-	add rsp, 8
-	iretq
+	jmp .vm64_page_fault
 %endmacro
 
-org 0x2000
 dw .vm64_syscall
 dw .vm64_gettimeofday
 dw .vm64_exception
@@ -72,8 +71,17 @@ ALIGN 0x10
 .vm64_rexit:
 	mov rdi, rax
 .vm64_rexit_retry:
-	out 60, ax
+	mov ax, 0xFFFF
+	out 0, ax
 	jmp .vm64_rexit_retry
+
+.vm64_page_fault:
+	push rdi
+	mov rdi, cr2
+	invlpg [rdi]
+	pop rdi
+	add rsp, 8
+	iretq
 
 ALIGN 0x10
 .vm64_exception:

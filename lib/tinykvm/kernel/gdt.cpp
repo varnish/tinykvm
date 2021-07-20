@@ -1,5 +1,6 @@
 #include "gdt.hpp"
 
+#include "../common.hpp"
 #include <cstdio>
 #include <cstring>
 #include <linux/kvm.h>
@@ -10,6 +11,8 @@
 #define GDT_ACCESS_DATA   0x92
 #define GDT_ACCESS_CODE3  0xFA
 #define GDT_ACCESS_DATA3  0xF2
+#define GDT_ACCESS_TSS0   0x85
+#define GDT_ACCESS_TSS3   0xE5
 
 #define FLAGS_X32_PAGE 0xC
 #define FLAGS_X64_PAGE 0xA
@@ -46,22 +49,10 @@ void GDT_write_TSS_segment(void* area, uint64_t tss_addr, uint32_t size)
 	auto* entry = (GDT_entry*) area;
 	entry->limit_lo = size;
 	entry->limit_hi = 0;
-	entry->access   = 0xE5;
+	entry->access   = GDT_ACCESS_TSS;
 	entry->flags    = FLAGS_X64_TSS;
 	entry->base_lo  = tss_addr & 0xFFFFFF;
 	entry->base_hi  = tss_addr >> 24;
-}
-
-void print_gdt_entries(void* area, size_t count)
-{
-	const auto* entry = (const GDT_entry*) area;
-	for (size_t i = 0; i < count; i++) {
-		const auto a = entry[i].access;
-		const auto f = entry[i].flags;
-		printf("GDT %2zx: P=%u DPL=%u S=%u Ex=%u DC=%u RW=%u G=%u Sz=%u L=%u\n",
-			8*i, a >> 7, (a >> 5) & 0x3, (a >> 4) & 1, (a >> 3) & 1,
-			a & 0x4, a & 0x2, f & 0x8, f & 0x4, f & 0x2);
-	}
 }
 
 void setup_amd64_segments(uint64_t gdt_addr, char* gdt_ptr)
@@ -106,4 +97,17 @@ void setup_amd64_segment_regs(struct kvm_sregs& sregs, uint64_t gdt_addr)
 	/* GDT dtable */
 	sregs.gdt.base  = gdt_addr;
 	sregs.gdt.limit = sizeof(GDT_entry) * 7 - 1;
+}
+
+TINYKVM_COLD()
+void print_gdt_entries(void* area, size_t count)
+{
+	const auto* entry = (const GDT_entry*) area;
+	for (size_t i = 0; i < count; i++) {
+		const auto a = entry[i].access;
+		const auto f = entry[i].flags;
+		printf("GDT %2zx: P=%u DPL=%u S=%u Ex=%u DC=%u RW=%u G=%u Sz=%u L=%u\n",
+			8*i, a >> 7, (a >> 5) & 0x3, (a >> 4) & 1, (a >> 3) & 1,
+			a & 0x4, a & 0x2, f & 0x8, f & 0x4, f & 0x2);
+	}
 }

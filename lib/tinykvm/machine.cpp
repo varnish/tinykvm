@@ -9,7 +9,6 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#include <stdexcept>
 
 namespace tinykvm {
 	int Machine::kvm_fd = -1;
@@ -17,6 +16,7 @@ namespace tinykvm {
 	Machine::unhandled_syscall_t Machine::m_unhandled_syscall = [] (Machine&, unsigned) {};
 	static int kvm_open();
 
+__attribute__ ((cold))
 Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_forked {false},
 	  m_binary {binary},
@@ -35,14 +35,10 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
 
 	/* Disallow viewing memory below 1MB */
-	if (UNLIKELY(install_memory(0, memory.vmem()) < 0)) {
-		throw std::runtime_error("Failed to install guest memory region");
-	}
+	install_memory(0, memory.vmem());
 
 	/* vsyscall page */
-	if (UNLIKELY(install_memory(1, this->vsyscall) < 0)) {
-		throw std::runtime_error("Failed to install guest memory region");
-	}
+	install_memory(1, this->vsyscall);
 
 	this->elf_loader(options);
 
@@ -70,31 +66,39 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_mt     {new MultiThreading{*other.m_mt}}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
+	assert(other.m_prepped == true && "Call Machine::prepare_copy_on_write() first");
 
 	this->fd = create_kvm_vm();
 
 	/* Reuse pre-CoWed pagetable from the master machine */
-	if (UNLIKELY(install_memory(0, memory.vmem()) < 0)) {
-		throw std::runtime_error("Failed to install guest memory region");
-	}
+	this->install_memory(0, memory.vmem());
 
 	/* MMIO syscall page */
 	this->mmio_scall = MemRange::New("System calls", 0xffffa000, 0x1000);
 
 	/* vsyscall page */
-	if (UNLIKELY(install_memory(1, other.vsyscall) < 0)) {
-		throw std::runtime_error("Failed to install guest memory region");
-	}
-
-	/* The vCPU needs to be initialized before we can */
-	this->vcpu.init(*this);
+	this->install_memory(1, other.vsyscall);
 
 	/* Clone PML4 page */
 	auto pml4 = memory.new_page();
 	std::memcpy(pml4.pmem, memory.page_at(memory.page_tables), PAGE_SIZE);
 	memory.page_tables = pml4.addr;
 
+	/* Initialize vCPU and long mode (fast path) */
+	this->vcpu.init(*this);
 	this->setup_long_mode(&other);
+}
+
+__attribute__ ((cold))
+Machine::~Machine()
+{
+	if (fd > 0) {
+		close(fd);
+	}
+	vcpu.deinit();
+	if (memory.owned) {
+		munmap(memory.ptr, memory.size);
+	}
 }
 
 void Machine::reset_to(Machine& other)
@@ -119,7 +123,7 @@ uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
 	return sp;
 }
 
-int Machine::install_memory(uint32_t idx, const VirtualMem& mem)
+void Machine::install_memory(uint32_t idx, const VirtualMem& mem)
 {
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
@@ -128,9 +132,11 @@ int Machine::install_memory(uint32_t idx, const VirtualMem& mem)
 		.memory_size = mem.size,
 		.userspace_addr = (uintptr_t) mem.ptr,
 	};
-	return ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg);
+	if (UNLIKELY(ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg) < 0)) {
+		throw MemoryException("Failed to install guest memory region", mem.physbase, mem.size);
+	}
 }
-int Machine::delete_memory(uint32_t idx)
+void Machine::delete_memory(uint32_t idx)
 {
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
@@ -139,7 +145,9 @@ int Machine::delete_memory(uint32_t idx)
 		.memory_size = 0x0,
 		.userspace_addr = 0x0,
 	};
-	return ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg);
+	if (UNLIKELY(ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg) < 0)) {
+		throw MachineException("Failed to delete guest memory region", idx);
+	}
 }
 uint64_t Machine::translate(uint64_t virt) const
 {
@@ -160,34 +168,23 @@ void Machine::setup_registers(tinykvm_x86regs& regs)
 	regs.rsp = this->stack_address();
 }
 
-Machine::~Machine()
-{
-	if (fd > 0) {
-		close(fd);
-	}
-	vcpu.deinit();
-	if (memory.owned) {
-		munmap(memory.ptr, memory.size);
-	}
-}
-
 __attribute__ ((cold))
 int kvm_open()
 {
 	int fd = open("/dev/kvm", O_RDWR);
 	if (fd < 0) {
-		throw std::runtime_error("Failed to open /dev/kvm");
+		throw MachineException("Failed to open /dev/kvm");
 	}
 
 	const int api_ver = ioctl(fd, KVM_GET_API_VERSION, 0);
 	if (api_ver < 0) {
-		throw std::runtime_error("Failed to verify KVM_GET_API_VERSION");
+		throw MachineException("Failed to verify KVM_GET_API_VERSION");
 	}
 
 	if (api_ver != KVM_API_VERSION) {
 		fprintf(stderr, "Got KVM api version %d, expected %d\n",
 			api_ver, KVM_API_VERSION);
-		throw std::runtime_error("Wrong KVM API version");
+		throw MachineException("Wrong KVM API version");
 	}
 
 	extern void initialize_vcpu_stuff(int kvm_fd);
@@ -202,11 +199,12 @@ void Machine::init()
 	Machine::kvm_fd = kvm_open();
 }
 
+__attribute__ ((cold))
 int Machine::create_kvm_vm()
 {
 	int fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
 	if (UNLIKELY(fd < 0)) {
-		throw std::runtime_error("Failed to KVM_CREATE_VM");
+		throw MachineException("Failed to KVM_CREATE_VM");
 	}
 
 	/*if (ioctl(fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {

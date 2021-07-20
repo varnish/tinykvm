@@ -11,6 +11,8 @@
 #define TINYKVM_MAX_SYSCALLS  384
 #endif
 
+#define TINYKVM_COLD()   __attribute__ ((cold))
+
 #include <cstdint>
 #include <exception>
 #include <string>
@@ -25,14 +27,14 @@ namespace tinykvm
 
 	class MachineException : public std::exception {
 	public:
-	    MachineException(const std::string& msg, uint64_t data = 0)
+	    MachineException(const char* msg, uint64_t data = 0)
 			: m_msg(msg), m_data(data) {}
 	    const char* what() const noexcept override {
-	        return m_msg.c_str();
+	        return m_msg;
 	    }
 		auto data() const noexcept { return m_data; }
 	private:
-		std::string m_msg;
+		const char* m_msg;
 		uint64_t m_data;
 	};
 
