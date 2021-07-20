@@ -121,6 +121,7 @@ int main(int argc, char** argv)
 	/* Verify VM exit status */
 	auto regs = master_vm.registers();
 	KASSERT(regs.rdi == 666);
+	printf("Program startup OK\n");
 
 	/* Call into master VM */
 	KASSERT(master_vm.vmcall("test_return") == 666);
@@ -131,6 +132,7 @@ int main(int argc, char** argv)
 		KASSERT(me.data() == 6);
 	}
 	KASSERT(master_vm.vmcall("test_read") == 200);
+	printf("Master vmcall OK\n");
 
 	/* Make the master VM able to mass-produce copies */
 	master_vm.prepare_copy_on_write();
@@ -138,6 +140,7 @@ int main(int argc, char** argv)
 	for (size_t i = 0; i < 200; i++) {
 		test_forking(master_vm);
 	}
+	printf("VM forking OK\n");
 
 	printf("Nice! Tests passed.\n");
 	return 0;

@@ -4,7 +4,7 @@
 #include <sys/uio.h>
 #include <sys/utsname.h>
 //#define ENABLE_GUEST_STDOUT
-//#define ENABLE_GUEST_VERBOSE
+//#define VERBOSE_GUEST_EXITS
 //#define VERBOSE_MMAP
 //#define VERBOSE_SYSCALLS
 static const uint64_t BRK_MAX = 0x100000;
@@ -243,7 +243,7 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		60, [] (auto& machine) { // EXIT
-#ifdef ENABLE_GUEST_VERBOSE
+#ifdef VERBOSE_GUEST_EXITS
 			auto regs = machine.registers();
 			printf("Machine exited with return value 0x%llX\n", regs.rdi);
 #endif
@@ -290,10 +290,10 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		158, [] (auto& machine) {
 			auto regs = machine.registers();
-			constexpr long ARCH_SET_GS = 0x1001;
-			constexpr long ARCH_SET_FS = 0x1002;
-			constexpr long ARCH_GET_FS = 0x1003;
-			constexpr long ARCH_GET_GS = 0x1004;
+			[[maybe_unused]] static constexpr long ARCH_SET_GS = 0x1001;
+			[[maybe_unused]] static constexpr long ARCH_SET_FS = 0x1002;
+			[[maybe_unused]] static constexpr long ARCH_GET_FS = 0x1003;
+			[[maybe_unused]] static constexpr long ARCH_GET_GS = 0x1004;
 			SYSPRINT("SYSCALL ARCH_PRCTL opt=0x%llX\n", regs.rdi);
 			regs.rax = -22; // EINVAL
 			machine.set_registers(regs);
@@ -301,8 +301,8 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		231, [] (auto& machine) {
 			/* SYS exit_group */
+#ifdef VERBOSE_GUEST_EXITS
 			auto regs = machine.registers();
-#ifdef ENABLE_GUEST_VERBOSE
 			printf("Machine exits: _exit(%lld)\n", regs.rdi);
 #endif
 			machine.stop();

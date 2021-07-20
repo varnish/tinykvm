@@ -31,6 +31,7 @@ static int t = 0;
 __attribute__((used))
 int test_return()
 {
+	//t = 1;
 	return 666;
 }
 

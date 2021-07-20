@@ -159,7 +159,7 @@ int main(int argc, char** argv)
 	master_vm.prepare_copy_on_write();
 
 	printf("The 'test' function is at 0x%lX\n", vmcall_address);
-	assert(master_vm.address_of("test") == vmcall_address);
+	assert(master_vm.address_of("bench") == vmcall_address);
 	printf("Call stack is at 0x%lX\n", master_vm.stack_address());
 	printf("Heap address is at 0x%lX\n", master_vm.heap_address());
 
@@ -196,6 +196,15 @@ int main(int argc, char** argv)
 	printf("Benchmarking fast reset...\n");
 	tinykvm::Machine fvm {master_vm, options};
 	fvm.vmcall(vmcall_address);
+
+	/* Warmup for resets */
+	for (unsigned i = 0; i < 10; i++)
+	{
+		fvm.reset_to(master_vm);
+		fvm.vmcall(vmcall_address);
+	}
+
+	/* Reset benchmark */
 	uint64_t frtime = 0;
 	uint64_t frtotal = 0;
 
