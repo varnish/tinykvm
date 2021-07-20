@@ -1,0 +1,16 @@
+Machine size: 208 bytes
+Threads size: 272 bytes
+= 480 bytes
+
+Construct: 349313ns (349 micros)
+Runtime: 2926952ns (2926 micros)
+vmcall(test): 6947ns (6 micros)
+Destruct: 308352ns (308 micros)
+
+VM fork: 220743ns (220 micros)
+
+Fast VM reset: 3300ns (3 micros)
+
+First vmcall after reset: 5122ns (5 micros)
+
+Subsequent vmcalls: 1983ns (1 micro)
