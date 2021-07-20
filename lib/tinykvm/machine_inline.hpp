@@ -91,18 +91,18 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 }
 
 template <typename... Args> inline constexpr
-long Machine::vmcall(uint64_t addr, Args&&... args)
+void Machine::vmcall(uint64_t addr, Args&&... args)
 {
 	auto regs = this->setup_call(addr, std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
-	return this->run();
+	this->run();
 }
 
 template <typename... Args> inline
-long Machine::vmcall(const char* function, Args&&... args)
+void Machine::vmcall(const char* function, Args&&... args)
 {
 	auto address = address_of(function);
-	return vmcall(address, std::forward<Args> (args)...);
+	vmcall(address, std::forward<Args> (args)...);
 }
 
 inline uint64_t Machine::stack_push(__u64& sp, const std::string& string)

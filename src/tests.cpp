@@ -20,28 +20,32 @@ void test_forking(tinykvm::Machine& master_vm)
 	/* Call into VM */
 	for (size_t i = 0; i < 200; i++)
 	{
-		KASSERT(vm.vmcall("test_return") == 666);
+		vm.vmcall("test_return");
+		KASSERT(vm.return_value() == 666);
 		try {
 			vm.vmcall("test_ud2");
 		} catch (const tinykvm::MachineException& me) {
 			/* Allow invalid opcode exception */
 			KASSERT(me.data() == 6);
 		}
-		KASSERT(vm.vmcall("test_read") == 200);
+		vm.vmcall("test_read");
+		KASSERT(vm.return_value() == 200);
 	}
 
 	/* Reset and call into VM */
 	for (size_t i = 0; i < 200; i++)
 	{
 		vm.reset_to(master_vm);
-		KASSERT(vm.vmcall("test_return") == 666);
+		vm.vmcall("test_return");
+		KASSERT(vm.return_value() == 666);
 		try {
 			vm.vmcall("test_ud2");
 		} catch (const tinykvm::MachineException& me) {
 			/* Allow invalid opcode exception */
 			KASSERT(me.data() == 6);
 		}
-		KASSERT(vm.vmcall("test_read") == 200);
+		vm.vmcall("test_read");
+		KASSERT(vm.return_value() == 200);
 	}
 }
 
@@ -124,14 +128,16 @@ int main(int argc, char** argv)
 	printf("Program startup OK\n");
 
 	/* Call into master VM */
-	KASSERT(master_vm.vmcall("test_return") == 666);
+	master_vm.vmcall("test_return");
+	KASSERT(master_vm.return_value() == 666);
 	try {
 		master_vm.vmcall("test_ud2");
 	} catch (const tinykvm::MachineException& me) {
 		/* Allow invalid opcode exception */
 		KASSERT(me.data() == 6);
 	}
-	KASSERT(master_vm.vmcall("test_read") == 200);
+	master_vm.vmcall("test_read");
+	KASSERT(master_vm.return_value() == 200);
 	printf("Master vmcall OK\n");
 
 	/* Make the master VM able to mass-produce copies */

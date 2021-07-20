@@ -15,18 +15,21 @@ struct Machine
 	using syscall_t = void(*)(Machine&);
 	using unhandled_syscall_t = void(*)(Machine&, unsigned);
 
-	template <typename... Args>
-	long vmcall(const char*, Args&&...);
-	template <typename... Args> constexpr
-	long vmcall(address_t, Args&&...);
-
+	/* Setup Linux env and run through main */
 	void setup_argv(const std::vector<std::string>& args,
 					const std::vector<std::string>& env = {});
 	void setup_linux(const std::vector<std::string>& args,
 					const std::vector<std::string>& env = {});
-	long run(unsigned timeout = 10);
-	long step_one();
-	long run_with_breakpoints(std::array<uint64_t, 4> bps);
+	void run(unsigned timeout = 10);
+
+	/* Make a function call into the VM */
+	template <typename... Args>
+	void vmcall(const char*, Args&&...);
+	template <typename... Args> constexpr
+	void vmcall(address_t, Args&&...);
+	/* Retrieve optional return value from a vmcall */
+	long return_value() const;
+
 	void stop(bool = true);
 	bool stopped() const noexcept { return m_stopped; }
 	void reset_to(Machine&);
@@ -39,6 +42,10 @@ struct Machine
 	uint64_t stack_push(__u64& sp, const T&);
 	uint64_t stack_push(__u64& sp, const void*, size_t);
 	uint64_t stack_push(__u64& sp, const std::string&);
+
+	/* Debugging */
+	long step_one();
+	long run_with_breakpoints(std::array<uint64_t, 4> bps);
 
 	tinykvm_x86regs registers() const;
 	void set_registers(const tinykvm_x86regs&);

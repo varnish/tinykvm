@@ -313,14 +313,12 @@ void Machine::handle_exception(uint8_t intr)
 	//print_pagetables(memory, PT_ADDR);
 }
 
-long Machine::run(unsigned timeout)
+void Machine::run(unsigned timeout)
 {
 	this->m_stopped = false;
 	while(run_once());
-	/* Return KVM_SYNC_REGS.RDI: vcpu.kvm_run->s.regs.regs.rdi */
-	auto regs = registers();
-	return regs.rdi;
 }
+
 long Machine::run_once()
 {
 	if (ioctl(vcpu.fd, KVM_RUN, 0) < 0) {
@@ -403,6 +401,13 @@ long Machine::run_once()
 		throw MachineException("Unexpected KVM exit reason",
 			vcpu.kvm_run->exit_reason);
 	}
+}
+
+long Machine::return_value() const
+{
+	/* TODO: Return vcpu.kvm_run->s.regs.regs.rdi */
+	auto regs = registers();
+	return regs.rdi;
 }
 
 TINYKVM_COLD()
