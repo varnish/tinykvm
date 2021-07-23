@@ -169,6 +169,8 @@ void Machine::setup_long_mode(const Machine* other)
 		struct kvm_sregs sregs;
 		other->vcpu.get_special_registers(sregs);
 
+		/* XXX: Kernel/exceptions are buggy */
+		sregs.cr0 &= ~CR0_WP;
 		/* Page table entry will be cloned at the start */
 		sregs.cr3 = memory.page_tables;
 
@@ -344,7 +346,7 @@ long Machine::run_once()
 		if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT) {
 		if (vcpu.kvm_run->io.port == 0x0) {
 			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
-			const uint16_t intr = *(uint16_t *)data;
+			const uint32_t intr = *(uint32_t *)data;
 			if (intr != 0xFFFF) {
 				this->system_call(intr);
 				if (this->m_stopped) return 0;
@@ -378,10 +380,11 @@ long Machine::run_once()
 			/* CPU Exception */
 			this->handle_exception(intr);
 			throw MachineException(exception_name(intr), intr);
+		} else {
+			m_unhandled_syscall(*this, vcpu.kvm_run->io.port);
+			if (this->m_stopped) return 0;
 		}
-		fprintf(stderr,	"Unknown IO port %d\n",
-			vcpu.kvm_run->io.port);
-		}
+		} // OUT
 		return KVM_EXIT_IO;
 
 	case KVM_EXIT_MMIO:

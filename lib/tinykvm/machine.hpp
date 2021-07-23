@@ -30,6 +30,7 @@ struct Machine
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
 
+	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
 	bool stopped() const noexcept { return m_stopped; }
 	void reset_to(Machine&);
