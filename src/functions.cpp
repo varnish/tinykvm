@@ -35,7 +35,7 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		0, [] (auto& machine) { // READ
 			auto regs = machine.registers();
-			fprintf(stderr, "READ to fd=%lld, data=0x%llX, size=%llu\n",
+			SYSPRINT("READ to fd=%lld, data=0x%llX, size=%llu\n",
 				regs.rdi, regs.rsi, regs.rdx);
 			//auto data = machine.rw_memory_at(regs.rsi, regs.rdx);
 			//regs.rax = regs.rdx;
