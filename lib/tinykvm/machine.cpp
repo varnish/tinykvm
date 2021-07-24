@@ -49,7 +49,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address {other.m_heap_address},
 	  m_start_address {other.m_start_address},
-	  memory   {*this, other.memory},
+	  memory   {*this, options, other.memory},
 	  m_mm     {other.m_mm},
 	  m_mt     {nullptr} //new MultiThreading{*other.m_mt}}
 {

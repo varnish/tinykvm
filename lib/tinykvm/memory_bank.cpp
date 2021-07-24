@@ -21,10 +21,15 @@ MemoryBanks::MemoryBanks(Machine& machine)
 MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 {
 	const size_t size = N_PAGES * PAGE_SIZE;
-	char* mem = (char *)memalign(PAGE_SIZE, size);
+	char* mem = nullptr;
+	if (page_allocator == nullptr) {
+		mem = (char *)memalign(PAGE_SIZE, size);
+	} else {
+		mem = this->page_allocator(N_PAGES);
+	}
 
 	if (mem != nullptr) {
-		m_mem.emplace_back(mem, addr, N_PAGES, m_idx);
+		m_mem.emplace_back(*this, mem, addr, N_PAGES, m_idx);
 
 		VirtualMem vmem { addr, mem, size };
 		//printf("Installing memory at 0x%lX from 0x%lX, %zu pages\n",
@@ -49,26 +54,41 @@ MemoryBank& MemoryBanks::get_available_bank()
 }
 void MemoryBanks::reset()
 {
-	/* We will attempt to keep one memory bank */
-	while (m_mem.size() > 1) {
-		m_machine.delete_memory(m_mem.back().idx);
-		m_mem.pop_back();
-	}
-	if (!m_mem.empty()) {
-		m_mem.back().n_used = 0;
-		m_idx = m_mem.back().idx + 1;
-	} else {
+	if (page_allocator != nullptr)
+	{
+		/* With a custom allocator, we reset everything */
+		while (!m_mem.empty()) {
+			m_machine.delete_memory(m_mem.back().idx);
+			m_mem.pop_back();
+		}
 		m_idx = m_idx_begin;
+	}
+	else {
+		/* We will attempt to keep one memory bank */
+		while (m_mem.size() > 1) {
+			m_machine.delete_memory(m_mem.back().idx);
+			m_mem.pop_back();
+		}
+		if (!m_mem.empty()) {
+			m_mem.back().n_used = 0;
+			m_idx = m_mem.back().idx + 1;
+		} else {
+			m_idx = m_idx_begin;
+		}
 	}
 	m_arena_next = m_arena_begin;
 }
 
-MemoryBank::MemoryBank(char* p, uint64_t a, uint16_t np, uint16_t x)
-	: mem(p), addr(a), n_pages(np), idx(x)
+MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint16_t np, uint16_t x)
+	: mem(p), addr(a), n_pages(np), idx(x), banks(b)
 {}
 MemoryBank::~MemoryBank()
 {
-	std::free(this->mem);
+	if (banks.page_deallocator != nullptr) {
+		banks.page_deallocator(this->mem);
+	} else {
+		std::free(this->mem);
+	}
 }
 
 MemoryBank::Page MemoryBank::get_next_page()

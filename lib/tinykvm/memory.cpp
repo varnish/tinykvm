@@ -21,9 +21,11 @@ vMemory::vMemory(Machine& m, uint64_t ph, uint64_t sf, char* p, size_t s, bool o
 {
 	this->page_tables = PT_ADDR;
 }
-vMemory::vMemory(Machine& m, const vMemory& other)
+vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other)
 	: vMemory{m, other.physbase, other.safebase, other.ptr, other.size, false}
 {
+	banks.page_allocator = std::move(options.page_allocator);
+	banks.page_deallocator = std::move(options.page_deallocator);
 }
 
 void vMemory::reset()

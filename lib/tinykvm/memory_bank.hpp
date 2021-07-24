@@ -1,9 +1,11 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace tinykvm {
 struct Machine;
+struct MemoryBanks;
 
 struct MemoryBank {
 	char*    mem;
@@ -11,6 +13,7 @@ struct MemoryBank {
 	uint16_t       n_used = 0;
 	const uint16_t n_pages;
 	const uint16_t idx;
+	MemoryBanks& banks;
 
 	bool within(uint64_t a, uint64_t s) const noexcept {
 		return (a >= addr) && (a + s <= addr + this->size());
@@ -29,7 +32,7 @@ struct MemoryBank {
 	};
 	Page get_next_page();
 
-	MemoryBank(char*, uint64_t, uint16_t n, uint16_t idx);
+	MemoryBank(MemoryBanks&, char*, uint64_t, uint16_t n, uint16_t idx);
 	~MemoryBank();
 };
 
@@ -45,6 +48,9 @@ struct MemoryBanks {
 	auto end()   { return m_mem.end(); }
 	auto begin() const { return m_mem.cbegin(); }
 	auto end() const   { return m_mem.cend(); }
+
+	std::function<char*(size_t N)> page_allocator = nullptr;
+	std::function<void(char*)> page_deallocator = nullptr;
 
 private:
 	MemoryBank& allocate_new_bank(uint64_t addr);

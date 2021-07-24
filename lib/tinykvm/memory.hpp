@@ -48,8 +48,10 @@ struct vMemory {
 	void fork_reset();
 	static vMemory New(Machine&, uint64_t phys, uint64_t safe, size_t size);
 
+	/* Create new identity-mapped memory regions */
 	vMemory(Machine&, uint64_t, uint64_t, char*, size_t, bool = true);
-	vMemory(Machine&, const vMemory& other); /* Loan memory from other */
+	/* Loan memory from another machine */
+	vMemory(Machine&, const MachineOptions&, const vMemory& other);
 };
 
 struct MemRange {

@@ -24,7 +24,8 @@ namespace tinykvm
 		uint64_t max_mem;
 
 		bool verbose_loader = false;
-		std::function<char*()> allocator = nullptr;
+		std::function<char*(size_t N)> page_allocator = nullptr;
+		std::function<void(char*)> page_deallocator = nullptr;
 	};
 
 	class MachineException : public std::exception {
