@@ -52,4 +52,7 @@ namespace tinykvm
 		uint64_t m_addr;
 		uint64_t m_size;
 	};
+
+	template<class T>
+	struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
 }

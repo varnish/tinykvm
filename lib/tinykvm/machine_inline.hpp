@@ -45,42 +45,32 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 	regs.rsp = this->stack_address();
 	[[maybe_unused]] unsigned iargs = 0;
 	([&] {
-		if constexpr (std::is_integral_v<Args>) {
+		auto& reg = [iargs, &regs] () mutable -> unsigned long long& {
 			if (iargs == 0)
-				regs.rdi = args;
+				return regs.rdi;
 			else if (iargs == 1)
-				regs.rsi = args;
+				return regs.rsi;
 			else if (iargs == 2)
-				regs.rdx = args;
+				return regs.rdx;
 			else if (iargs == 3)
-				regs.rcx = args;
+				return regs.rcx;
 			else if (iargs == 4)
-				regs.r8 = args;
+				return regs.r8;
 			else if (iargs == 5)
-				regs.r9 = args;
-			else {
-				/* TODO: stack push */
-			}
+				return regs.r9;
+			throw MachineException("Too many vmcall arguments");
+		}();
+		if constexpr (std::is_integral_v<Args>) {
+			reg = args;
+			iargs ++;
+		} else if constexpr (is_stdstring<Args>::value) {
+			reg = stack_push(regs.rsp, args.c_str(), args.size()+1);
 			iargs ++;
 		} else if constexpr (std::is_pod_v<std::remove_reference<Args>>) {
-			if (iargs == 0)
-				regs.rdi = stack_push(regs.rsp, args);
-			else if (iargs == 1)
-				regs.rsi = stack_push(regs.rsp, args);
-			else if (iargs == 2)
-				regs.rdx = stack_push(regs.rsp, args);
-			else if (iargs == 3)
-				regs.rcx = stack_push(regs.rsp, args);
-			else if (iargs == 4)
-				regs.r8 = stack_push(regs.rsp, args);
-			else if (iargs == 5)
-				regs.r9 = stack_push(regs.rsp, args);
-			else {
-				/* TODO: stack push */
-			}
+			reg = stack_push(regs.rsp, args);
 			iargs ++;
 		} else {
-
+			throw MachineException("Unsupported vmcall argument");
 		}
 	}(), ...);
 	/* Re-align stack for SSE */
