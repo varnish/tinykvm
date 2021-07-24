@@ -66,6 +66,9 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 		} else if constexpr (is_stdstring<Args>::value) {
 			reg = stack_push(regs.rsp, args.c_str(), args.size()+1);
 			iargs ++;
+		} else if constexpr (is_string<Args>::value) {
+			reg = stack_push_cstr(regs.rsp, args);
+			iargs ++;
 		} else if constexpr (std::is_pod_v<std::remove_reference<Args>>) {
 			reg = stack_push(regs.rsp, args);
 			iargs ++;

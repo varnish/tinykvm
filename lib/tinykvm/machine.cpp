@@ -51,7 +51,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_start_address {other.m_start_address},
 	  memory   {*this, other.memory},
 	  m_mm     {other.m_mm},
-	  m_mt     {new MultiThreading{*other.m_mt}}
+	  m_mt     {nullptr} //new MultiThreading{*other.m_mt}}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 	assert(other.m_prepped == true && "Call Machine::prepare_copy_on_write() first");
@@ -103,6 +103,10 @@ uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
 	sp = (sp - length) & ~(uint64_t) 0x7; // maintain word alignment
 	copy_to_guest(sp, data, length, true);
 	return sp;
+}
+uint64_t Machine::stack_push_cstr(__u64& sp, const char* string)
+{
+	return stack_push(sp, string, strlen(string));
 }
 
 void Machine::install_memory(uint32_t idx, const VirtualMem& mem)

@@ -43,6 +43,7 @@ struct Machine
 	uint64_t stack_push(__u64& sp, const T&);
 	uint64_t stack_push(__u64& sp, const void*, size_t);
 	uint64_t stack_push(__u64& sp, const std::string&);
+	uint64_t stack_push_cstr(__u64& sp, const char*);
 
 	/* Debugging */
 	long step_one();

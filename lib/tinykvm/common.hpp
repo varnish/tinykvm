@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <string>
 
 namespace tinykvm
@@ -23,6 +24,7 @@ namespace tinykvm
 		uint64_t max_mem;
 
 		bool verbose_loader = false;
+		std::function<char*()> allocator = nullptr;
 	};
 
 	class MachineException : public std::exception {
@@ -52,6 +54,13 @@ namespace tinykvm
 		uint64_t m_addr;
 		uint64_t m_size;
 	};
+
+	template<typename T>
+	struct is_string
+		: public std::disjunction<
+			std::is_same<char *, typename std::decay<T>::type>,
+			std::is_same<const char *, typename std::decay<T>::type>
+	> {};
 
 	template<class T>
 	struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
