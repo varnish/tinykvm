@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.10)
 project(tinykvm CXX)
 
 option(FLTO "Link-time optimizations" OFF)
