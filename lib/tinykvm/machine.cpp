@@ -13,7 +13,9 @@
 namespace tinykvm {
 	int Machine::kvm_fd = -1;
 	std::array<Machine::syscall_t, TINYKVM_MAX_SYSCALLS> Machine::m_syscalls {nullptr};
-	Machine::unhandled_syscall_t Machine::m_unhandled_syscall = [] (Machine&, unsigned) {};
+	Machine::numbered_syscall_t Machine::m_unhandled_syscall = [] (Machine&, unsigned) {};
+	Machine::io_callback_t Machine::m_on_input = [] (Machine&, unsigned, unsigned) {};
+	Machine::io_callback_t Machine::m_on_output = [] (Machine&, unsigned, unsigned) {};
 	static int kvm_open();
 
 __attribute__ ((cold))

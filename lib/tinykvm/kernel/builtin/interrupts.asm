@@ -61,7 +61,8 @@ ALIGN 0x10
 	jmp .vm64_prctl_end
 
 .vm64_gettimeofday:
-	out 96, ax ;; gettimeofday
+	mov eax, 96 ;; gettimeofday
+	out 0, ax
 	ret
 
 .vm64_dso:

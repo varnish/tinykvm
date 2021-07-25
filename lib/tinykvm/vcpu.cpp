@@ -357,18 +357,17 @@ long Machine::run_once()
 				return 0;
 			}
 		}
-		else if (vcpu.kvm_run->io.port < 0x80) {
-			this->system_call(vcpu.kvm_run->io.port);
-			if (this->m_stopped) return 0;
-			return KVM_EXIT_IO;
-		}
-		else if (vcpu.kvm_run->io.port < 0xFF) {
+		else if (vcpu.kvm_run->io.port >= 0x80 && vcpu.kvm_run->io.port < 0x100) {
 			auto intr = vcpu.kvm_run->io.port - 0x80;
 			if (intr == 14)
 			{
 				/* Page fault handling */
 				struct kvm_sregs sregs;
 				get_special_registers(sregs);
+				/* We should be in kernel mode, otherwise it's fishy! */
+				if (UNLIKELY((sregs.cs.selector & 0x3) != 0)) {
+					throw MachineException("Security violation", intr);
+				}
 				fprintf(stderr, "*** %s on address 0x%llX\n",
 					exception_name(intr), sregs.cr2);
 
@@ -381,10 +380,16 @@ long Machine::run_once()
 			this->handle_exception(intr);
 			throw MachineException(exception_name(intr), intr);
 		} else {
-			m_unhandled_syscall(*this, vcpu.kvm_run->io.port);
-			if (this->m_stopped) return 0;
+			/* Custom Output handler */
+			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
+			m_on_output(*this, vcpu.kvm_run->io.port, *(uint32_t *)data);
 		}
-		} // OUT
+		} else { // IN
+			/* Custom Input handler */
+			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
+			m_on_input(*this, vcpu.kvm_run->io.port, *(uint32_t *)data);
+		}
+		if (this->m_stopped) return 0;
 		return KVM_EXIT_IO;
 
 	case KVM_EXIT_MMIO:

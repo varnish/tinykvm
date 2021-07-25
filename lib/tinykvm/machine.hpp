@@ -13,7 +13,8 @@ struct Machine
 {
 	using address_t = uint64_t;
 	using syscall_t = void(*)(Machine&);
-	using unhandled_syscall_t = void(*)(Machine&, unsigned);
+	using numbered_syscall_t = void(*)(Machine&, unsigned);
+	using io_callback_t = void(*)(Machine&, unsigned, unsigned);
 
 	/* Setup Linux env and run through main */
 	void setup_argv(const std::vector<std::string>& args,
@@ -58,9 +59,11 @@ struct Machine
 	void print_registers();
 
 	static void install_syscall_handler(unsigned idx, syscall_t h) { m_syscalls.at(idx) = h; }
-	static void install_unhandled_syscall_handler(unhandled_syscall_t h) { m_unhandled_syscall = h; }
+	static void install_unhandled_syscall_handler(numbered_syscall_t h) { m_unhandled_syscall = h; }
 	static auto get_syscall_handler(unsigned idx) { return m_syscalls.at(idx); }
 	void system_call(unsigned);
+	static void install_input_handler(io_callback_t h) { m_on_input = h; }
+	static void install_output_handler(io_callback_t h) { m_on_output = h; }
 
 	template <typename T> void set_userdata(T* data) { m_userdata = data; }
 	template <typename T> T* get_userdata() { return static_cast<T*> (m_userdata); }
@@ -134,7 +137,9 @@ private:
 	void* m_userdata = nullptr;
 
 	static std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls;
-	static unhandled_syscall_t m_unhandled_syscall;
+	static numbered_syscall_t m_unhandled_syscall;
+	static io_callback_t      m_on_input;
+	static io_callback_t      m_on_output;
 
 	const std::string_view m_binary;
 	uint64_t m_stack_address;
