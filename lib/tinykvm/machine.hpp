@@ -62,6 +62,9 @@ struct Machine
 	static auto get_syscall_handler(unsigned idx) { return m_syscalls.at(idx); }
 	void system_call(unsigned);
 
+	template <typename T> void set_userdata(T* data) { m_userdata = data; }
+	template <typename T> T* get_userdata() { return static_cast<T*> (m_userdata); }
+
 	std::string_view io_data() const;
 	std::string_view memory_at(uint64_t a, size_t s) const;
 	template <typename T = char>
