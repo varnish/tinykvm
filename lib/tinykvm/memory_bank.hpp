@@ -54,6 +54,7 @@ struct MemoryBanks {
 
 private:
 	MemoryBank& allocate_new_bank(uint64_t addr);
+	char* try_alloc(size_t N);
 
 	std::vector<MemoryBank> m_mem;
 	Machine& m_machine;

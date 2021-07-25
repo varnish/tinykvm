@@ -18,18 +18,27 @@ MemoryBanks::MemoryBanks(Machine& machine)
 {
 }
 
+char* MemoryBanks::try_alloc(size_t N)
+{
+	if (page_allocator == nullptr) {
+		return (char *)memalign(PAGE_SIZE, N * PAGE_SIZE);
+	} else {
+		return this->page_allocator(N);
+	}
+}
+
 MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 {
-	const size_t size = N_PAGES * PAGE_SIZE;
-	char* mem = nullptr;
-	if (page_allocator == nullptr) {
-		mem = (char *)memalign(PAGE_SIZE, size);
-	} else {
-		mem = this->page_allocator(N_PAGES);
+	size_t pages = N_PAGES;
+	char* mem = this->try_alloc(pages);
+	if (mem == nullptr) {
+		pages = 4;
+		mem = this->try_alloc(pages);
 	}
 
+	const size_t size = pages * PAGE_SIZE;
 	if (mem != nullptr) {
-		m_mem.emplace_back(*this, mem, addr, N_PAGES, m_idx);
+		m_mem.emplace_back(*this, mem, addr, pages, m_idx);
 
 		VirtualMem vmem { addr, mem, size };
 		//printf("Installing memory at 0x%lX from 0x%lX, %zu pages\n",
