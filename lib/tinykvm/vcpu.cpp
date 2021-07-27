@@ -165,19 +165,26 @@ void Machine::setup_long_mode(const Machine* other)
 	}
 	else
 	{
-		/* Inherit the special registers of the master machine */
-		struct kvm_sregs sregs;
-		other->vcpu.get_special_registers(sregs);
-
-		/* XXX: Kernel/exceptions are buggy */
-		sregs.cr0 &= ~CR0_WP;
-		/* Page table entry will be cloned at the start */
-		sregs.cr3 = memory.page_tables;
-
-		vcpu.set_special_registers(sregs);
+		/* Clone master PML4 page */
+		auto pml4 = memory.new_page();
+		std::memcpy(pml4.pmem, other->memory.page_at(other->memory.page_tables), PAGE_SIZE);
+		memory.page_tables = pml4.addr;
 
 		/* Zero a new page for IST stack */
 		memory.get_writable_page(IST_ADDR, true);
+
+		/* Inherit the special registers of the master machine */
+		struct kvm_sregs sregs = master_sregs;
+		//other->vcpu.get_special_registers(sregs);
+
+		/* Page table entry will be cloned at the start */
+		sregs.cr3 = memory.page_tables;
+		sregs.cr0 &= ~CR0_WP;
+
+		//setup_amd64_segment_regs(sregs, GDT_ADDR);
+		//this->m_userspaced = true;
+
+		vcpu.set_special_registers(sregs);
 
 #ifndef NDEBUG
 		/* It shouldn't be identity-mapped anymore */
@@ -248,13 +255,6 @@ void Machine::print_registers()
 	printf("SS: 0x%X  CS: 0x%X  DS: 0x%X  FS: 0x%X  GS: 0x%X\n",
 		sregs.ss.selector, sregs.cs.selector, sregs.ds.selector, sregs.fs.selector, sregs.gs.selector);
 
-	try {
-		printf("Return RIP: 0x%lX\n",
-			*(uint64_t *)memory.at(regs.rsp+8, 8));
-		printf("Return stack: 0x%lX\n",
-			*(uint64_t *)memory.at(regs.rsp+32, 8));
-	} catch (...) {}
-
 #if 0
 	print_pagetables(memory);
 #endif
@@ -282,7 +282,7 @@ void Machine::handle_exception(uint8_t intr)
 		struct kvm_sregs sregs;
 		get_special_registers(sregs);
 		fprintf(stderr, "*** %s on address 0x%llX\n",
-			exception_name(intr), sregs.cr2);
+			amd64_exception_name(intr), sregs.cr2);
 		if (memory.within(regs.rsp, 8))
 		{
 			auto code = *(uint64_t *)memory.at(regs.rsp, 8);
@@ -309,11 +309,42 @@ void Machine::handle_exception(uint8_t intr)
 			printf("Bullshit RSP: 0x%llX\n", regs.rsp);
 		}
 	} else {
-		fprintf(stderr, "*** CPU EXCEPTION: %s\n",
-			exception_name(intr));
+		fprintf(stderr, "*** CPU EXCEPTION: %s (code: %s)\n",
+			amd64_exception_name(intr),
+			amd64_exception_code(intr) ? "true" : "false");
 	}
 	this->print_registers();
-	//print_pagetables(memory, PT_ADDR);
+	//print_pagetables(memory);
+	const bool has_code = amd64_exception_code(intr);
+
+	try {
+		const uint64_t off = (has_code) ? (regs.rsp+8) : (regs.rsp+0);
+		uint64_t rip, cs, rsp, ss;
+		copy_from_guest(&rip, off+0,  8);
+		copy_from_guest(&cs,  off+8,  8);
+		copy_from_guest(&rsp, off+24, 8);
+		copy_from_guest(&ss,  off+32, 8);
+
+		printf("Failing RIP: 0x%lX\n", rip);
+		printf("Failing CS:  0x%lX\n", cs);
+		printf("Failing RSP: 0x%lX\n", rsp);
+		printf("Failing SS:  0x%lX\n", ss);
+
+		/* General Protection Fault */
+		if (has_code && intr == 13) {
+			uint64_t code;
+			copy_from_guest(&code,  regs.rsp, 8);
+			if (code != 0x0) {
+				fprintf(stderr, "Reason: Failing segment 0x%lX\n", code);
+			} else if (cs & 0x3) {
+				/* Best guess: Privileged instruction */
+				fprintf(stderr, "Reason: Executing a privileged instruction\n");
+			} else {
+				/* Kernel GPFs should be exceedingly rare */
+				fprintf(stderr, "Reason: Protection fault in kernel mode\n");
+			}
+		}
+	} catch (...) {}
 }
 
 void Machine::run(unsigned timeout)
@@ -361,24 +392,33 @@ long Machine::run_once()
 			auto intr = vcpu.kvm_run->io.port - 0x80;
 			if (intr == 14)
 			{
+				auto regs = registers();
+				const uint64_t addr = regs.rdi & ~(uint64_t) 0x8000000000000FFF;
+#if 0
+				#define PV(val, off) \
+					{ uint64_t value; unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
+					printf("Value %s: 0x%lX\n", val, value); }
+				PV("Origin SS",  48);
+				PV("Origin RSP", 40);
+				PV("Origin RFLAGS", 32);
+				PV("Origin CS",  24);
+				PV("Origin RIP", 16);
+				PV("Error code", 8);
+				fprintf(stderr, "*** %s on address 0x%lX\n",
+					amd64_exception_name(intr), addr);
+#endif
 				/* Page fault handling */
-				struct kvm_sregs sregs;
-				get_special_registers(sregs);
 				/* We should be in kernel mode, otherwise it's fishy! */
-				if (UNLIKELY((sregs.cs.selector & 0x3) != 0)) {
+				if (UNLIKELY(regs.rip > 0x3000)) {
 					throw MachineException("Security violation", intr);
 				}
-				fprintf(stderr, "*** %s on address 0x%llX\n",
-					exception_name(intr), sregs.cr2);
 
-				const uint64_t addr = sregs.cr2 & ~(uint64_t) 0x8000000000000FFF;
 				memory.get_writable_page(addr, false);
-
 				return KVM_EXIT_IO;
 			}
 			/* CPU Exception */
 			this->handle_exception(intr);
-			throw MachineException(exception_name(intr), intr);
+			throw MachineException(amd64_exception_name(intr), intr);
 		} else {
 			/* Custom Output handler */
 			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;

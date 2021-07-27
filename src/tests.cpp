@@ -7,47 +7,7 @@
 #define GUEST_MEMORY 0x40000000  /* 1024MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
-
-void test_forking(tinykvm::Machine& master_vm)
-{
-	/* Create VM fork */
-	const tinykvm::MachineOptions options {
-		.max_mem = GUEST_MEMORY,
-		.verbose_loader = false
-	};
-	tinykvm::Machine vm {master_vm, options};
-
-	/* Call into VM */
-	for (size_t i = 0; i < 200; i++)
-	{
-		vm.vmcall("test_return");
-		KASSERT(vm.return_value() == 666);
-		try {
-			vm.vmcall("test_ud2");
-		} catch (const tinykvm::MachineException& me) {
-			/* Allow invalid opcode exception */
-			KASSERT(me.data() == 6);
-		}
-		vm.vmcall("test_read");
-		KASSERT(vm.return_value() == 200);
-	}
-
-	/* Reset and call into VM */
-	for (size_t i = 0; i < 200; i++)
-	{
-		vm.reset_to(master_vm);
-		vm.vmcall("test_return");
-		KASSERT(vm.return_value() == 666);
-		try {
-			vm.vmcall("test_ud2");
-		} catch (const tinykvm::MachineException& me) {
-			/* Allow invalid opcode exception */
-			KASSERT(me.data() == 6);
-		}
-		vm.vmcall("test_read");
-		KASSERT(vm.return_value() == 200);
-	}
-}
+static void test_forking(tinykvm::Machine&);
 
 int main(int argc, char** argv)
 {
@@ -125,7 +85,9 @@ int main(int argc, char** argv)
 	/* Verify VM exit status */
 	auto regs = master_vm.registers();
 	KASSERT(regs.rdi == 666);
-	printf("Program startup OK\n");
+	printf("*** Program startup OK\n");
+
+	printf("--- Beginning Master VM tests ---\n");
 
 	/* Call into master VM */
 	master_vm.vmcall("test_return");
@@ -143,14 +105,75 @@ int main(int argc, char** argv)
 	/* Make the master VM able to mass-produce copies */
 	master_vm.prepare_copy_on_write();
 
-	for (size_t i = 0; i < 200; i++) {
+	printf("--- Beginning VM fork tests ---\n");
+	for (size_t i = 0; i < 100; i++) {
 		test_forking(master_vm);
 	}
-	printf("VM forking OK\n");
+	printf("*** VM forking OK\n");
 
 	printf("Nice! Tests passed.\n");
 	return 0;
 }
+
+void test_forking(tinykvm::Machine& master_vm)
+{
+	/* Create VM fork */
+	const tinykvm::MachineOptions options {
+		.max_mem = GUEST_MEMORY,
+		.verbose_loader = false
+	};
+	tinykvm::Machine vm {master_vm, options};
+
+	/* Call into VM */
+	for (size_t i = 0; i < 20; i++)
+	{
+		vm.vmcall("test_return");
+		KASSERT(vm.return_value() == 666);
+		try {
+			printf("test_ud2\n");
+			vm.vmcall("test_ud2");
+		} catch (const tinykvm::MachineException& me) {
+			/* Allow invalid opcode exception */
+			KASSERT(me.data() == 6);
+			try {
+				/* Retry exception */
+				printf("Retry\n");
+				vm.run();
+			} catch (const tinykvm::MachineException& me) {
+				/* Allow invalid opcode exception */
+				KASSERT(me.data() == 6);
+			}
+		}
+		vm.vmcall("test_read");
+		KASSERT(vm.return_value() == 200);
+	}
+
+	/* Reset and call into VM */
+	for (size_t i = 0; i < 20; i++)
+	{
+		vm.reset_to(master_vm);
+		vm.vmcall("test_return");
+		KASSERT(vm.return_value() == 666);
+		try {
+			printf("test_ud2\n");
+			vm.vmcall("test_ud2");
+		} catch (const tinykvm::MachineException& me) {
+			/* Allow invalid opcode exception */
+			KASSERT(me.data() == 6);
+			try {
+				/* Retry exception */
+				printf("Retry\n");
+				vm.run();
+			} catch (const tinykvm::MachineException& me) {
+				/* Allow invalid opcode exception */
+				KASSERT(me.data() == 6);
+			}
+		}
+		vm.vmcall("test_read");
+		KASSERT(vm.return_value() == 200);
+	}
+}
+
 
 #include <stdexcept>
 std::vector<uint8_t> load_file(const std::string& filename)

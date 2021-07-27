@@ -90,10 +90,7 @@ void Machine::reset_to(Machine& other)
 	assert(m_forked);
 	memory.fork_reset();
 
-	/* Clone PML4 page */
-	auto pml4 = memory.new_page();
-	std::memcpy(pml4.pmem, other.memory.page_at(other.memory.page_tables), PAGE_SIZE);
-	memory.page_tables = pml4.addr;
+	this->m_mm = other.m_mm;
 
 	this->setup_long_mode(&other);
 

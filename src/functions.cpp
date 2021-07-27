@@ -187,28 +187,35 @@ void setup_kvm_system_calls()
 				uint64_t iov_base;
 				size_t   iov_len;
 			};
+			const auto fd    = regs.rdi;
+			const auto count = regs.rdx;
+
+			if (count > 64) {
+				/* Ignore too many entries */
+				regs.rax = -1;
+			}
 			/* writev: Stdout, Stderr */
-			if (regs.rdi == 1 || regs.rdi == 2)
+			else if (fd == 1 || fd == 2)
 			{
-				const size_t bytes = sizeof(g_iovec) * regs.rdx;
 				size_t written = 0;
-				auto* vec = machine.template rw_memory_at<g_iovec>(regs.rsi, bytes);
-				for (size_t i = 0; i < regs.rdx; i++) {
-					// Ignore empty writes?
-					if (vec[i].iov_len == 0)
+				for (size_t i = 0; i < count; i++) {
+					g_iovec vec;
+					machine.copy_from_guest(&vec, regs.rsi + i * sizeof(g_iovec), sizeof(g_iovec));
+					// Ignore empty writes? Max 4k writes.
+					if (vec.iov_len == 0 || vec.iov_len > 4096)
 						continue;
-					auto sv = machine.memory_at(vec[i].iov_base, vec[i].iov_len);
+					const size_t bytes = vec.iov_len;
+					char buffer[bytes];
+					machine.copy_from_guest(buffer, vec.iov_base, bytes);
 #ifdef ENABLE_GUEST_STDOUT
-					//printf(">>> Guest writes %zu bytes to %llu from iov %zu/%llu\n",
-					//	sv.size(), regs.rdi, i, regs.rdx);
 					static constexpr char gw[] = ">>> Guest says: ";
-					const struct iovec vec[] = {
+					const struct iovec uvec[] = {
 						{(void *)gw, sizeof(gw)-1},
-						{(void *)sv.begin(), sv.size()}
+						{(void *)buffer, bytes}
 					};
-					writev(0, vec, 2);
+					writev(0, uvec, 2);
 #endif
-					written += sv.size();
+					written += bytes;
 				}
 				regs.rax = written;
 			} else {

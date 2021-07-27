@@ -59,9 +59,10 @@ private:
 	std::vector<MemoryBank> m_mem;
 	Machine& m_machine;
 	const uint64_t m_arena_begin;
-	const size_t   m_idx_begin;
 	uint64_t m_arena_next;
-	size_t   m_idx;
+	const uint16_t m_idx_begin;
+	uint16_t m_idx;
+	uint16_t m_search = 0;
 };
 
 }

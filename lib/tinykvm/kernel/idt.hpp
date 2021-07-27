@@ -6,7 +6,8 @@ extern void setup_amd64_exceptions(uint64_t addr, void* area, void* code_area);
 extern void set_exception_handler(void* area, uint8_t vec, uint64_t handler);
 extern void print_exception_handlers(void* area);
 
-extern const char* exception_name(uint8_t);
+extern const char* amd64_exception_name(uint8_t);
+extern bool amd64_exception_code(uint8_t);
 
 struct iasm_header {
 	uint16_t vm64_syscall;

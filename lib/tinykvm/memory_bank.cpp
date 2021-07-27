@@ -4,6 +4,7 @@
 #include "machine.hpp"
 #include "virtual_mem.hpp"
 #include <cassert>
+#include <cstring>
 #include <malloc.h>
 #define PAGE_SIZE   0x1000
 
@@ -63,7 +64,8 @@ MemoryBank& MemoryBanks::get_available_bank()
 }
 void MemoryBanks::reset()
 {
-	if (page_allocator != nullptr)
+	/* XXX: something is wrong with the memory banks on reset */
+	if (true || page_allocator != nullptr)
 	{
 		/* With a custom allocator, we reset everything */
 		while (!m_mem.empty()) {
@@ -73,19 +75,15 @@ void MemoryBanks::reset()
 		m_idx = m_idx_begin;
 	}
 	else {
-		/* We will attempt to keep one memory bank */
-		while (m_mem.size() > 1) {
-			m_machine.delete_memory(m_mem.back().idx);
-			m_mem.pop_back();
+		/* Release all memory */
+		for (auto& bank : m_mem) {
+			bank.n_used = 0;
 		}
-		if (!m_mem.empty()) {
-			m_mem.back().n_used = 0;
-			m_idx = m_mem.back().idx + 1;
-		} else {
-			m_idx = m_idx_begin;
-		}
+		m_idx = m_idx_begin + m_mem.size();
 	}
+	/* We always start fresh at arena start */
 	m_arena_next = m_arena_begin;
+	m_search = 0;
 }
 
 MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint16_t np, uint16_t x)

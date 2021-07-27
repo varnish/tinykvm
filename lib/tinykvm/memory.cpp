@@ -65,6 +65,12 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 {
 	if (safely_within(addr, asize))
 		return &ptr[addr - physbase];
+	/* XXX: Security checks */
+	for (auto& bank : banks) {
+		if (bank.within(addr, asize)) {
+			return bank.at(addr);
+		}
+	}
 	if (is_alt_arena(addr, asize)) {
 		return safely_at(arena_transform(addr), asize);
 	}
@@ -140,10 +146,22 @@ char* vMemory::get_writable_page(uint64_t addr, bool zeroes)
 {
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
 	char* ret = writable_page_at(*this, addr, zeroes);
-//	printf("-> Translation of 0x%lX: 0x%lX\n",
-//		addr, machine.translate(addr));
+	//printf("-> Translation of 0x%lX: 0x%lX\n",
+	//	addr, machine.translate(addr));
 	//print_pagetables(*this);
 	return ret;
+}
+
+char* vMemory::get_kernelpage_at(uint64_t addr)
+{
+	constexpr uint64_t flags = PDE64_PRESENT;
+	return readable_page_at(*this, addr, flags);
+}
+
+char* vMemory::get_userpage_at(uint64_t addr)
+{
+	constexpr uint64_t flags = PDE64_PRESENT | PDE64_USER;
+	return readable_page_at(*this, addr, flags);
 }
 
 }

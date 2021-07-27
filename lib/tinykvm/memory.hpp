@@ -39,6 +39,8 @@ struct vMemory {
 	bool is_alt_arena(uint64_t a, uint64_t sz) const noexcept;
 	uint64_t arena_transform(uint64_t) const noexcept;
 
+	char *get_userpage_at(uint64_t addr);
+	char *get_kernelpage_at(uint64_t addr);
 	char *get_writable_page(uint64_t addr, bool zeroes);
 	MemoryBank::Page new_page();
 

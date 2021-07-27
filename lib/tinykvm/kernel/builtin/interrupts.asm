@@ -9,19 +9,17 @@ org 0x2000
 ;; 4. rip      rsp+8
 ;; 5. code     rsp+0
 %macro CPU_EXCEPT 1
-ALIGN 0x10
-	out 0x80 + %1, ax
+ALIGN 0x8
+	out 128 + %1, ax
 	iretq
 %endmacro
 %macro CPU_EXCEPT_CODE 1
-ALIGN 0x10
-	out 0x80 + %1, ax
-	add rsp, 8
-	iretq
+ALIGN 0x8
+	out 128 + %1, ax
+	jmp .vm64_pop_code
 %endmacro
 %macro CPU_EXCEPT_PF 1
-ALIGN 0x10
-	out 0x80 + %1, ax
+ALIGN 0x8
 	jmp .vm64_page_fault
 %endmacro
 
@@ -79,15 +77,18 @@ ALIGN 0x10
 .vm64_page_fault:
 	push rdi
 	mov rdi, cr2
+	out 128 + 14, ax
 	invlpg [rdi]
 	pop rdi
+
+.vm64_pop_code:
 	add rsp, 8
 	iretq
 
-ALIGN 0x10
+ALIGN 0x8
 .vm64_exception:
 	CPU_EXCEPT 0
-ALIGN 0x10
+ALIGN 0x8
 .vm64_except1:
 	CPU_EXCEPT 1
 	CPU_EXCEPT 2
@@ -96,7 +97,7 @@ ALIGN 0x10
 	CPU_EXCEPT 5
 	CPU_EXCEPT 6
 	CPU_EXCEPT 7
-	CPU_EXCEPT_CODE 8
+	CPU_EXCEPT_CODE 8  ;; double fault
 	CPU_EXCEPT 9
 	CPU_EXCEPT_CODE 10
 	CPU_EXCEPT_CODE 11

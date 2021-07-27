@@ -44,6 +44,10 @@ inline uint64_t index_from_pt_entry(uint64_t addr) {
 	return (addr >> 12) & 511;
 }
 
+inline bool is_flagged_page(uint64_t flags, uint64_t entry) {
+	return (entry & flags) == flags;
+}
+
 uint64_t setup_amd64_paging(vMemory& memory,
 	uint64_t except_asm_addr, uint64_t ist_addr, std::string_view binary)
 {
@@ -90,7 +94,10 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	/* XXX: This is a work-around for exception triple-faults.
 		Here lies GDT, IDT and TSS. Some write access needed? */
 	lowpage[1] = PDE64_PRESENT | PDE64_NX | PDE64_RW | (1 << 12);
-	/* Exception handlers */
+	/* Exception handlers
+		XXX: the rexit function is here, and needs to be moved
+			before we can remove the userspace bits!!
+	*/
 	const uint64_t except_page = except_asm_addr >> 12;
 	lowpage[except_page] = PDE64_PRESENT | PDE64_USER | except_asm_addr;
 
@@ -445,6 +452,47 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 		throw MemoryException("page_at: page directory not present", addr, PDE64_PD_SIZE);
 	} // pml4
 	throw MemoryException("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
+}
+
+char * readable_page_at(vMemory& memory, uint64_t addr, uint64_t flags)
+{
+	CLPRINT("Resolving a readable page for 0x%lX\n", addr);
+	auto* pml4 = memory.page_at(memory.page_tables);
+	const uint64_t i = (addr >> 39) & 511;
+	if (is_flagged_page(flags, pml4[i])) {
+		const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
+		auto* pdpt = memory.page_at(pdpt_mem);
+		const uint64_t j = index_from_pdpt_entry(addr);
+		if (is_flagged_page(flags, pdpt[j])) {
+			const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
+			auto* pd = memory.page_at(pd_mem);
+			const uint64_t k = index_from_pd_entry(addr);
+			if (is_flagged_page(flags, pd[k])) {
+				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
+				const uint64_t e = index_from_pt_entry(addr);
+				auto* pt = memory.page_at(pt_mem);
+
+				/* Could be a 2MB page */
+				if (UNLIKELY(pd[k] & PDE64_PS)) {
+					/* Return the 4k segment inside the 2MB page */
+					auto* data = (char *)pt + e * PAGE_SIZE;
+					CLPRINT("-> Returning 2MB data: %p\n", data);
+					return data;
+				}
+
+				if (is_flagged_page(flags, pt[e])) { // 4KB page
+					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
+					auto* data = memory.page_at(pte_mem);
+					CLPRINT("-> Returning 4k data: %p\n", data);
+					return (char *)data;
+				} // pt
+				throw MemoryException("readable_userpage_at: pt entry not readable", addr, PDE64_PTE_SIZE);
+			} // pd
+			throw MemoryException("readable_userpage_at: page table not readable", addr, PDE64_PT_SIZE);
+		} // pdpt
+		throw MemoryException("readable_userpage_at: page directory not readable", addr, PDE64_PD_SIZE);
+	} // pml4
+	throw MemoryException("readable_userpage_at: pml4 entry not readable", addr, PDE64_PDPT_SIZE);
 }
 
 }

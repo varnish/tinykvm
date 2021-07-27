@@ -39,6 +39,7 @@ struct Machine
 	/* When zeroes == true, new pages will be zeroed instead of duplicated */
 	void copy_to_guest(address_t addr, const void*, size_t, bool zeroes = false);
 	void copy_from_guest(void* dst, address_t addr, size_t);
+	void unsafe_copy_from_guest(void* dst, address_t addr, size_t);
 
 	template <typename T>
 	uint64_t stack_push(__u64& sp, const T&);
