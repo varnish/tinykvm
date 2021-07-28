@@ -78,7 +78,7 @@ ALIGN 0x10
 	push rdi
 	mov rdi, cr2
 	out 128 + 14, ax
-	invlpg [rdi]
+	;;invlpg [rdi]
 	pop rdi
 
 .vm64_pop_code:

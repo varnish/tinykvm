@@ -8,7 +8,7 @@
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <unistd.h>
+extern "C" int close(int);
 
 namespace tinykvm {
 	int Machine::kvm_fd = -1;

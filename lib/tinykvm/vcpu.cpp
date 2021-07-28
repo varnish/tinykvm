@@ -4,13 +4,14 @@
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <unistd.h>
 #include "kernel/amd64.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
 #include "kernel/tss.hpp"
 #include "kernel/paging.hpp"
 #include "kernel/memory_layout.hpp"
+//#define VERBOSE_PAGE_FAULTS
+extern "C" int close(int);
 
 namespace tinykvm {
 	static struct kvm_sregs master_sregs;
@@ -214,7 +215,7 @@ void Machine::setup_long_mode(const Machine* other)
 	} msrs;
 	msrs.nmsrs = 2;
 	msrs.entries[0].index = AMD64_MSR_STAR;
-	msrs.entries[0].data  = (8ull << 32) | (24ull << 48);
+	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
 	msrs.entries[1].data  = interrupt_header().vm64_syscall;
 
@@ -323,10 +324,10 @@ void Machine::handle_exception(uint8_t intr)
 		const uint64_t off = (has_code) ? (regs.rsp+8) : (regs.rsp+0);
 		uint64_t rip, cs = 0x0, rsp, ss;
 		try {
-			copy_from_guest(&rip, off+0,  8);
-			copy_from_guest(&cs,  off+8,  8);
-			copy_from_guest(&rsp, off+24, 8);
-			copy_from_guest(&ss,  off+32, 8);
+			unsafe_copy_from_guest(&rip, off+0,  8);
+			unsafe_copy_from_guest(&cs,  off+8,  8);
+			unsafe_copy_from_guest(&rsp, off+24, 8);
+			unsafe_copy_from_guest(&ss,  off+32, 8);
 
 			printf("Failing RIP: 0x%lX\n", rip);
 			printf("Failing CS:  0x%lX\n", cs);
@@ -338,7 +339,7 @@ void Machine::handle_exception(uint8_t intr)
 		if (has_code && intr == 13) {
 			uint64_t code = 0x0;
 			try {
-				copy_from_guest(&code,  regs.rsp, 8);
+				unsafe_copy_from_guest(&code,  regs.rsp, 8);
 			} catch (...) {}
 			if (code != 0x0) {
 				fprintf(stderr, "Reason: Failing segment 0x%lX\n", code);
@@ -400,7 +401,7 @@ long Machine::run_once()
 			{
 				auto regs = registers();
 				const uint64_t addr = regs.rdi & ~(uint64_t) 0x8000000000000FFF;
-#if 0
+#ifdef VERBOSE_PAGE_FAULTS
 				#define PV(val, off) \
 					{ uint64_t value; unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
 					printf("Value %s: 0x%lX\n", val, value); }
@@ -412,8 +413,8 @@ long Machine::run_once()
 					PV("Origin RIP", 16);
 					PV("Error code", 8);
 				} catch (...) {}
-				fprintf(stderr, "*** %s on address 0x%lX\n",
-					amd64_exception_name(intr), addr);
+				fprintf(stderr, "*** %s on address 0x%lX (0x%llX)\n",
+					amd64_exception_name(intr), addr, regs.rdi);
 #endif
 				/* Page fault handling */
 				/* We should be in kernel mode, otherwise it's fishy! */
