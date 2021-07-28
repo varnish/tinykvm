@@ -45,16 +45,22 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		1, [] (auto& machine) { // WRITE
 			auto regs = machine.registers();
-			auto view = machine.memory_at(regs.rsi, regs.rdx);
-			if (!view.empty()) {
+			const int    fd = regs.rdi;
+			const size_t bytes = regs.rdx;
+			if (bytes > 4096) {
+				/* Ignore too big a write */
+				regs.rax = -1;
+			} else if (fd != 1 && fd != 2) {
+				/* Ignore writes outside of stdout and stderr */
+				regs.rax = -1;
+			}
+			else {
+				char buffer[bytes];
+				machine.copy_from_guest(buffer, regs.rsi, bytes);
 #ifdef ENABLE_GUEST_STDOUT
-				fwrite(view.begin(), view.size(), 1, stdout);
+				fwrite(buffer, bytes, 1, stdout);
 #endif
-				regs.rax = regs.rsi;
-			} else {
-				fprintf(stderr, "Invalid memory from guest: 0x%llX:%llu\n",
-					regs.rsi, regs.rdx);
-				regs.rax = -EFAULT;
+				regs.rax = bytes;
 			}
 			machine.set_registers(regs);
 		});
@@ -76,7 +82,7 @@ void setup_kvm_system_calls()
 			auto* fds = machine.rw_memory_at<struct pollfd>(regs.rdi, bytes);
 			for (size_t i = 0; i < regs.rsi; i++) {
 				// stdout/stderr
-				if (fds[i].fd == 0 || fds[i].fd == 2)
+				if (fds[i].fd == 1 || fds[i].fd == 2)
 					fds[i].revents = fds[i].events;
 				else
 					fds[i].revents = 0;
@@ -208,12 +214,8 @@ void setup_kvm_system_calls()
 					char buffer[bytes];
 					machine.copy_from_guest(buffer, vec.iov_base, bytes);
 #ifdef ENABLE_GUEST_STDOUT
-					static constexpr char gw[] = ">>> Guest says: ";
-					const struct iovec uvec[] = {
-						{(void *)gw, sizeof(gw)-1},
-						{(void *)buffer, bytes}
-					};
-					writev(0, uvec, 2);
+					printf(">>> Guest says: '%.*s'\n",
+						(int) bytes, buffer);
 #endif
 					written += bytes;
 				}
