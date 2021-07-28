@@ -410,27 +410,33 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 			const uint64_t k = index_from_pd_entry(addr);
 			if (pd[k] & PDE64_PRESENT) {
 				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
+				/* NOTE: Make sure we are re-reading pd[k] */
+				uint64_t* pt = nullptr;
 				if (UNLIKELY(pd[k] & PDE64_PS)) { // 2MB page
 					CLPRINT("-> Splitting a 2MB PD entry into 4KB pages\n");
 					/* Remove PS flag */
-					pd[k] &= ~PDE64_PS;
-					/* Copy flags from 2MB page */
-					uint64_t flags = (pd[k] & 0x8000000000000FFF);
+					pd[k] &= ~(uint64_t)PDE64_PS;
+					/* Copy flags from 2MB page, except read-write */
+					uint64_t flags = pd[k] & (0x8000000000000FFF & ~(uint64_t)PDE64_RW);
+					uint64_t branch_flags = flags | PDE64_CLONEABLE;
 					/* Allocate pagetable and fill 4k entries */
 					auto page = memory.new_page();
 					for (size_t e = 0; e < 512; e++) {
-						page.pmem[e] = pt_base | (e << 12) | flags;
+						page.pmem[e] = pt_base | (e << 12) | branch_flags;
 					}
-					/* Update 2MB entry, remove cloneable flag */
-					pd[k] = page.addr | (flags & PDE64_CLONED_MASK);
+					/* Update 2MB entry, add read-write */
+					pd[k] = page.addr | flags | PDE64_RW;
+					pt = page.pmem;
+				} else {
+					pt = memory.page_at(pd[k] & ~(uint64_t)0x8000000000000FFF);
 				}
-				/* NOTE: Make sure we are re-reading pd[k] */
-				auto* pt = memory.page_at(pd[k] & ~(uint64_t)0x8000000000000FFF);
-				/* Make copy of page if needed */
-				if (is_copy_on_write(pd[k])) {
+
+				/* Make copy of page if needed (not likely) */
+				if (UNLIKELY(is_copy_on_write(pd[k]))) {
 					clone_and_update_entry(memory, pd[k], pt, PDE64_RW);
 					CLPRINT("-> Cloning a PD entry: 0x%lX\n", pd[k]);
 				}
+
 				const uint64_t e = index_from_pt_entry(addr);
 				if (pt[e] & PDE64_PRESENT) { // 4KB page
 					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
