@@ -13,8 +13,8 @@ namespace tinykvm {
 MemoryBanks::MemoryBanks(Machine& machine)
 	: m_machine { machine },
 	  m_arena_begin { 0x7000000000 },
-	  m_idx_begin { 2 },
 	  m_arena_next { m_arena_begin },
+	  m_idx_begin { 2 },
 	  m_idx { m_idx_begin }
 {
 }
@@ -64,8 +64,7 @@ MemoryBank& MemoryBanks::get_available_bank()
 }
 void MemoryBanks::reset()
 {
-	/* XXX: something is wrong with the memory banks on reset */
-	if (true || page_allocator != nullptr)
+	if (page_allocator != nullptr)
 	{
 		/* With a custom allocator, we reset everything */
 		while (!m_mem.empty()) {
@@ -75,8 +74,11 @@ void MemoryBanks::reset()
 		m_idx = m_idx_begin;
 	}
 	else {
-		/* Release all memory */
+		/* Reset page usage, but keep banks */
 		for (auto& bank : m_mem) {
+			/* XXX: Re-install all memory banks? */
+			//m_machine.delete_memory(bank.idx);
+			//m_machine.install_memory(bank.idx, bank.to_vmem());
 			bank.n_used = 0;
 		}
 		m_idx = m_idx_begin + m_mem.size();
@@ -104,6 +106,11 @@ MemoryBank::Page MemoryBank::get_next_page()
 	uint64_t offset = PAGE_SIZE * n_used;
 	n_used++;
 	return {(uint64_t *)&mem[offset], addr + offset};
+}
+
+VirtualMem MemoryBank::to_vmem() const noexcept
+{
+	return VirtualMem {this->addr, this->mem, this->size()};
 }
 
 } // tinykvm

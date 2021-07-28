@@ -1,7 +1,7 @@
 #pragma once
-#include <cstdint>
 #include <functional>
 #include <vector>
+#include "virtual_mem.hpp"
 
 namespace tinykvm {
 struct Machine;
@@ -31,6 +31,8 @@ struct MemoryBank {
 		uint64_t  addr;
 	};
 	Page get_next_page();
+
+	VirtualMem to_vmem() const noexcept;
 
 	MemoryBank(MemoryBanks&, char*, uint64_t, uint16_t n, uint16_t idx);
 	~MemoryBank();

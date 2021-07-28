@@ -174,17 +174,20 @@ void Machine::setup_long_mode(const Machine* other)
 		memory.get_writable_page(IST_ADDR, true);
 
 		/* Inherit the special registers of the master machine */
-		struct kvm_sregs sregs = master_sregs;
-		//other->vcpu.get_special_registers(sregs);
+		struct kvm_sregs sregs;
+		other->vcpu.get_special_registers(sregs);
 
 		/* Page table entry will be cloned at the start */
 		sregs.cr3 = memory.page_tables;
 		sregs.cr0 &= ~CR0_WP;
 
-		//setup_amd64_segment_regs(sregs, GDT_ADDR);
-		//this->m_userspaced = true;
+		/* XXX: This will likely break guests that needs to
+		   continue in kernel mode when resuming. Oh well. */
+		setup_amd64_segment_regs(sregs, GDT_ADDR);
+		this->m_userspaced = true;
 
 		vcpu.set_special_registers(sregs);
+		//print_pagetables(this->memory);
 
 #ifndef NDEBUG
 		/* It shouldn't be identity-mapped anymore */
@@ -194,7 +197,6 @@ void Machine::setup_long_mode(const Machine* other)
 			assert(entry & (PDE64_PRESENT | PDE64_RW | PDE64_NX));
 			(void) entry;
 		});
-		//print_pagetables(this->memory);
 #endif
 	}
 
@@ -319,21 +321,25 @@ void Machine::handle_exception(uint8_t intr)
 
 	try {
 		const uint64_t off = (has_code) ? (regs.rsp+8) : (regs.rsp+0);
-		uint64_t rip, cs, rsp, ss;
-		copy_from_guest(&rip, off+0,  8);
-		copy_from_guest(&cs,  off+8,  8);
-		copy_from_guest(&rsp, off+24, 8);
-		copy_from_guest(&ss,  off+32, 8);
+		uint64_t rip, cs = 0x0, rsp, ss;
+		try {
+			copy_from_guest(&rip, off+0,  8);
+			copy_from_guest(&cs,  off+8,  8);
+			copy_from_guest(&rsp, off+24, 8);
+			copy_from_guest(&ss,  off+32, 8);
 
-		printf("Failing RIP: 0x%lX\n", rip);
-		printf("Failing CS:  0x%lX\n", cs);
-		printf("Failing RSP: 0x%lX\n", rsp);
-		printf("Failing SS:  0x%lX\n", ss);
+			printf("Failing RIP: 0x%lX\n", rip);
+			printf("Failing CS:  0x%lX\n", cs);
+			printf("Failing RSP: 0x%lX\n", rsp);
+			printf("Failing SS:  0x%lX\n", ss);
+		} catch (...) {}
 
 		/* General Protection Fault */
 		if (has_code && intr == 13) {
-			uint64_t code;
-			copy_from_guest(&code,  regs.rsp, 8);
+			uint64_t code = 0x0;
+			try {
+				copy_from_guest(&code,  regs.rsp, 8);
+			} catch (...) {}
 			if (code != 0x0) {
 				fprintf(stderr, "Reason: Failing segment 0x%lX\n", code);
 			} else if (cs & 0x3) {
@@ -398,12 +404,14 @@ long Machine::run_once()
 				#define PV(val, off) \
 					{ uint64_t value; unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
 					printf("Value %s: 0x%lX\n", val, value); }
-				PV("Origin SS",  48);
-				PV("Origin RSP", 40);
-				PV("Origin RFLAGS", 32);
-				PV("Origin CS",  24);
-				PV("Origin RIP", 16);
-				PV("Error code", 8);
+				try {
+					PV("Origin SS",  48);
+					PV("Origin RSP", 40);
+					PV("Origin RFLAGS", 32);
+					PV("Origin CS",  24);
+					PV("Origin RIP", 16);
+					PV("Error code", 8);
+				} catch (...) {}
 				fprintf(stderr, "*** %s on address 0x%lX\n",
 					amd64_exception_name(intr), addr);
 #endif

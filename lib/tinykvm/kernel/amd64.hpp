@@ -44,6 +44,8 @@
 #define PDE64_PRESENT 1
 #define PDE64_RW (1U << 1)
 #define PDE64_USER (1U << 2)
+#define PDE64_WRITE_THROUGH (1U << 3)
+#define PDE64_CACHE_DISABLE (1U << 4)
 #define PDE64_ACCESSED (1U << 5)
 #define PDE64_DIRTY (1U << 6)
 #define PDE64_PS (1U << 7)
