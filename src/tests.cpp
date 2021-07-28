@@ -7,7 +7,17 @@
 #define GUEST_MEMORY 0x40000000  /* 1024MB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
+static void test_master_vm(tinykvm::Machine&);
 static void test_forking(tinykvm::Machine&);
+static void test_copy_on_write(tinykvm::Machine&);
+
+static void verify_exists(tinykvm::Machine& vm, const char* name)
+{
+	if (vm.address_of(name) == 0x0) {
+		fprintf(stderr, "Error: '%s' is missing\n", name);
+		exit(1);
+	}
+}
 
 int main(int argc, char** argv)
 {
@@ -31,14 +41,10 @@ int main(int argc, char** argv)
 		{"kvmtest", "Hello World!\n"},
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 
-	if (master_vm.address_of("test_return") == 0x0) {
-		fprintf(stderr, "Error: 'test_return' is missing\n");
-		exit(1);
-	}
-	if (master_vm.address_of("test_ud2") == 0x0) {
-		fprintf(stderr, "Error: 'test_ud2' is missing\n");
-		exit(1);
-	}
+	verify_exists(master_vm, "test_return");
+	verify_exists(master_vm, "test_ud2");
+	verify_exists(master_vm, "test_read");
+	verify_exists(master_vm, "test_copy_on_write");
 
 	/* Remote debugger session */
 	if (getenv("DEBUG"))
@@ -88,7 +94,30 @@ int main(int argc, char** argv)
 	printf("*** Program startup OK\n");
 
 	printf("--- Beginning Master VM tests ---\n");
+	test_master_vm(master_vm);
+	printf("*** Master VM OK\n");
 
+	/* Make the master VM able to mass-produce copies */
+	master_vm.prepare_copy_on_write();
+
+	printf("--- Beginning VM fork tests ---\n");
+	for (size_t i = 0; i < 100; i++) {
+		test_forking(master_vm);
+	}
+	printf("*** VM forking OK\n");
+
+	printf("--- Beginning VM copy-on-write tests ---\n");
+	for (size_t i = 0; i < 100; i++) {
+		test_copy_on_write(master_vm);
+	}
+	printf("*** VM copy-on-write OK\n");
+
+	printf("Nice! Tests passed.\n");
+	return 0;
+}
+
+void test_master_vm(tinykvm::Machine& master_vm)
+{
 	/* Call into master VM */
 	master_vm.vmcall("test_return");
 	KASSERT(master_vm.return_value() == 666);
@@ -100,19 +129,6 @@ int main(int argc, char** argv)
 	}
 	master_vm.vmcall("test_read");
 	KASSERT(master_vm.return_value() == 200);
-	printf("Master vmcall OK\n");
-
-	/* Make the master VM able to mass-produce copies */
-	master_vm.prepare_copy_on_write();
-
-	printf("--- Beginning VM fork tests ---\n");
-	for (size_t i = 0; i < 100; i++) {
-		test_forking(master_vm);
-	}
-	printf("*** VM forking OK\n");
-
-	printf("Nice! Tests passed.\n");
-	return 0;
 }
 
 void test_forking(tinykvm::Machine& master_vm)
@@ -174,6 +190,21 @@ void test_forking(tinykvm::Machine& master_vm)
 	}
 }
 
+void test_copy_on_write(tinykvm::Machine& master_vm)
+{
+	const tinykvm::MachineOptions options {
+		.max_mem = GUEST_MEMORY,
+		.verbose_loader = false
+	};
+	tinykvm::Machine vm {master_vm, options};
+
+	for (size_t i = 0; i < 1; i++)
+	{
+		vm.reset_to(master_vm);
+		vm.vmcall("test_copy_on_write");
+		KASSERT(vm.return_value() == 666);
+	}
+}
 
 #include <stdexcept>
 std::vector<uint8_t> load_file(const std::string& filename)

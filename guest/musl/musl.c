@@ -41,8 +41,16 @@ static int t = 0;
 __attribute__((used))
 void bench()
 {
-	assert(t == 0);
+	//assert(t == 0);
 	//t = 1;
+	assert(nprimes == 78498);
+}
+
+__attribute__((used))
+void bench_write()
+{
+	assert(t == 0);
+	t = 1;
 	assert(nprimes == 78498);
 }
 

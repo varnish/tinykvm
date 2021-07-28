@@ -31,7 +31,7 @@ static int t = 0;
 __attribute__((used))
 int test_return()
 {
-	//t = 1;
+	t = 1;
 	return 666;
 }
 
@@ -55,4 +55,14 @@ void test_write()
 	t = 1;
 	asm("" ::: "memory");
 	assert(t == 1);
+}
+
+static int cow = 0;
+
+__attribute__((used))
+int test_copy_on_write()
+{
+	assert(cow == 0);
+	cow = 1;
+	return 666;
 }
