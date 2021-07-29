@@ -119,7 +119,6 @@ private:
 		int fd = 0;
 		struct kvm_run *kvm_run = nullptr;
 	};
-	void reset_special_regs();
 	void setup_registers(tinykvm_x86regs&);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);

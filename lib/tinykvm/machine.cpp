@@ -53,7 +53,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_start_address {other.m_start_address},
 	  memory   {*this, options, other.memory},
 	  m_mm     {other.m_mm},
-	  m_mt     {nullptr} //new MultiThreading{*other.m_mt}}
+	  m_mt     {new MultiThreading{*other.m_mt}}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 	assert(other.m_prepped == true && "Call Machine::prepare_copy_on_write() first");

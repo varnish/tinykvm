@@ -131,16 +131,6 @@ void Machine::vCPU::set_special_registers(const struct kvm_sregs& sregs)
 	}
 }
 
-void Machine::reset_special_regs()
-{
-	struct kvm_sregs sregs;
-	get_special_registers(sregs);
-
-	setup_amd64_segment_regs(sregs, GDT_ADDR);
-
-	set_special_registers(sregs);
-}
-
 std::string_view Machine::io_data() const
 {
 	char *p = (char *) vcpu.kvm_run;
