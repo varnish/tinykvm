@@ -28,8 +28,6 @@ dw .vm64_gettimeofday
 dw .vm64_exception
 dw .vm64_except1 - .vm64_exception
 dw .vm64_dso
-dw .vm64_entry
-dw .vm64_rexit
 
 ALIGN 0x10
 .vm64_syscall:
@@ -74,19 +72,6 @@ ALIGN 0x10
 	mov rax, cr3
 	mov cr3, rax
 	o64 sysret
-
-.vm64_entry:
-	push rax
-	mov rax, 0x1F777
-	syscall
-	pop rax
-	jmp rax
-.vm64_rexit:
-	mov rdi, rax
-.vm64_rexit_retry:
-	mov ax, 0xFFFF
-	out 0, ax
-	jmp .vm64_rexit_retry
 
 .vm64_page_fault:
 	push rdi

@@ -21,6 +21,7 @@ set (SOURCES
 	tinykvm/kernel/idt.cpp
 	tinykvm/kernel/tss.cpp
 	tinykvm/kernel/paging.cpp
+	tinykvm/kernel/usercode.cpp
 	tinykvm/kernel/vdso.cpp
 	)
 

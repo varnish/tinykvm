@@ -10,6 +10,7 @@
 #include "kernel/tss.hpp"
 #include "kernel/paging.hpp"
 #include "kernel/memory_layout.hpp"
+#include "kernel/usercode.hpp"
 //#define VERBOSE_PAGE_FAULTS
 extern "C" int close(int);
 
@@ -145,9 +146,10 @@ void Machine::setup_long_mode(const Machine* other)
 			IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
 		setup_amd64_segments(GDT_ADDR, memory.at(GDT_ADDR));
 		setup_amd64_tss(TSS_ADDR, memory.at(TSS_ADDR), memory.at(GDT_ADDR));
+		/* Userspace entry/exit code */
+		setup_vm64_usercode(memory.at(USER_ASM_ADDR));
 
-		uint64_t last_page = setup_amd64_paging(
-			memory, INTR_ASM_ADDR, IST_ADDR, m_binary);
+		uint64_t last_page = setup_amd64_paging(memory, m_binary);
 		//this->ptmem = MemRange::New("Page tables",
 		//	memory.page_tables, last_page - memory.page_tables);
 		(void) last_page;
@@ -495,10 +497,10 @@ void Machine::prepare_copy_on_write()
 }
 
 Machine::address_t Machine::entry_address() const noexcept {
-	return interrupt_header().vm64_entry;
+	return usercode_header().vm64_entry;
 }
 Machine::address_t Machine::exit_address() const noexcept {
-	return interrupt_header().vm64_rexit;
+	return usercode_header().vm64_rexit;
 }
 
 }

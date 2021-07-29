@@ -1,6 +1,7 @@
 #include "paging.hpp"
 
 #include "amd64.hpp"
+#include "memory_layout.hpp"
 #include "vdso.hpp"
 #include "../util/elf.h"
 #include <cassert>
@@ -48,8 +49,7 @@ inline bool is_flagged_page(uint64_t flags, uint64_t entry) {
 	return (entry & flags) == flags;
 }
 
-uint64_t setup_amd64_paging(vMemory& memory,
-	uint64_t except_asm_addr, uint64_t ist_addr, std::string_view binary)
+uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 {
 	// guest physical
 	const uint64_t pml4_addr = memory.page_tables;
@@ -91,22 +91,23 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
 
 	lowpage[0] = 0; /* Null-page at 0x0 */
-	/* XXX: This is a work-around for exception triple-faults.
-		Here lies GDT, IDT and TSS. Some write access needed? */
-	lowpage[1] = PDE64_PRESENT | PDE64_NX | PDE64_RW | (1 << 12);
-	/* Exception handlers
-		XXX: the rexit function is here, and needs to be moved
-			before we can remove the userspace bits!!
-	*/
-	const uint64_t except_page = except_asm_addr >> 12;
-	lowpage[except_page] = PDE64_PRESENT | PDE64_USER | except_asm_addr;
+	/* GDT, IDT and TSS */
+	lowpage[1] = PDE64_PRESENT | PDE64_NX | (1 << 12);
+
+	/* Kernel code: Exceptions, system calls */
+	const uint64_t except_page = INTR_ASM_ADDR >> 12;
+	lowpage[except_page] = PDE64_PRESENT | INTR_ASM_ADDR;
 
 	/* Exception (IST) stack */
-	const uint64_t ist_page = ist_addr >> 12;
-	lowpage[ist_page] = PDE64_PRESENT | PDE64_RW | PDE64_NX | ist_addr;
+	const uint64_t ist_page = IST_ADDR >> 12;
+	lowpage[ist_page] = PDE64_PRESENT | PDE64_RW | PDE64_NX | IST_ADDR;
+
+	/* Usercode page: Entry, exit */
+	const uint64_t user_page = USER_ASM_ADDR >> 12;
+	lowpage[user_page] = PDE64_PRESENT | PDE64_USER | USER_ASM_ADDR;
 
 	/* Kernel area < 256KB */
-	for (unsigned i = 4; i < 64; i++) {
+	for (unsigned i = 5; i < 64; i++) {
 		lowpage[i] = 0;
 	}
 
