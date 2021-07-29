@@ -80,6 +80,7 @@ struct Machine
 	address_t start_address() const noexcept { return this->m_start_address; }
 	address_t stack_address() const noexcept { return this->m_stack_address; }
 	address_t heap_address() const noexcept { return this->m_heap_address; }
+	address_t entry_address() const noexcept;
 	address_t exit_address() const noexcept;
 	void set_stack_address(address_t addr) { this->m_stack_address = addr; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }

@@ -41,16 +41,16 @@
 #define EFER_NXE (1U << 11)
 
 /* 64-bit page * entry bits */
-#define PDE64_PRESENT 1
-#define PDE64_RW (1U << 1)
-#define PDE64_USER (1U << 2)
-#define PDE64_WRITE_THROUGH (1U << 3)
-#define PDE64_CACHE_DISABLE (1U << 4)
-#define PDE64_ACCESSED (1U << 5)
-#define PDE64_DIRTY (1U << 6)
-#define PDE64_PS (1U << 7)
-#define PDE64_G (1U << 8)
-#define PDE64_NX (1ULL << 63)
+#define PDE64_PRESENT 1UL
+#define PDE64_RW (1UL << 1)
+#define PDE64_USER (1UL << 2)
+#define PDE64_WRITE_THROUGH (1UL << 3)
+#define PDE64_CACHE_DISABLE (1UL << 4)
+#define PDE64_ACCESSED (1UL << 5)
+#define PDE64_DIRTY (1UL << 6)
+#define PDE64_PS (1UL << 7)
+#define PDE64_G (1UL << 8)
+#define PDE64_NX (1UL << 63)
 
 #define PDE64_PDPT_SIZE  (1ULL << 39)
 #define PDE64_PD_SIZE  (1ULL << 30)

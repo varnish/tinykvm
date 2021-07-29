@@ -16,7 +16,7 @@
 
 #define FLAGS_X32_PAGE 0xC
 #define FLAGS_X64_PAGE 0xA
-#define FLAGS_X64_TSS  0x0
+#define FLAGS_X64_TSS  0x4
 
 struct GDT_desc
 {

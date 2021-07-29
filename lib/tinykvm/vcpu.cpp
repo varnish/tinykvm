@@ -510,6 +510,9 @@ void Machine::prepare_copy_on_write()
 	//print_pagetables(this->memory);
 }
 
+Machine::address_t Machine::entry_address() const noexcept {
+	return interrupt_header().vm64_entry;
+}
 Machine::address_t Machine::exit_address() const noexcept {
 	return interrupt_header().vm64_rexit;
 }

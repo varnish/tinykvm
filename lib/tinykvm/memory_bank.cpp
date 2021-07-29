@@ -76,9 +76,6 @@ void MemoryBanks::reset()
 	else {
 		/* Reset page usage, but keep banks */
 		for (auto& bank : m_mem) {
-			/* XXX: Re-install all memory banks? */
-			m_machine.delete_memory(bank.idx);
-			m_machine.install_memory(bank.idx, bank.to_vmem());
 			bank.n_used = 0;
 		}
 		m_idx = m_idx_begin + m_mem.size();

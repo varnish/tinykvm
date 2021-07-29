@@ -28,12 +28,15 @@ dw .vm64_gettimeofday
 dw .vm64_exception
 dw .vm64_except1 - .vm64_exception
 dw .vm64_dso
+dw .vm64_entry
 dw .vm64_rexit
 
 ALIGN 0x10
 .vm64_syscall:
 	cmp eax, 158 ;; PRCTL
 	je .vm64_prctl
+	cmp eax, 0x1F777 ;; CR3 RESET
+	je .vm64_reset_cr3
 	out 0, eax
 	o64 sysret
 
@@ -67,6 +70,17 @@ ALIGN 0x10
 	mov rax, .vm64_gettimeofday
 	ret
 
+.vm64_reset_cr3:
+	mov rax, cr3
+	mov cr3, rax
+	o64 sysret
+
+.vm64_entry:
+	push rax
+	mov rax, 0x1F777
+	syscall
+	pop rax
+	jmp rax
 .vm64_rexit:
 	mov rdi, rax
 .vm64_rexit_retry:
