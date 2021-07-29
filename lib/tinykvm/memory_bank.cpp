@@ -53,9 +53,11 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 MemoryBank& MemoryBanks::get_available_bank()
 {
 	if (!m_mem.empty()) {
-		auto& last = m_mem.back();
-		if (!last.empty()) {
-			return last;
+		for (; m_search < m_mem.size(); m_search++) {
+			auto& bank = m_mem.at(m_search);
+			if (!bank.empty()) {
+				return bank;
+			}
 		}
 	}
 	auto& bank = this->allocate_new_bank(m_arena_next);
@@ -72,6 +74,8 @@ void MemoryBanks::reset()
 			m_mem.pop_back();
 		}
 		m_idx = m_idx_begin;
+		/* We always start fresh at arena start */
+		m_arena_next = m_arena_begin;
 	}
 	else {
 		/* Reset page usage, but keep banks */
@@ -80,8 +84,6 @@ void MemoryBanks::reset()
 		}
 		m_idx = m_idx_begin + m_mem.size();
 	}
-	/* We always start fresh at arena start */
-	m_arena_next = m_arena_begin;
 	m_search = 0;
 }
 

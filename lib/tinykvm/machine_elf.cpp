@@ -62,7 +62,6 @@ void Machine::elf_loader(const MachineOptions& options)
 				break;
 			case PT_GNU_STACK:
 				//printf("GNU_STACK: 0x%lX\n", hdr->p_vaddr);
-				this->m_stack_address = hdr->p_vaddr; // ??
 				break;
 			case PT_GNU_RELRO:
 				//throw std::runtime_error(
@@ -76,8 +75,8 @@ void Machine::elf_loader(const MachineOptions& options)
 			this->m_heap_address = endm;
 	}
 
-	if (this->m_stack_address < 0x200000) {
-		this->m_stack_address = 0x200000;
+	if (this->m_stack_address < 0x100000) {
+		this->m_stack_address = 0x100000;
 	}
 
 	//this->relocate_section(".rela.plt", ".symtab");
