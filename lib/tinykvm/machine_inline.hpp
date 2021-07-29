@@ -84,12 +84,6 @@ void Machine::vmcall(uint64_t addr, Args&&... args)
 {
 	auto regs = this->setup_call(addr, std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
-	/* The guest can be in kernel mode when exiting from
-	   system call or stopping due to a CPU exception. */
-	if (this->m_userspaced == false) {
-		this->reset_special_regs();
-	}
-	this->m_userspaced = false;
 	this->run();
 }
 

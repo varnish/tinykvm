@@ -135,7 +135,6 @@ private:
 	bool  m_stopped = true;
 	bool  m_prepped = false;
 	bool  m_forked = false;
-	bool  m_userspaced = false;
 	void* m_userdata = nullptr;
 
 	static std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls;

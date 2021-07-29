@@ -182,11 +182,6 @@ void Machine::setup_long_mode(const Machine* other)
 		sregs.cr3 = memory.page_tables;
 		sregs.cr0 &= ~CR0_WP;
 
-		/* XXX: This will likely break guests that needs to
-		   continue in kernel mode when resuming. Oh well. */
-		setup_amd64_segment_regs(sregs, GDT_ADDR);
-		this->m_userspaced = true;
-
 		vcpu.set_special_registers(sregs);
 		//print_pagetables(this->memory);
 
@@ -391,7 +386,6 @@ long Machine::run_once()
 				return KVM_EXIT_IO;
 			} else {
 				this->m_stopped = true;
-				this->m_userspaced = true;
 				return 0;
 			}
 		}
