@@ -6,9 +6,9 @@
 #include <cassert>
 #include <cstring>
 #include <stdexcept>
-//#define VERBOSE_PAGETABLES
+//#define KVM_VERBOSE_PAGETABLES
 
-#ifdef VERBOSE_PAGETABLES
+#ifdef KVM_VERBOSE_PAGETABLES
 #define CLPRINT(fmt, ...) printf(fmt, ##__VA_ARGS__);
 #else
 #define CLPRINT(...) /* ... */
@@ -18,7 +18,7 @@
 namespace tinykvm {
 
 /* We want to remove the CLONEABLE bit after a page has been duplicated */
-static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~(uint64_t) PDE64_CLONEABLE;
+static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~PDE64_CLONEABLE;
 
 using ptentry_pair = std::tuple<uint64_t, uint64_t, uint64_t>;
 inline ptentry_pair pdpt_from_index(size_t i, uint64_t* pml4) {

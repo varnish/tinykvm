@@ -1,6 +1,6 @@
 #pragma once
 #include <functional>
-#include <vector>
+#include <deque>
 #include "virtual_mem.hpp"
 
 namespace tinykvm {
@@ -58,7 +58,7 @@ private:
 	MemoryBank& allocate_new_bank(uint64_t addr);
 	char* try_alloc(size_t N);
 
-	std::vector<MemoryBank> m_mem;
+	std::deque<MemoryBank> m_mem;
 	Machine& m_machine;
 	const uint64_t m_arena_begin;
 	uint64_t m_arena_next;

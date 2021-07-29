@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 extern "C" int close(int);
+//#define KVM_VERBOSE_MEMORY
 
 namespace tinykvm {
 	int Machine::kvm_fd = -1;
@@ -117,6 +118,11 @@ void Machine::install_memory(uint32_t idx, const VirtualMem& mem)
 		.memory_size = mem.size,
 		.userspace_addr = (uintptr_t) mem.ptr,
 	};
+#ifdef KVM_VERBOSE_MEMORY
+	printf("UMR: Install slot %u with flags 0x%X at 0x%llX to 0x%llX (%zu bytes) from %p\n",
+		memreg.slot, memreg.flags, memreg.guest_phys_addr,
+		memreg.guest_phys_addr + mem.size, mem.size, mem.ptr);
+#endif
 	if (UNLIKELY(ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg) < 0)) {
 		throw MemoryException("Failed to install guest memory region", mem.physbase, mem.size);
 	}
@@ -130,6 +136,9 @@ void Machine::delete_memory(uint32_t idx)
 		.memory_size = 0x0,
 		.userspace_addr = 0x0,
 	};
+#ifdef KVM_VERBOSE_MEMORY
+	printf("UMR: Remove slot %u\n", memreg.slot);
+#endif
 	if (UNLIKELY(ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg) < 0)) {
 		throw MachineException("Failed to delete guest memory region", idx);
 	}
