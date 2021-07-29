@@ -107,12 +107,11 @@ uint64_t setup_amd64_paging(vMemory& memory,
 
 	/* Kernel area < 256KB */
 	for (unsigned i = 4; i < 64; i++) {
-		lowpage[i] = PDE64_PRESENT | PDE64_NX | (i << 12);
+		lowpage[i] = 0;
 	}
 
 	/* Stack area 256KB -> 2MB */
-	lowpage[64] = 0; /* Stack guard */
-	for (unsigned i = 65; i < 512; i++) {
+	for (unsigned i = 64; i < 512; i++) {
 		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | (i << 12);
 	}
 
