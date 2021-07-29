@@ -92,7 +92,8 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 
 	lowpage[0] = 0; /* Null-page at 0x0 */
 	/* GDT, IDT and TSS */
-	lowpage[1] = PDE64_PRESENT | PDE64_NX | (1 << 12);
+	/* XXX: Why writable? */
+	lowpage[1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (1 << 12);
 
 	/* Kernel code: Exceptions, system calls */
 	const uint64_t except_page = INTR_ASM_ADDR >> 12;

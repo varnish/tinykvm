@@ -343,6 +343,7 @@ void Machine::handle_exception(uint8_t intr)
 
 void Machine::run(unsigned timeout)
 {
+	/* XXX: Remember to set a timeout. */
 	this->m_stopped = false;
 	while(run_once());
 }
