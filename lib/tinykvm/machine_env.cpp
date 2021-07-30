@@ -13,10 +13,10 @@ using address_t = Machine::address_t;
 static inline
 void push_arg(Machine& m, std::vector<address_t>& vec, address_t& dst, const std::string& str)
 {
-	dst -= str.size();
-	dst &= ~0x7; // maintain alignment
+	dst -= str.size()+1;
+	dst &= ~(uint64_t)0x7; // maintain alignment
 	vec.push_back(dst);
-	m.copy_to_guest(dst, (const uint8_t*) str.data(), str.size());
+	m.copy_to_guest(dst, str.data(), str.size()+1);
 }
 static inline
 void push_aux(std::vector<address_t>& vec, AuxVec<address_t> aux)
@@ -28,7 +28,7 @@ static inline
 void push_down(Machine& m, address_t& dst, const void* data, size_t size)
 {
 	dst -= size;
-	dst &= ~0x7; // maintain alignment
+	dst &= ~(uint64_t)0x7; // maintain alignment
 	m.copy_to_guest(dst, data, size);
 }
 

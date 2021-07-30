@@ -203,6 +203,9 @@ void setup_kvm_system_calls()
 			/* writev: Stdout, Stderr */
 			else if (fd == 1 || fd == 2)
 			{
+#ifdef ENABLE_GUEST_STDOUT
+				printf(">>> Guest says: ");
+#endif
 				size_t written = 0;
 				for (size_t i = 0; i < count; i++) {
 					g_iovec vec;
@@ -214,8 +217,7 @@ void setup_kvm_system_calls()
 					char buffer[bytes];
 					machine.copy_from_guest(buffer, vec.iov_base, bytes);
 #ifdef ENABLE_GUEST_STDOUT
-					printf(">>> Guest says: '%.*s'\n",
-						(int) bytes, buffer);
+					printf("%.*s", (int) bytes, buffer);
 #endif
 					written += bytes;
 				}
