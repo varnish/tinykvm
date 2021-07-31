@@ -15,7 +15,7 @@ void Machine::elf_loader(const MachineOptions& options)
 	}
 	const auto* elf = (Elf64_Ehdr*) m_binary.data();
 	if (UNLIKELY(!validate_header(elf))) {
-		throw std::runtime_error("Invalid ELF header! Mixup between 32- and 64-bit?");
+		throw std::runtime_error("Invalid ELF header! Not a 64-bit program?");
 	}
 
 	// enumerate & load loadable segments
@@ -24,7 +24,7 @@ void Machine::elf_loader(const MachineOptions& options)
 		throw std::runtime_error("ELF with no program-headers");
 	}
 	if (UNLIKELY(program_headers >= 16)) {
-		throw std::runtime_error("ELF with too many program-headers");
+		throw std::runtime_error("ELF with too many program-headers. Dynamic?");
 	}
 	if (UNLIKELY(elf->e_phoff > 0x4000)) {
 		throw std::runtime_error("ELF program-headers have bogus offset");

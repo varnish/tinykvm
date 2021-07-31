@@ -412,6 +412,11 @@ long Machine::run_once()
 				memory.get_writable_page(addr, false);
 				return KVM_EXIT_IO;
 			}
+			else if (intr == 1) /* Debug trap */
+			{
+				m_on_breakpoint(*this);
+				return KVM_EXIT_IO;
+			}
 			/* CPU Exception */
 			this->handle_exception(intr);
 			throw MachineException(amd64_exception_name(intr), intr);

@@ -138,6 +138,7 @@ private:
 
 	static std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls;
 	static numbered_syscall_t m_unhandled_syscall;
+	static syscall_t          m_on_breakpoint;
 	static io_callback_t      m_on_input;
 	static io_callback_t      m_on_output;
 
