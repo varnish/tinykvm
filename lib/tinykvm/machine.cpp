@@ -107,7 +107,7 @@ uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
 }
 uint64_t Machine::stack_push_cstr(__u64& sp, const char* string)
 {
-	return stack_push(sp, string, strlen(string));
+	return stack_push(sp, string, strlen(string)+1);
 }
 
 void Machine::install_memory(uint32_t idx, const VirtualMem& mem)
