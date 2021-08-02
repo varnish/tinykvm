@@ -22,6 +22,7 @@ namespace tinykvm
 {
 	struct MachineOptions {
 		uint64_t max_mem;
+		uint32_t max_cow_mem = 0;
 
 		bool verbose_loader = false;
 		std::function<char*(size_t N)> page_allocator = nullptr;

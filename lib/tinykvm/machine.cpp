@@ -24,7 +24,7 @@ __attribute__ ((cold))
 Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_forked {false},
 	  m_binary {binary},
-	  memory { vMemory::New(*this, 0x0, 0x100000, options.max_mem) },
+	  memory { vMemory::New(*this, options, 0x0, 0x100000, options.max_mem) },
 	  m_mt   {new MultiThreading{*this}}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");

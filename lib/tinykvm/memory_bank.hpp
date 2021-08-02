@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include <deque>
+#include "common.hpp"
 #include "virtual_mem.hpp"
 
 namespace tinykvm {
@@ -41,7 +42,7 @@ struct MemoryBank {
 struct MemoryBanks {
 	static constexpr unsigned N_PAGES = 16;
 
-	MemoryBanks(Machine&);
+	MemoryBanks(Machine&, const MachineOptions&);
 
 	MemoryBank& get_available_bank();
 	void reset();
@@ -50,9 +51,6 @@ struct MemoryBanks {
 	auto end()   { return m_mem.end(); }
 	auto begin() const { return m_mem.cbegin(); }
 	auto end() const   { return m_mem.cend(); }
-
-	std::function<char*(size_t N)> page_allocator = nullptr;
-	std::function<void(char*)> page_deallocator = nullptr;
 
 private:
 	MemoryBank& allocate_new_bank(uint64_t addr);
@@ -64,7 +62,14 @@ private:
 	uint64_t m_arena_next;
 	const uint16_t m_idx_begin;
 	uint16_t m_idx;
+	uint32_t m_num_pages = 0;
 	uint16_t m_search = 0;
+	/* Max number of pages in all the banks */
+	uint32_t m_max_pages;
+
+	std::function<char*(size_t N)> page_allocator = nullptr;
+	std::function<void(char*)> page_deallocator = nullptr;
+	friend struct MemoryBank;
 };
 
 }

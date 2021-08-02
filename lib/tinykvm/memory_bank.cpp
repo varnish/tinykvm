@@ -10,13 +10,16 @@
 
 namespace tinykvm {
 
-MemoryBanks::MemoryBanks(Machine& machine)
+MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	: m_machine { machine },
 	  m_arena_begin { 0x7000000000 },
 	  m_arena_next { m_arena_begin },
 	  m_idx_begin { 2 },
-	  m_idx { m_idx_begin }
+	  m_idx { m_idx_begin },
+	  m_max_pages { options.max_cow_mem / PAGE_SIZE }
 {
+	page_allocator = options.page_allocator;
+	page_deallocator = options.page_deallocator;
 }
 
 char* MemoryBanks::try_alloc(size_t N)
@@ -40,6 +43,7 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 	const size_t size = pages * PAGE_SIZE;
 	if (mem != nullptr) {
 		m_mem.emplace_back(*this, mem, addr, pages, m_idx);
+		m_num_pages += pages;
 
 		VirtualMem vmem { addr, mem, size };
 		//printf("Installing memory %u at 0x%lX from 0x%lX, %zu pages\n",
@@ -60,9 +64,13 @@ MemoryBank& MemoryBanks::get_available_bank()
 			}
 		}
 	}
-	auto& bank = this->allocate_new_bank(m_arena_next);
-	m_arena_next += bank.size();
-	return bank;
+	/* Allocate new memory bank if we are not maxing out memory */
+	if (m_num_pages < m_max_pages) {
+		auto& bank = this->allocate_new_bank(m_arena_next);
+		m_arena_next += bank.size();
+		return bank;
+	}
+	throw MemoryException("Out of memory", m_num_pages, m_max_pages);
 }
 void MemoryBanks::reset()
 {
@@ -84,6 +92,7 @@ void MemoryBanks::reset()
 		}
 		m_idx = m_idx_begin + m_mem.size();
 	}
+	m_num_pages = 0;
 	m_search = 0;
 }
 

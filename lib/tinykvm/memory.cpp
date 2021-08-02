@@ -14,18 +14,17 @@
 
 namespace tinykvm {
 
-vMemory::vMemory(Machine& m, uint64_t ph, uint64_t sf, char* p, size_t s, bool own)
+vMemory::vMemory(Machine& m, const MachineOptions& options,
+	uint64_t ph, uint64_t sf, char* p, size_t s, bool own)
 	: machine(m), physbase(ph), safebase(sf),
 	  ptr(p), size(s), owned(own),
-	  banks(m)
+	  banks(m, options)
 {
 	this->page_tables = PT_ADDR;
 }
 vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other)
-	: vMemory{m, other.physbase, other.safebase, other.ptr, other.size, false}
+	: vMemory{m, options, other.physbase, other.safebase, other.ptr, other.size, false}
 {
-	banks.page_allocator = std::move(options.page_allocator);
-	banks.page_deallocator = std::move(options.page_deallocator);
 }
 
 void vMemory::reset()
@@ -100,7 +99,8 @@ uint64_t vMemory::arena_transform(uint64_t addr) const noexcept {
 }
 
 
-vMemory vMemory::New(Machine& m, uint64_t phys, uint64_t safe, size_t size)
+vMemory vMemory::New(Machine& m, const MachineOptions& options,
+	uint64_t phys, uint64_t safe, size_t size)
 {
 #if 0
 	// open a temporary file with owner privs
@@ -119,7 +119,7 @@ vMemory vMemory::New(Machine& m, uint64_t phys, uint64_t safe, size_t size)
 		throw MemoryException("Failed to allocate guest memory", 0, size);
 	}
 	madvise(ptr, size, MADV_MERGEABLE);
-	return vMemory(m, phys, safe, ptr, size);
+	return vMemory(m, options, phys, safe, ptr, size);
 }
 
 MemRange MemRange::New(
