@@ -203,7 +203,7 @@ void Machine::relocate_section(const char* section_name, const char* sym_section
 				printf("Relocating rela %zu with sym idx %u where 0x%lX -> 0x%lX\n",
 						i, symidx, rela_addr[i].r_offset, sym->st_value);
 			}
-			//*(address_t*) entry = (address_t) (uintptr_t) final;
+			// *(address_t*) entry = (address_t) (uintptr_t) final;
 			*(address_t*) entry = interrupt_header().vm64_gettimeofday;
 			*/
 		}

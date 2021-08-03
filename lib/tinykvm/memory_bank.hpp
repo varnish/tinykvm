@@ -1,6 +1,6 @@
 #pragma once
 #include <functional>
-#include <deque>
+#include <vector>
 #include "common.hpp"
 #include "virtual_mem.hpp"
 
@@ -40,8 +40,6 @@ struct MemoryBank {
 };
 
 struct MemoryBanks {
-	static constexpr unsigned N_PAGES = 16;
-
 	MemoryBanks(Machine&, const MachineOptions&);
 
 	MemoryBank& get_available_bank();
@@ -56,14 +54,14 @@ private:
 	MemoryBank& allocate_new_bank(uint64_t addr);
 	char* try_alloc(size_t N);
 
-	std::deque<MemoryBank> m_mem;
+	std::vector<MemoryBank> m_mem;
 	Machine& m_machine;
 	const uint64_t m_arena_begin;
 	uint64_t m_arena_next;
 	const uint16_t m_idx_begin;
 	uint16_t m_idx;
-	uint32_t m_num_pages = 0;
 	uint16_t m_search = 0;
+	uint32_t m_num_pages = 0;
 	/* Max number of pages in all the banks */
 	uint32_t m_max_pages;
 
