@@ -3,8 +3,8 @@
 #include "forward.hpp"
 #include "memory.hpp"
 #include "memory_bank.hpp"
-#include "threads.hpp"
 #include <array>
+#include <memory>
 #include <vector>
 
 namespace tinykvm {
@@ -87,8 +87,8 @@ struct Machine
 
 	uint64_t address_of(const char*) const;
 
-	const auto& threads() const { return *m_mt; }
-	auto& threads() { return *m_mt; }
+	const struct MultiThreading& threads() const { return *m_mt; }
+	struct MultiThreading& threads() { return *m_mt; }
 	static void setup_multithreading();
 
 	const auto& mmap() const { return m_mm; }
@@ -150,7 +150,7 @@ private:
 	vMemory memory;  // guest memory
 
 	uint64_t m_mm = 0;
-	std::unique_ptr<MultiThreading> m_mt = nullptr;
+	std::unique_ptr<MultiThreading> m_mt;
 
 	static int create_kvm_vm();
 	static int kvm_fd;

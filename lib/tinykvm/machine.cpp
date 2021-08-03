@@ -2,6 +2,7 @@
 
 #include "kernel/amd64.hpp"
 #include "kernel/vdso.hpp"
+#include "threads.hpp"
 #include <cassert>
 #include <cstring>
 #include <fcntl.h>
