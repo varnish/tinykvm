@@ -138,7 +138,7 @@ std::string_view Machine::io_data() const
 	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
 }
 
-void Machine::setup_long_mode(const Machine* other)
+void Machine::setup_long_mode(const Machine* other, bool full_reset)
 {
 	if (other == nullptr)
 	{
@@ -186,6 +186,10 @@ void Machine::setup_long_mode(const Machine* other)
 			(void) entry;
 		});
 #endif
+	}
+
+	if (LIKELY(!full_reset)) {
+		return;
 	}
 
 	/* Extended control registers */

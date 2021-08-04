@@ -38,7 +38,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->elf_loader(options);
 
 	this->vcpu.init(*this);
-	this->setup_long_mode(nullptr);
+	this->setup_long_mode(nullptr, true);
 	struct tinykvm_x86regs regs {};
 	/* Store the registers, so that Machine is ready to go */
 	this->setup_registers(regs);
@@ -66,14 +66,9 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	/* Reuse pre-CoWed pagetable from the master machine */
 	this->install_memory(0, memory.vmem());
 
-	/* Clone PML4 page */
-	auto pml4 = memory.new_page();
-	std::memcpy(pml4.pmem, memory.page_at(memory.page_tables), PAGE_SIZE);
-	memory.page_tables = pml4.addr;
-
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(*this);
-	this->setup_long_mode(&other);
+	this->setup_long_mode(&other, true);
 }
 
 __attribute__ ((cold))
@@ -95,7 +90,7 @@ void Machine::reset_to(Machine& other)
 
 	this->m_mm = other.m_mm;
 
-	this->setup_long_mode(&other);
+	this->setup_long_mode(&other, false);
 
 	this->set_registers(other.registers());
 }
