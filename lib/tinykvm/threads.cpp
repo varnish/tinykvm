@@ -22,6 +22,13 @@ Thread::Thread(MultiThreading& mtr, int t, uint64_t tls, uint64_t stack)
 	this->stored_regs.rsp = stack;
 }
 
+Thread::Thread(MultiThreading& mtr, const Thread& other)
+	: mt(mtr), tid(other.tid),
+	  stored_regs{other.stored_regs},
+	  fsbase{other.fsbase},
+	  clear_tid{other.clear_tid}
+{}
+
 void Thread::suspend(uint64_t return_value)
 {
 	// GPRs
@@ -74,9 +81,29 @@ void Thread::exit()
 }
 
 MultiThreading::MultiThreading(Machine& m)
-	: machine(m), main_thread(*this, 0, 0x0, 0x0)
+	: machine(m)
 {
-	m_current = &main_thread;
+	auto it = m_threads.try_emplace(0, *this, 0, 0x0, 0x0);
+	m_current = &it.first->second;
+}
+
+void MultiThreading::reset_to(const MultiThreading& other)
+{
+	/* Copy each thread, new MT ref */
+	for (const auto& it : other.m_threads) {
+		const int tid = it.first;
+		const auto& thread = it.second;
+		m_threads.try_emplace(tid, *this, thread);
+	}
+	/* Copy each suspended by pointer lookup */
+	m_suspended.reserve(other.m_suspended.size());
+	for (const auto* t : other.m_suspended) {
+		m_suspended.push_back(get_thread(t->tid));
+	}
+	/* Copy current thread */
+	m_current = get_thread(other.m_current->tid);
+
+	thread_counter = other.thread_counter;
 }
 
 Thread& MultiThreading::get_thread()

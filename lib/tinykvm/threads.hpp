@@ -21,6 +21,7 @@ struct Thread {
 	void exit();
 
 	Thread(MultiThreading&, int tid, uint64_t tls, uint64_t stack);
+	Thread(MultiThreading&, const Thread& other);
 };
 
 struct MultiThreading {
@@ -33,13 +34,14 @@ struct MultiThreading {
 	void erase_thread(int tid);
 	void wakeup_next();
 
+	void reset_to(const MultiThreading& other);
+
 	MultiThreading(Machine&);
 	Machine& machine;
 private:
 	std::map<int, Thread> m_threads;
 	std::vector<Thread*> m_suspended;
 	Thread* m_current = nullptr;
-	Thread main_thread;
 	int thread_counter = 0;
 	friend struct Thread;
 };

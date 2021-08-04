@@ -38,7 +38,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->elf_loader(options);
 
 	this->vcpu.init(*this);
-	this->setup_long_mode(nullptr, true);
+	this->setup_long_mode(nullptr);
 	struct tinykvm_x86regs regs {};
 	/* Store the registers, so that Machine is ready to go */
 	this->setup_registers(regs);
@@ -51,10 +51,10 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_stopped {true},
 	  m_forked  {true},
 	  m_binary {other.m_binary},
+	  memory   {*this, options, other.memory},
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address {other.m_heap_address},
 	  m_start_address {other.m_start_address},
-	  memory   {*this, options, other.memory},
 	  m_mm     {other.m_mm},
 	  m_mt     {new MultiThreading{*other.m_mt}}
 {
@@ -68,7 +68,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(*this);
-	this->setup_long_mode(&other, true);
+	this->setup_long_mode(&other);
 }
 
 __attribute__ ((cold))
@@ -89,8 +89,9 @@ void Machine::reset_to(Machine& other)
 	memory.fork_reset();
 
 	this->m_mm = other.m_mm;
+	this->m_mt->reset_to(*other.m_mt);
 
-	this->setup_long_mode(&other, false);
+	this->setup_long_mode(&other);
 
 	this->set_registers(other.registers());
 }

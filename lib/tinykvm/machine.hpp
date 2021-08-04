@@ -118,6 +118,7 @@ private:
 
 		int fd = 0;
 		struct kvm_run *kvm_run = nullptr;
+		struct kvm_sregs* cached_sregs = nullptr;
 	};
 	void setup_registers(tinykvm_x86regs&);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
@@ -125,7 +126,7 @@ private:
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
-	void setup_long_mode(const Machine* other, bool full);
+	void setup_long_mode(const Machine* other);
 	void handle_exception(uint8_t intr);
 	long run_once();
 
@@ -136,21 +137,22 @@ private:
 	bool  m_forked = false;
 	void* m_userdata = nullptr;
 
+	const std::string_view m_binary;
+
+	vMemory memory;  // guest memory
+
+	uint64_t m_stack_address;
+	uint64_t m_heap_address;
+	uint64_t m_start_address;
+
+	uint64_t m_mm = 0;
+	std::unique_ptr<MultiThreading> m_mt;
+
 	static std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls;
 	static numbered_syscall_t m_unhandled_syscall;
 	static syscall_t          m_on_breakpoint;
 	static io_callback_t      m_on_input;
 	static io_callback_t      m_on_output;
-
-	const std::string_view m_binary;
-	uint64_t m_stack_address;
-	uint64_t m_heap_address;
-	uint64_t m_start_address;
-
-	vMemory memory;  // guest memory
-
-	uint64_t m_mm = 0;
-	std::unique_ptr<MultiThreading> m_mt;
 
 	static int create_kvm_vm();
 	static int kvm_fd;

@@ -5,6 +5,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include "kernel/amd64.hpp"
+//#include "kernel/lapic.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
 #include "kernel/tss.hpp"
@@ -82,6 +83,50 @@ void Machine::vCPU::init(Machine& machine)
 		master_xregs.xcrs[0].value |= 0x7; // FPU, SSE, YMM
 		master_xregs.nr_xcrs = 1;
 	}
+
+	/* Extended control registers */
+	if (ioctl(this->fd, KVM_SET_XCRS, &master_xregs) < 0) {
+		throw MachineException("KVM_SET_XCRS failed");
+	}
+
+	/* Enable SYSCALL/SYSRET instructions */
+	struct {
+		__u32 nmsrs; /* number of msrs in entries */
+		__u32 pad;
+
+		struct kvm_msr_entry entries[2];
+	} msrs;
+	msrs.nmsrs = 2;
+	msrs.entries[0].index = AMD64_MSR_STAR;
+	msrs.entries[1].index = AMD64_MSR_LSTAR;
+	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
+	msrs.entries[1].data  = interrupt_header().vm64_syscall;
+
+	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < 2) {
+		throw MachineException("KVM_SET_MSRS: failed to set STAR/LSTAR");
+	}
+
+	/* LAPIC
+	msrs.entries[0].index = AMD64_MSR_APICBASE;
+	msrs.entries[0].data  = 0xfee00000 | AMD64_MSR_XAPIC_ENABLE;
+	msrs.nmsrs = 1;
+
+	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 1) {
+		throw MachineException("KVM_SET_MSRS: failed to enable xAPIC");
+	}
+
+	//struct local_apic lapic {};
+	struct kvm_lapic_state lapic;
+	if (ioctl(this->vcpu.fd, KVM_GET_LAPIC, &lapic)) {
+		throw MachineException("KVM_GET_LAPIC: failed to get initial LAPIC");
+	}
+
+	//lapic.lvt_lint0.delivery_mode = AMD64_APIC_MODE_EXTINT;
+	//lapic.lvt_lint1.delivery_mode = AMD64_APIC_MODE_NMI;
+
+	if (ioctl(this->vcpu.fd, KVM_SET_LAPIC, &lapic)) {
+		throw MachineException("KVM_SET_LAPIC: failed to set initial LAPIC");
+	}*/
 }
 
 void Machine::vCPU::deinit()
@@ -92,6 +137,7 @@ void Machine::vCPU::deinit()
 	if (this->kvm_run != nullptr) {
 		munmap(this->kvm_run, vcpu_mmap_size);
 	}
+	delete cached_sregs;
 }
 
 TINYKVM_COLD()
@@ -138,7 +184,7 @@ std::string_view Machine::io_data() const
 	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
 }
 
-void Machine::setup_long_mode(const Machine* other, bool full_reset)
+void Machine::setup_long_mode(const Machine* other)
 {
 	if (other == nullptr)
 	{
@@ -167,8 +213,7 @@ void Machine::setup_long_mode(const Machine* other, bool full_reset)
 		memory.get_writable_page(IST_ADDR, true);
 
 		/* Inherit the special registers of the master machine */
-		struct kvm_sregs sregs;
-		other->vcpu.get_special_registers(sregs);
+		struct kvm_sregs sregs = *other->vcpu.cached_sregs;
 
 		/* Page table entry will be cloned at the start */
 		sregs.cr3 = memory.page_tables;
@@ -186,32 +231,6 @@ void Machine::setup_long_mode(const Machine* other, bool full_reset)
 			(void) entry;
 		});
 #endif
-	}
-
-	if (LIKELY(!full_reset)) {
-		return;
-	}
-
-	/* Extended control registers */
-	if (ioctl(this->vcpu.fd, KVM_SET_XCRS, &master_xregs) < 0) {
-		throw MachineException("KVM_SET_XCRS failed");
-	}
-
-	/* Enable SYSCALL/SYSRET instructions */
-	struct {
-		__u32 nmsrs; /* number of msrs in entries */
-		__u32 pad;
-
-		struct kvm_msr_entry entries[2];
-	} msrs;
-	msrs.nmsrs = 2;
-	msrs.entries[0].index = AMD64_MSR_STAR;
-	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
-	msrs.entries[1].index = AMD64_MSR_LSTAR;
-	msrs.entries[1].data  = interrupt_header().vm64_syscall;
-
-	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 2) {
-		throw MachineException("KVM_SET_MSRS: failed to set STAR/LSTAR");
 	}
 }
 
@@ -502,8 +521,12 @@ void Machine::prepare_copy_on_write()
 {
 	assert(this->m_prepped == false);
 	this->m_prepped = true;
+	/* Make each writable page read-only, causing page fault */
 	foreach_page_makecow(this->memory);
 	//print_pagetables(this->memory);
+	/* Cache all the special registers, which we will use on forks */
+	vcpu.cached_sregs = new kvm_sregs {};
+	get_special_registers(*vcpu.cached_sregs);
 }
 
 Machine::address_t Machine::entry_address() const noexcept {
