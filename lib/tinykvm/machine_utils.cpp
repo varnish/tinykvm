@@ -73,4 +73,27 @@ void Machine::unsafe_copy_from_guest(void* vdst, address_t addr, size_t len)
 	std::memcpy(vdst, src, len);
 }
 
+size_t Machine::gather_buffers_from_range(
+	size_t cnt, Buffer buffers[cnt], address_t addr, size_t len)
+{
+	size_t index = 0;
+	while (len != 0 && index < cnt)
+	{
+		const size_t offset = addr & (vMemory::PAGE_SIZE-1);
+		const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
+		auto* page = memory.get_userpage_at(addr & ~(uint64_t) 0xFFF);
+
+		buffers[index].ptr = (const char*) &page[offset];
+		buffers[index].len = size;
+		index ++;
+
+		addr += size;
+		len -= size;
+	}
+	if (UNLIKELY(len != 0)) {
+		throw MemoryException("Out of buffers", index, cnt);
+	}
+	return index;
+}
+
 } // tinykvm
