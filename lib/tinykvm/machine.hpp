@@ -87,8 +87,9 @@ struct Machine
 
 	uint64_t address_of(const char*) const;
 
-	const struct MultiThreading& threads() const { return *m_mt; }
-	struct MultiThreading& threads() { return *m_mt; }
+	bool has_threads() const noexcept { return m_mt != nullptr; }
+	const struct MultiThreading& threads() const;
+	struct MultiThreading& threads();
 	static void setup_multithreading();
 
 	const auto& mmap() const { return m_mm; }
@@ -146,7 +147,7 @@ private:
 	uint64_t m_start_address;
 
 	uint64_t m_mm = 0;
-	std::unique_ptr<MultiThreading> m_mt;
+	mutable std::unique_ptr<MultiThreading> m_mt;
 
 	static std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls;
 	static numbered_syscall_t m_unhandled_syscall;

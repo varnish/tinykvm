@@ -26,7 +26,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_forked {false},
 	  m_binary {binary},
 	  memory { vMemory::New(*this, options, 0x0, 0x100000, options.max_mem) },
-	  m_mt   {new MultiThreading{*this}}
+	  m_mt   {nullptr} /* Explicitly */
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 
@@ -56,7 +56,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_heap_address {other.m_heap_address},
 	  m_start_address {other.m_start_address},
 	  m_mm     {other.m_mm},
-	  m_mt     {new MultiThreading{*other.m_mt}}
+	  m_mt     {nullptr}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 	assert(other.m_prepped == true && "Call Machine::prepare_copy_on_write() first");
@@ -69,6 +69,12 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(*this);
 	this->setup_long_mode(&other);
+
+	/* We have to make a copy here, to make sure the fork knows
+	   about the multi-threading state. */
+	if (other.m_mt != nullptr) {
+		m_mt.reset(new MultiThreading{*other.m_mt});
+	}
 }
 
 __attribute__ ((cold))
@@ -89,7 +95,12 @@ void Machine::reset_to(Machine& other)
 	memory.fork_reset();
 
 	this->m_mm = other.m_mm;
-	this->m_mt->reset_to(*other.m_mt);
+
+	if (other.has_threads()) {
+		this->m_mt->reset_to(*other.m_mt);
+	} else {
+		m_mt = nullptr;
+	}
 
 	this->setup_long_mode(&other);
 

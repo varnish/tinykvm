@@ -171,6 +171,18 @@ void MultiThreading::wakeup_next()
 	next->resume();
 }
 
+const struct MultiThreading& Machine::threads() const {
+	if (UNLIKELY(!m_mt)) {
+		m_mt.reset(new MultiThreading(*const_cast<Machine*>(this)));
+	}
+	return *m_mt;
+}
+struct MultiThreading& Machine::threads() {
+	if (UNLIKELY(!m_mt)) {
+		m_mt.reset(new MultiThreading(*this));
+	}
+	return *m_mt;
+}
 
 void Machine::setup_multithreading()
 {
@@ -204,14 +216,16 @@ void Machine::setup_multithreading()
 		});
 	Machine::install_syscall_handler( // exit
 		60, [] (auto& machine) {
-			auto regs = machine.registers();
-			const uint32_t status = regs.rdi;
-			auto& thread = machine.threads().get_thread();
-			THPRINT(">>> Exit on tid=%d, exit code = %d\n",
+			if (machine.has_threads()) {
+				auto regs = machine.registers();
+				const uint32_t status = regs.rdi;
+				auto& thread = machine.threads().get_thread();
+				THPRINT(">>> Exit on tid=%d, exit code = %d\n",
 					thread.tid, (int) status);
-			if (thread.tid != 0) {
-				thread.exit();
-				return;
+				if (thread.tid != 0) {
+					thread.exit();
+					return;
+				}
 			}
 			machine.stop();
 		});
@@ -221,8 +235,12 @@ void Machine::setup_multithreading()
 		186, [] (auto& machine) {
 			/* SYS gettid */
 			auto regs = machine.registers();
-			regs.rax = machine.threads().get_thread().tid;
-			THPRINT("gettid() = %lld\n", regs.rax);
+			if (machine.has_threads()) {
+				regs.rax = machine.threads().get_thread().tid;
+				THPRINT("gettid() = %lld\n", regs.rax);
+			} else {
+				regs.rax = 0; /* Main thread */
+			}
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -271,16 +289,12 @@ void Machine::setup_multithreading()
 		});
 	Machine::install_syscall_handler(
 		234, [] (auto& machine) { // TGKILL
-			fprintf(stderr, "ERROR: tgkill called from tid=%d\n",
-				machine.threads().get_thread().tid);
-			machine.stop();
-		});
-	Machine::install_syscall_handler(
-		273, [] (auto& machine) {
-			/* SYS set_robust_list */
-			auto regs = machine.registers();
-			regs.rax = -ENOSYS;
-			machine.set_registers(regs);
+			int tid = 0;
+			if (machine.has_threads()) {
+				tid = machine.threads().get_thread().tid;
+			}
+			fprintf(stderr, "ERROR: tgkill called from tid=%d\n", tid);
+			throw MachineException("tgkill called");
 		});
 } // setup_multithreading
 

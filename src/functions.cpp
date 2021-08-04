@@ -319,6 +319,13 @@ void setup_kvm_system_calls()
 			machine.stop();
 		});
 	Machine::install_syscall_handler(
+		273, [] (auto& machine) {
+			/* SYS set_robust_list */
+			auto regs = machine.registers();
+			regs.rax = -ENOSYS;
+			machine.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		302, [] (auto& machine) { // prlimit64
 			auto regs = machine.registers();
 			regs.rax = -ENOSYS;
