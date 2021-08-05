@@ -14,6 +14,7 @@ set (SOURCES
 	tinykvm/machine_utils.cpp
 	tinykvm/memory.cpp
 	tinykvm/memory_bank.cpp
+	tinykvm/page_streaming.cpp
 	tinykvm/rsp_client.cpp
 	tinykvm/threads.cpp
 	tinykvm/vcpu.cpp

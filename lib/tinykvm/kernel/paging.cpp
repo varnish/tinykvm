@@ -3,6 +3,7 @@
 #include "amd64.hpp"
 #include "memory_layout.hpp"
 #include "vdso.hpp"
+#include "../page_streaming.hpp"
 #include "../util/elf.h"
 #include <cassert>
 #include <cstring>

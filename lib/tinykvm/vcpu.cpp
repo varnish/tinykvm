@@ -1,9 +1,11 @@
 #include "machine.hpp"
+
 #include <cassert>
 #include <cstring>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include "page_streaming.hpp"
 #include "kernel/amd64.hpp"
 //#include "kernel/lapic.hpp"
 #include "kernel/idt.hpp"
