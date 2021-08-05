@@ -206,7 +206,7 @@ void Machine::setup_long_mode(const Machine* other)
 	{
 		/* Clone master PML4 page */
 		auto pml4 = memory.new_page();
-		std::memcpy(pml4.pmem, other->memory.page_at(other->memory.page_tables), PAGE_SIZE);
+		tinykvm::page_duplicate(pml4.pmem, other->memory.page_at(other->memory.page_tables));
 		memory.page_tables = pml4.addr;
 
 		/* Zero a new page for IST stack */

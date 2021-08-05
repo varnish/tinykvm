@@ -139,7 +139,6 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	{
 		if (hdr->p_type == PT_LOAD)
 		{
-			const auto*  src = binary.data() + hdr->p_offset;
 			const size_t len = hdr->p_filesz;
 			if (!memory.safely_within(hdr->p_vaddr, len)) {
 				throw std::runtime_error("Unsafe PT_LOAD segment or executable too big");
@@ -366,22 +365,22 @@ inline bool is_copy_on_write(uint64_t entry) {
 	   and it's not already writable. */
 	return (entry & (PDE64_CLONEABLE | PDE64_RW)) == PDE64_CLONEABLE;
 }
-inline void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
+static void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
 	/* Allocate new page */
 	auto page = memory.new_page();
 	assert((page.addr & 0x8000000000000FFF) == 0x0);
 	/* Copy all entries from old page */
-	std::memcpy(page.pmem, data, PAGE_SIZE);
+	tinykvm::page_duplicate(page.pmem, data);
 	/* Set new entry, copy flags and set as cloned */
 	entry = page.addr | (entry & PDE64_CLONED_MASK) | flags;
 	data = page.pmem;
 }
-inline void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
+static void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
 	/* Allocate new page */
 	auto page = memory.new_page();
 	assert((page.addr & 0x8000000000000FFF) == 0x0);
 	/* Zero all entries from old page */
-	std::memset(page.pmem, 0, PAGE_SIZE);
+	page_memzero(page.pmem);
 	/* Set new entry, copy flags and set as cloned */
 	entry = page.addr | (entry & PDE64_CLONED_MASK) | flags;
 	data = page.pmem;
