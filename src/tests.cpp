@@ -4,7 +4,8 @@
 #include "assert.hpp"
 
 #include <tinykvm/rsp_client.hpp>
-#define GUEST_MEMORY 0x40000000  /* 1024MB memory */
+#define GUEST_MEMORY  0x40000000  /* 1024MB memory */
+#define GUEST_COW_MEM 65536  /* 16KB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
 static void test_master_vm(tinykvm::Machine&);
@@ -34,6 +35,7 @@ int main(int argc, char** argv)
 	/* Setup */
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
+		.max_cow_mem = GUEST_COW_MEM,
 		.verbose_loader = false
 	};
 	tinykvm::Machine master_vm {binary, options};
@@ -136,6 +138,7 @@ void test_forking(tinykvm::Machine& master_vm)
 	/* Create VM fork */
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
+		.max_cow_mem = GUEST_COW_MEM,
 		.verbose_loader = false
 	};
 	tinykvm::Machine vm {master_vm, options};
@@ -194,6 +197,7 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 {
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
+		.max_cow_mem = GUEST_COW_MEM,
 		.verbose_loader = false
 	};
 	tinykvm::Machine vm {master_vm, options};

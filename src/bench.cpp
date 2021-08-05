@@ -7,7 +7,8 @@
 
 #define NUM_GUESTS   300
 #define NUM_RESETS   300
-#define GUEST_MEMORY 0x40000000  /* 1024MB memory */
+#define GUEST_MEMORY  0x40000000  /* 1024MB memory */
+#define GUEST_COW_MEM 65536  /* 64KB memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
 inline timespec time_now();
@@ -27,14 +28,12 @@ int main(int argc, char** argv)
 	extern void setup_kvm_system_calls();
 	setup_kvm_system_calls();
 
-	printf("Machine size: %zu bytes\n", sizeof(tinykvm::Machine));
-	printf("Threads size: %zu bytes\n", sizeof(tinykvm::MultiThreading));
-
 	/* Warmup */
 	uint64_t vmcall_address = 0x0;
 	{
 		tinykvm::MachineOptions options {
 			.max_mem = GUEST_MEMORY,
+			.max_cow_mem = GUEST_COW_MEM,
 			.verbose_loader = false
 		};
 		tinykvm::Machine master_vm {binary, options};
@@ -98,6 +97,7 @@ int main(int argc, char** argv)
 	{
 		tinykvm::MachineOptions options {
 			.max_mem = GUEST_MEMORY,
+			.max_cow_mem = GUEST_COW_MEM,
 			.verbose_loader = false
 		};
 		vms.push_back(new tinykvm::Machine {binary, options});
@@ -150,6 +150,7 @@ int main(int argc, char** argv)
 
 	tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
+		.max_cow_mem = GUEST_COW_MEM,
 		.verbose_loader = false
 	};
 	tinykvm::Machine master_vm {binary, options};
