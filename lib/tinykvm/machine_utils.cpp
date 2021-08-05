@@ -102,4 +102,48 @@ size_t Machine::gather_buffers_from_range(
 	return index;
 }
 
+void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size_t len)
+{
+	/* Over-estimate the number of buffers needed */
+	const size_t nbuffers = 2 + (len / vMemory::PAGE_SIZE);
+	Buffer buffers[nbuffers];
+	const size_t count =
+		src.gather_buffers_from_range(nbuffers, buffers, sa, len);
+	/* Forked version uses CoW pages */
+	if (m_forked)
+	{
+		/* Copy buffers one by one to this Machine */
+		size_t index = 0;
+		while (index < count)
+		{
+			auto& buf = buffers[index];
+			const size_t offset = addr & (vMemory::PAGE_SIZE-1);
+			const size_t size = std::min(vMemory::PAGE_SIZE - offset, buf.len);
+			/* NOTE: We could use zeroes if remaining is >= PAGE_SIZE */
+			auto* page = memory.get_writable_page(addr & ~(uint64_t) 0xFFF, false);
+			std::copy(buf.ptr, buf.ptr + size, &page[offset]);
+
+			if (size == buf.len) {
+				index += 1;
+			} else {
+				buf.ptr += size;
+				buf.len -= size;
+			}
+			addr += size;
+		}
+		return;
+	}
+	/* Copy buffers one by one to sequential memory */
+	size_t index = 0;
+	while (index < count)
+	{
+		const auto& buf = buffers[index++];
+
+		auto* dst = memory.safely_at(addr, buf.len);
+		std::memcpy(dst, buf.ptr, buf.len);
+
+		addr += buf.len;
+	}
+}
+
 } // tinykvm
