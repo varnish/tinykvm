@@ -31,14 +31,14 @@ inline void Machine::set_special_registers(const struct kvm_sregs& sregs) {
 
 
 template <typename... Args> inline constexpr
-tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
+tinykvm_x86regs Machine::setup_call(uint64_t addr, uint64_t rsp, Args&&... args)
 {
 	struct tinykvm_x86regs regs {};
 	/* Set IOPL=3 to allow I/O instructions */
 	regs.rflags = 2 | (3 << 12);
 	regs.rax = addr;
 	regs.rip = this->entry_address();
-	regs.rsp = this->stack_address();
+	regs.rsp = rsp;
 	[[maybe_unused]] unsigned iargs = 0;
 	([&] {
 		auto& reg = [iargs, &regs] () mutable -> unsigned long long& {
@@ -82,7 +82,7 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, Args&&... args)
 template <typename... Args> inline constexpr
 void Machine::vmcall(uint64_t addr, Args&&... args)
 {
-	auto regs = this->setup_call(addr, std::forward<Args> (args)...);
+	auto regs = this->setup_call(addr, this->stack_address(), std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
 	this->run();
 }
