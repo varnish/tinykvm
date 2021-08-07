@@ -3,7 +3,6 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
-//#define ENABLE_GUEST_STDOUT
 //#define VERBOSE_GUEST_EXITS
 //#define VERBOSE_MMAP
 //#define VERBOSE_SYSCALLS
@@ -57,9 +56,7 @@ void setup_kvm_system_calls()
 			else {
 				char buffer[bytes];
 				machine.copy_from_guest(buffer, regs.rsi, bytes);
-#ifdef ENABLE_GUEST_STDOUT
-				fwrite(buffer, bytes, 1, stdout);
-#endif
+				machine.print(buffer, bytes);
 				regs.rax = bytes;
 			}
 			machine.set_registers(regs);
@@ -203,9 +200,6 @@ void setup_kvm_system_calls()
 			/* writev: Stdout, Stderr */
 			else if (fd == 1 || fd == 2)
 			{
-#ifdef ENABLE_GUEST_STDOUT
-				printf(">>> Guest says: ");
-#endif
 				size_t written = 0;
 				for (size_t i = 0; i < count; i++) {
 					g_iovec vec;
@@ -216,9 +210,7 @@ void setup_kvm_system_calls()
 					const size_t bytes = vec.iov_len;
 					char buffer[bytes];
 					machine.copy_from_guest(buffer, vec.iov_base, bytes);
-#ifdef ENABLE_GUEST_STDOUT
-					printf("%.*s", (int) bytes, buffer);
-#endif
+					machine.print(buffer, bytes);
 					written += bytes;
 				}
 				regs.rax = written;

@@ -175,6 +175,18 @@ void Machine::setup_registers(tinykvm_x86regs& regs)
 	regs.rsp = this->stack_address();
 }
 
+long Machine::return_value() const
+{
+	/* TODO: Return vcpu.kvm_run->s.regs.regs.rdi */
+	auto regs = registers();
+	return regs.rdi;
+}
+
+void Machine::print(const char* buffer, size_t len)
+{
+	m_printer(buffer, len);
+}
+
 __attribute__ ((cold))
 int kvm_open()
 {

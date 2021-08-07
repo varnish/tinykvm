@@ -103,7 +103,8 @@ struct Machine
 	auto& mmap() { return m_mm; }
 
 	void print_registers(printer_func = m_default_printer);
-	void set_printer(printer_func func = m_default_printer) { m_exception_printer = std::move(func); }
+	void set_printer(printer_func pf = m_default_printer) { m_printer = std::move(pf); }
+	void print(const char*, size_t);
 
 	void install_memory(uint32_t idx, const VirtualMem&);
 	void delete_memory(uint32_t idx);
@@ -121,7 +122,6 @@ private:
 	struct vCPU {
 		void init(Machine&);
 		void deinit();
-		void print_address_info(uint64_t addr);
 		tinykvm_x86regs registers() const;
 		void assign_registers(const struct tinykvm_x86regs&);
 		void get_special_registers(struct kvm_sregs&) const;
@@ -159,8 +159,8 @@ private:
 	uint64_t m_mm = 0;
 	mutable std::unique_ptr<MultiThreading> m_mt;
 
-	/* How to report exceptions, register dumps etc. */
-	printer_func m_exception_printer = m_default_printer;
+	/* How to print exceptions, register dumps etc. */
+	printer_func m_printer = m_default_printer;
 
 	static std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls;
 	static numbered_syscall_t m_unhandled_syscall;

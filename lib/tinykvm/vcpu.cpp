@@ -142,17 +142,6 @@ void Machine::vCPU::deinit()
 	delete cached_sregs;
 }
 
-TINYKVM_COLD()
-void Machine::vCPU::print_address_info(uint64_t addr)
-{
-	struct kvm_translation tr;
-	tr.linear_address = addr;
-	ioctl(this->fd, KVM_TRANSLATE, &tr);
-	printf("0x%llX translates to 0x%llX\n",
-		tr.linear_address, tr.physical_address);
-	printf("* %s\n", tr.valid ? "Valid" : "Invalid");
-}
-
 tinykvm_x86regs Machine::vCPU::registers() const
 {
 	struct tinykvm_x86regs regs;
@@ -222,8 +211,7 @@ void Machine::setup_long_mode(const Machine* other)
 
 		vcpu.set_special_registers(sregs);
 		//print_pagetables(this->memory);
-
-#ifndef NDEBUG
+#if 0
 		/* It shouldn't be identity-mapped anymore */
 		assert(translate(IST_ADDR) != IST_ADDR);
 		//printf("Translate 0x%lX => 0x%lX\n", IST_ADDR, translate(IST_ADDR));
@@ -397,7 +385,7 @@ void Machine::handle_exception(uint8_t intr, printer_func printer)
 	} catch (...) {}
 }
 
-void Machine::run(unsigned timeout)
+void Machine::run(unsigned fixme_timeout)
 {
 	/* XXX: Remember to set a timeout. */
 	this->m_stopped = false;
@@ -413,7 +401,7 @@ long Machine::run_once()
 
 	switch (vcpu.kvm_run->exit_reason) {
 	case KVM_EXIT_HLT:
-		throw MachineException("Shutdown! HLT?", 5);
+		throw MachineException("Halt from kernel space", 5);
 
 	case KVM_EXIT_DEBUG:
 		return KVM_EXIT_DEBUG;
@@ -474,7 +462,7 @@ long Machine::run_once()
 				return KVM_EXIT_IO;
 			}
 			/* CPU Exception */
-			this->handle_exception(intr, m_exception_printer);
+			this->handle_exception(intr, m_printer);
 			throw MachineException(amd64_exception_name(intr), intr);
 		} else {
 			/* Custom Output handler */
@@ -489,31 +477,21 @@ long Machine::run_once()
 		if (this->m_stopped) return 0;
 		return KVM_EXIT_IO;
 
-	case KVM_EXIT_MMIO:
-		/*if (mmio_scall.within(vcpu.kvm_run->mmio.phys_addr, 1)) {
-			unsigned scall = vcpu.kvm_run->mmio.phys_addr - mmio_scall.begin();
-			system_call(scall);
-			return (this->m_stopped) ? 0 : KVM_EXIT_MMIO;
-		}*/
-		printf("Unknown MMIO write at 0x%llX\n",
-			vcpu.kvm_run->mmio.phys_addr);
-		return KVM_EXIT_MMIO;
-
+	case KVM_EXIT_MMIO: {
+			char buffer[256];
+			PRINTER(m_printer, buffer,
+				"Unknown MMIO write at 0x%llX\n",
+				vcpu.kvm_run->mmio.phys_addr);
+			throw MachineException("Invalid MMIO write");
+		}
 	case KVM_EXIT_INTERNAL_ERROR:
 		throw MachineException("KVM internal error");
-
-	default:
-		fprintf(stderr,	"Unexpected exit reason %d\n", vcpu.kvm_run->exit_reason);
-		throw MachineException("Unexpected KVM exit reason",
-			vcpu.kvm_run->exit_reason);
 	}
-}
-
-long Machine::return_value() const
-{
-	/* TODO: Return vcpu.kvm_run->s.regs.regs.rdi */
-	auto regs = registers();
-	return regs.rdi;
+	char buffer[256];
+	PRINTER(m_printer, buffer,
+		"Unexpected exit reason %d\n", vcpu.kvm_run->exit_reason);
+	throw MachineException("Unexpected KVM exit reason",
+		vcpu.kvm_run->exit_reason);
 }
 
 TINYKVM_COLD()
