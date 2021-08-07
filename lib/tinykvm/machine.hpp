@@ -15,6 +15,7 @@ struct Machine
 	using syscall_t = void(*)(Machine&);
 	using numbered_syscall_t = void(*)(Machine&, unsigned);
 	using io_callback_t = void(*)(Machine&, unsigned, unsigned);
+	using printer_func = std::function<void(const char*, size_t)>;
 
 	/* Setup Linux env and run through main */
 	void setup_argv(const std::vector<std::string>& args,
@@ -64,7 +65,6 @@ struct Machine
 	void set_special_registers(const struct kvm_sregs&);
 	std::pair<__u64, __u64> get_fsgs() const;
 	void set_tls_base(__u64 baseaddr);
-	void print_registers();
 
 	static void install_syscall_handler(unsigned idx, syscall_t h) { m_syscalls.at(idx) = h; }
 	static void install_unhandled_syscall_handler(numbered_syscall_t h) { m_unhandled_syscall = h; }
@@ -102,6 +102,9 @@ struct Machine
 	const auto& mmap() const { return m_mm; }
 	auto& mmap() { return m_mm; }
 
+	void print_registers(printer_func = m_default_printer);
+	void set_printer(printer_func func) { m_exception_printer = std::move(func); }
+
 	void install_memory(uint32_t idx, const VirtualMem&);
 	void delete_memory(uint32_t idx);
 
@@ -135,7 +138,7 @@ private:
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const Machine* other);
-	void handle_exception(uint8_t intr);
+	void handle_exception(uint8_t intr, printer_func);
 	long run_once();
 
 	vCPU  vcpu;
@@ -156,11 +159,15 @@ private:
 	uint64_t m_mm = 0;
 	mutable std::unique_ptr<MultiThreading> m_mt;
 
+	/* How to report exceptions, register dumps etc. */
+	printer_func m_exception_printer = m_default_printer;
+
 	static std::array<syscall_t, TINYKVM_MAX_SYSCALLS> m_syscalls;
 	static numbered_syscall_t m_unhandled_syscall;
 	static syscall_t          m_on_breakpoint;
 	static io_callback_t      m_on_input;
 	static io_callback_t      m_on_output;
+	static printer_func       m_default_printer;
 
 	static int create_kvm_vm();
 	static int kvm_fd;

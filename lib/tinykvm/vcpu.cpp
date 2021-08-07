@@ -219,7 +219,6 @@ void Machine::setup_long_mode(const Machine* other)
 
 		/* Page table entry will be cloned at the start */
 		sregs.cr3 = memory.page_tables;
-		sregs.cr0 &= ~CR0_WP;
 
 		vcpu.set_special_registers(sregs);
 		//print_pagetables(this->memory);
@@ -253,30 +252,44 @@ void Machine::set_tls_base(__u64 baseaddr)
 	vcpu.set_special_registers(sregs);
 }
 
+#define PRINTER(printer, buffer, fmt, ...) \
+	printer(buffer, \
+		snprintf(buffer, sizeof(buffer), \
+		fmt, ##__VA_ARGS__));
+
 TINYKVM_COLD()
-void Machine::print_registers()
+void Machine::print_registers(std::function<void(const char*, size_t)> printer)
 {
 	struct kvm_sregs sregs;
 	vcpu.get_special_registers(sregs);
 
-	printf("CR0: 0x%llX  CR3: 0x%llX\n", sregs.cr0, sregs.cr3);
-	printf("CR2: 0x%llX  CR4: 0x%llX\n", sregs.cr2, sregs.cr4);
+	char buffer[1024];
+	PRINTER(printer, buffer,
+		"CR0: 0x%llX  CR3: 0x%llX\n", sregs.cr0, sregs.cr3);
+	PRINTER(printer, buffer,
+		"CR2: 0x%llX  CR4: 0x%llX\n", sregs.cr2, sregs.cr4);
 
 	auto regs = registers();
-	printf("RAX: 0x%llX  RBX: 0x%llX  RCX: 0x%llX\n", regs.rax, regs.rbx, regs.rcx);
-	printf("RDX: 0x%llX  RSI: 0x%llX  RDI: 0x%llX\n", regs.rdx, regs.rsi, regs.rdi);
-	printf("RIP: 0x%llX  RBP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rbp, regs.rsp);
+	PRINTER(printer, buffer,
+		"RAX: 0x%llX  RBX: 0x%llX  RCX: 0x%llX\n", regs.rax, regs.rbx, regs.rcx);
+	PRINTER(printer, buffer,
+		"RDX: 0x%llX  RSI: 0x%llX  RDI: 0x%llX\n", regs.rdx, regs.rsi, regs.rdi);
+	PRINTER(printer, buffer,
+		"RIP: 0x%llX  RBP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rbp, regs.rsp);
 
-	printf("SS: 0x%X  CS: 0x%X  DS: 0x%X  FS: 0x%X  GS: 0x%X\n",
+	PRINTER(printer, buffer,
+		"SS: 0x%X  CS: 0x%X  DS: 0x%X  FS: 0x%X  GS: 0x%X\n",
 		sregs.ss.selector, sregs.cs.selector, sregs.ds.selector, sregs.fs.selector, sregs.gs.selector);
 
 #if 0
 	print_pagetables(memory);
 #endif
 #if 0
-	printf("CR0 PE=%llu MP=%llu EM=%llu\n",
+	PRINTER(printer, buffer,
+		"CR0 PE=%llu MP=%llu EM=%llu\n",
 		sregs.cr0 & 1, (sregs.cr0 >> 1) & 1, (sregs.cr0 >> 2) & 1);
-	printf("CR4 OSFXSR=%llu OSXMMEXCPT=%llu OSXSAVE=%llu\n",
+	PRINTER(printer, buffer,
+		"CR4 OSFXSR=%llu OSXMMEXCPT=%llu OSXSAVE=%llu\n",
 		(sregs.cr4 >> 9) & 1, (sregs.cr4 >> 10) & 1, (sregs.cr4 >> 18) & 1);
 #endif
 #if 0
@@ -289,46 +302,57 @@ void Machine::print_registers()
 }
 
 TINYKVM_COLD()
-void Machine::handle_exception(uint8_t intr)
+void Machine::handle_exception(uint8_t intr, printer_func printer)
 {
 	auto regs = registers();
+	char buffer[1024];
 	// Page fault
 	if (intr == 14) {
 		struct kvm_sregs sregs;
 		get_special_registers(sregs);
-		fprintf(stderr, "*** %s on address 0x%llX\n",
+		PRINTER(printer, buffer,
+			"*** %s on address 0x%llX\n",
 			amd64_exception_name(intr), sregs.cr2);
 		if (memory.within(regs.rsp, 8))
 		{
 			auto code = *(uint64_t *)memory.at(regs.rsp, 8);
-			printf("Error code: 0x%lX (%s)\n", code,
+			PRINTER(printer, buffer,
+				"Error code: 0x%lX (%s)\n", code,
 				(code & 0x02) ? "memory write" : "memory read");
 			if (code & 0x01) {
-				printf("* Protection violation\n");
+				PRINTER(printer, buffer,
+					"* Protection violation\n");
 			} else {
-				printf("* Page not present\n");
+				PRINTER(printer, buffer,
+					"* Page not present\n");
 			}
 			if (code & 0x02) {
-				printf("* Invalid write on page\n");
+				PRINTER(printer, buffer,
+					"* Invalid write on page\n");
 			}
 			if (code & 0x04) {
-				printf("* CPL=3 Page fault\n");
+				PRINTER(printer, buffer,
+					"* CPL=3 Page fault\n");
 			}
 			if (code & 0x08) {
-				printf("* Page contains invalid bits\n");
+				PRINTER(printer, buffer,
+					"* Page contains invalid bits\n");
 			}
 			if (code & 0x10) {
-				printf("* Instruction fetch failed (NX-bit was set)\n");
+				PRINTER(printer, buffer,
+					"* Instruction fetch failed (NX-bit was set)\n");
 			}
 		} else {
-			printf("Bullshit RSP: 0x%llX\n", regs.rsp);
+			PRINTER(printer, buffer,
+				"Bullshit RSP: 0x%llX\n", regs.rsp);
 		}
 	} else {
-		fprintf(stderr, "*** CPU EXCEPTION: %s (code: %s)\n",
+		PRINTER(printer, buffer,
+			"*** CPU EXCEPTION: %s (code: %s)\n",
 			amd64_exception_name(intr),
 			amd64_exception_code(intr) ? "true" : "false");
 	}
-	this->print_registers();
+	this->print_registers(printer);
 	//print_pagetables(memory);
 	const bool has_code = amd64_exception_code(intr);
 
@@ -341,10 +365,14 @@ void Machine::handle_exception(uint8_t intr)
 			unsafe_copy_from_guest(&rsp, off+24, 8);
 			unsafe_copy_from_guest(&ss,  off+32, 8);
 
-			printf("Failing RIP: 0x%lX\n", rip);
-			printf("Failing CS:  0x%lX\n", cs);
-			printf("Failing RSP: 0x%lX\n", rsp);
-			printf("Failing SS:  0x%lX\n", ss);
+			PRINTER(printer, buffer,
+				"Failing RIP: 0x%lX\n", rip);
+			PRINTER(printer, buffer,
+				"Failing CS:  0x%lX\n", cs);
+			PRINTER(printer, buffer,
+				"Failing RSP: 0x%lX\n", rsp);
+			PRINTER(printer, buffer,
+				"Failing SS:  0x%lX\n", ss);
 		} catch (...) {}
 
 		/* General Protection Fault */
@@ -354,13 +382,16 @@ void Machine::handle_exception(uint8_t intr)
 				unsafe_copy_from_guest(&code,  regs.rsp, 8);
 			} catch (...) {}
 			if (code != 0x0) {
-				fprintf(stderr, "Reason: Failing segment 0x%lX\n", code);
+				PRINTER(printer, buffer,
+					"Reason: Failing segment 0x%lX\n", code);
 			} else if (cs & 0x3) {
 				/* Best guess: Privileged instruction */
-				fprintf(stderr, "Reason: Executing a privileged instruction\n");
+				PRINTER(printer, buffer,
+					"Reason: Executing a privileged instruction\n");
 			} else {
 				/* Kernel GPFs should be exceedingly rare */
-				fprintf(stderr, "Reason: Protection fault in kernel mode\n");
+				PRINTER(printer, buffer,
+					"Reason: Protection fault in kernel mode\n");
 			}
 		}
 	} catch (...) {}
@@ -443,7 +474,7 @@ long Machine::run_once()
 				return KVM_EXIT_IO;
 			}
 			/* CPU Exception */
-			this->handle_exception(intr);
+			this->handle_exception(intr, m_exception_printer);
 			throw MachineException(amd64_exception_name(intr), intr);
 		} else {
 			/* Custom Output handler */

@@ -19,6 +19,10 @@ namespace tinykvm {
 	Machine::syscall_t Machine::m_on_breakpoint = [] (Machine&) {};
 	Machine::io_callback_t Machine::m_on_input = [] (Machine&, unsigned, unsigned) {};
 	Machine::io_callback_t Machine::m_on_output = [] (Machine&, unsigned, unsigned) {};
+	Machine::printer_func Machine::m_default_printer =
+		[] (const char* buffer, size_t len) {
+			printf("%.*s", (int)len, buffer);
+		};
 	static int kvm_open();
 
 __attribute__ ((cold))
