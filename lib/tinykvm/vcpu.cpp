@@ -208,6 +208,7 @@ void Machine::setup_long_mode(const Machine* other)
 
 		/* Page table entry will be cloned at the start */
 		sregs.cr3 = memory.page_tables;
+		sregs.cr0 &= ~CR0_WP;
 
 		vcpu.set_special_registers(sregs);
 		//print_pagetables(this->memory);
@@ -301,38 +302,33 @@ void Machine::handle_exception(uint8_t intr, printer_func printer)
 		PRINTER(printer, buffer,
 			"*** %s on address 0x%llX\n",
 			amd64_exception_name(intr), sregs.cr2);
-		if (memory.within(regs.rsp, 8))
-		{
-			auto code = *(uint64_t *)memory.at(regs.rsp, 8);
+		uint64_t code;
+		unsafe_copy_from_guest(&code, regs.rsp+8,  8);
+		PRINTER(printer, buffer,
+			"Error code: 0x%lX (%s)\n", code,
+			(code & 0x02) ? "memory write" : "memory read");
+		if (code & 0x01) {
 			PRINTER(printer, buffer,
-				"Error code: 0x%lX (%s)\n", code,
-				(code & 0x02) ? "memory write" : "memory read");
-			if (code & 0x01) {
-				PRINTER(printer, buffer,
-					"* Protection violation\n");
-			} else {
-				PRINTER(printer, buffer,
-					"* Page not present\n");
-			}
-			if (code & 0x02) {
-				PRINTER(printer, buffer,
-					"* Invalid write on page\n");
-			}
-			if (code & 0x04) {
-				PRINTER(printer, buffer,
-					"* CPL=3 Page fault\n");
-			}
-			if (code & 0x08) {
-				PRINTER(printer, buffer,
-					"* Page contains invalid bits\n");
-			}
-			if (code & 0x10) {
-				PRINTER(printer, buffer,
-					"* Instruction fetch failed (NX-bit was set)\n");
-			}
+				"* Protection violation\n");
 		} else {
 			PRINTER(printer, buffer,
-				"Bullshit RSP: 0x%llX\n", regs.rsp);
+				"* Page not present\n");
+		}
+		if (code & 0x02) {
+			PRINTER(printer, buffer,
+				"* Invalid write on page\n");
+		}
+		if (code & 0x04) {
+			PRINTER(printer, buffer,
+				"* CPL=3 Page fault\n");
+		}
+		if (code & 0x08) {
+			PRINTER(printer, buffer,
+				"* Page contains invalid bits\n");
+		}
+		if (code & 0x10) {
+			PRINTER(printer, buffer,
+				"* Instruction fetch failed (NX-bit was set)\n");
 		}
 	} else {
 		PRINTER(printer, buffer,
@@ -345,7 +341,8 @@ void Machine::handle_exception(uint8_t intr, printer_func printer)
 	const bool has_code = amd64_exception_code(intr);
 
 	try {
-		const uint64_t off = (has_code) ? (regs.rsp+8) : (regs.rsp+0);
+		uint64_t off = (has_code) ? (regs.rsp+8) : (regs.rsp+0);
+		if (intr == 14) off += 8;
 		uint64_t rip, cs = 0x0, rsp, ss;
 		try {
 			unsafe_copy_from_guest(&rip, off+0,  8);
@@ -446,6 +443,7 @@ long Machine::run_once()
 				} catch (...) {}
 				fprintf(stderr, "*** %s on address 0x%lX (0x%llX)\n",
 					amd64_exception_name(intr), addr, regs.rdi);
+				handle_exception(intr, m_printer);
 #endif
 				/* Page fault handling */
 				/* We should be in kernel mode, otherwise it's fishy! */
