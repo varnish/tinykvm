@@ -71,7 +71,8 @@ int test_copy_on_write()
 __attribute__((used))
 long test_syscall()
 {
+	register long status asm("rdi") = 555;
 	long ret = 60;
-	asm("syscall" : "+a"(ret) :  : "rcx", "r11", "memory");
+	asm("syscall" : "+a"(ret) : "r"(status) : "rcx", "r11", "memory");
 	return ret;
 }

@@ -103,7 +103,7 @@ struct Machine
 	auto& mmap() { return m_mm; }
 
 	void print_registers(printer_func = m_default_printer);
-	void set_printer(printer_func func) { m_exception_printer = std::move(func); }
+	void set_printer(printer_func func = m_default_printer) { m_exception_printer = std::move(func); }
 
 	void install_memory(uint32_t idx, const VirtualMem&);
 	void delete_memory(uint32_t idx);

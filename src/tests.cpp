@@ -144,14 +144,13 @@ void test_forking(tinykvm::Machine& master_vm)
 		.verbose_loader = false
 	};
 	tinykvm::Machine vm {master_vm, options};
-	/* Silencio */
-	vm.set_printer([] (auto, size_t) {});
 
 	/* Call into VM */
 	for (size_t i = 0; i < 20; i++)
 	{
 		vm.vmcall("test_return");
 		KASSERT(vm.return_value() == 666);
+		vm.set_printer([] (auto, size_t) {});
 		try {
 			vm.vmcall("test_ud2");
 		} catch (const tinykvm::MachineException& me) {
@@ -165,7 +164,9 @@ void test_forking(tinykvm::Machine& master_vm)
 				KASSERT(me.data() == 6);
 			}
 		}
+		vm.set_printer();
 		vm.vmcall("test_syscall");
+		KASSERT(vm.return_value() == 555);
 		vm.vmcall("test_read");
 		KASSERT(vm.return_value() == 200);
 	}
@@ -176,6 +177,7 @@ void test_forking(tinykvm::Machine& master_vm)
 		vm.reset_to(master_vm);
 		vm.vmcall("test_return");
 		KASSERT(vm.return_value() == 666);
+		vm.set_printer([] (auto, size_t) {});
 		try {
 			vm.vmcall("test_ud2");
 		} catch (const tinykvm::MachineException& me) {
@@ -189,7 +191,9 @@ void test_forking(tinykvm::Machine& master_vm)
 				KASSERT(me.data() == 6);
 			}
 		}
+		vm.set_printer();
 		vm.vmcall("test_syscall");
+		KASSERT(vm.return_value() == 555);
 		vm.vmcall("test_read");
 		KASSERT(vm.return_value() == 200);
 	}
