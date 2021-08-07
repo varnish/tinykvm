@@ -42,6 +42,7 @@ int main(int argc, char** argv)
 	master_vm.setup_linux(
 		{"kvmtest", "Hello World!\n"},
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+	const auto rsp = master_vm.stack_address();
 
 	verify_exists(master_vm, "test_return");
 	verify_exists(master_vm, "test_ud2");
@@ -59,10 +60,10 @@ int main(int argc, char** argv)
 		if (getenv("FORK")) {
 			master_vm.prepare_copy_on_write();
 			vm = new tinykvm::Machine {master_vm, options};
-			auto regs = vm->setup_call(vm->address_of("test_return"));
+			auto regs = vm->setup_call(vm->address_of("test_return"), rsp);
 			vm->set_registers(regs);
 		} else {
-			auto regs = master_vm.setup_call(master_vm.address_of("test_return"));
+			auto regs = master_vm.setup_call(master_vm.address_of("test_return"), rsp);
 			master_vm.set_registers(regs);
 		}
 

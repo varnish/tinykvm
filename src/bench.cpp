@@ -6,7 +6,7 @@
 #include <tinykvm/rsp_client.hpp>
 
 #define NUM_GUESTS   300
-#define NUM_RESETS   300
+#define NUM_RESETS   40000
 #define GUEST_MEMORY  0x40000000  /* 1024MB memory */
 #define GUEST_COW_MEM 65536  /* 64KB memory */
 
@@ -58,10 +58,10 @@ int main(int argc, char** argv)
 			if (getenv("FORK")) {
 				master_vm.prepare_copy_on_write();
 				vm = new tinykvm::Machine {master_vm, options};
-				auto regs = vm->setup_call(vmcall_address);
+				auto regs = vm->setup_call(vmcall_address, vm->stack_address());
 				vm->set_registers(regs);
 			} else {
-				auto regs = master_vm.setup_call(vmcall_address);
+				auto regs = master_vm.setup_call(vmcall_address, vm->stack_address());
 				master_vm.set_registers(regs);
 			}
 
