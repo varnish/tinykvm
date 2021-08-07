@@ -119,19 +119,20 @@ int main(int argc, char** argv)
 	return 0;
 }
 
-void test_master_vm(tinykvm::Machine& master_vm)
+void test_master_vm(tinykvm::Machine& vm)
 {
 	/* Call into master VM */
-	master_vm.vmcall("test_return");
-	KASSERT(master_vm.return_value() == 666);
+	vm.vmcall("test_return");
+	KASSERT(vm.return_value() == 666);
 	try {
-		master_vm.vmcall("test_ud2");
+		vm.vmcall("test_ud2");
 	} catch (const tinykvm::MachineException& me) {
 		/* Allow invalid opcode exception */
 		KASSERT(me.data() == 6);
 	}
-	master_vm.vmcall("test_read");
-	KASSERT(master_vm.return_value() == 200);
+	vm.vmcall("test_syscall");
+	vm.vmcall("test_read");
+	KASSERT(vm.return_value() == 200);
 }
 
 void test_forking(tinykvm::Machine& master_vm)
@@ -143,6 +144,8 @@ void test_forking(tinykvm::Machine& master_vm)
 		.verbose_loader = false
 	};
 	tinykvm::Machine vm {master_vm, options};
+	/* Silencio */
+	vm.set_printer([] (auto, size_t) {});
 
 	/* Call into VM */
 	for (size_t i = 0; i < 20; i++)
@@ -150,20 +153,19 @@ void test_forking(tinykvm::Machine& master_vm)
 		vm.vmcall("test_return");
 		KASSERT(vm.return_value() == 666);
 		try {
-			printf("test_ud2\n");
 			vm.vmcall("test_ud2");
 		} catch (const tinykvm::MachineException& me) {
 			/* Allow invalid opcode exception */
 			KASSERT(me.data() == 6);
 			try {
 				/* Retry exception */
-				printf("Retry\n");
 				vm.run();
 			} catch (const tinykvm::MachineException& me) {
 				/* Allow invalid opcode exception */
 				KASSERT(me.data() == 6);
 			}
 		}
+		vm.vmcall("test_syscall");
 		vm.vmcall("test_read");
 		KASSERT(vm.return_value() == 200);
 	}
@@ -175,20 +177,19 @@ void test_forking(tinykvm::Machine& master_vm)
 		vm.vmcall("test_return");
 		KASSERT(vm.return_value() == 666);
 		try {
-			printf("test_ud2\n");
 			vm.vmcall("test_ud2");
 		} catch (const tinykvm::MachineException& me) {
 			/* Allow invalid opcode exception */
 			KASSERT(me.data() == 6);
 			try {
 				/* Retry exception */
-				printf("Retry\n");
 				vm.run();
 			} catch (const tinykvm::MachineException& me) {
 				/* Allow invalid opcode exception */
 				KASSERT(me.data() == 6);
 			}
 		}
+		vm.vmcall("test_syscall");
 		vm.vmcall("test_read");
 		KASSERT(vm.return_value() == 200);
 	}

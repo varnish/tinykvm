@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <malloc.h>
 #include <stdio.h>
 #include <string.h>
@@ -25,13 +26,9 @@ int main(int argc, char** argv)
 	return 666;
 }
 
-#include <assert.h>
-static int t = 0;
-
 __attribute__((used))
 int test_return()
 {
-	t = 1;
 	return 666;
 }
 
@@ -48,10 +45,14 @@ int test_read()
 	return 200;
 }
 
+static int t = 0;
+
 __attribute__((used))
 void test_write()
 {
+	asm("" ::: "memory");
 	assert(t == 0);
+	asm("" ::: "memory");
 	t = 1;
 	asm("" ::: "memory");
 	assert(t == 1);
@@ -65,4 +66,12 @@ int test_copy_on_write()
 	assert(cow == 0);
 	cow = 1;
 	return 666;
+}
+
+__attribute__((used))
+long test_syscall()
+{
+	long ret = 60;
+	asm("syscall" : "+a"(ret) :  : "rcx", "r11", "memory");
+	return ret;
 }
