@@ -247,26 +247,26 @@ void Machine::set_tls_base(__u64 baseaddr)
 		fmt, ##__VA_ARGS__));
 
 TINYKVM_COLD()
-void Machine::print_registers(std::function<void(const char*, size_t)> printer)
+void Machine::print_registers()
 {
 	struct kvm_sregs sregs;
 	vcpu.get_special_registers(sregs);
 
 	char buffer[1024];
-	PRINTER(printer, buffer,
+	PRINTER(m_printer, buffer,
 		"CR0: 0x%llX  CR3: 0x%llX\n", sregs.cr0, sregs.cr3);
-	PRINTER(printer, buffer,
+	PRINTER(m_printer, buffer,
 		"CR2: 0x%llX  CR4: 0x%llX\n", sregs.cr2, sregs.cr4);
 
 	auto regs = registers();
-	PRINTER(printer, buffer,
+	PRINTER(m_printer, buffer,
 		"RAX: 0x%llX  RBX: 0x%llX  RCX: 0x%llX\n", regs.rax, regs.rbx, regs.rcx);
-	PRINTER(printer, buffer,
+	PRINTER(m_printer, buffer,
 		"RDX: 0x%llX  RSI: 0x%llX  RDI: 0x%llX\n", regs.rdx, regs.rsi, regs.rdi);
-	PRINTER(printer, buffer,
+	PRINTER(m_printer, buffer,
 		"RIP: 0x%llX  RBP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rbp, regs.rsp);
 
-	PRINTER(printer, buffer,
+	PRINTER(m_printer, buffer,
 		"SS: 0x%X  CS: 0x%X  DS: 0x%X  FS: 0x%X  GS: 0x%X\n",
 		sregs.ss.selector, sregs.cs.selector, sregs.ds.selector, sregs.fs.selector, sregs.gs.selector);
 
@@ -274,10 +274,10 @@ void Machine::print_registers(std::function<void(const char*, size_t)> printer)
 	print_pagetables(memory);
 #endif
 #if 0
-	PRINTER(printer, buffer,
+	PRINTER(m_printer, buffer,
 		"CR0 PE=%llu MP=%llu EM=%llu\n",
 		sregs.cr0 & 1, (sregs.cr0 >> 1) & 1, (sregs.cr0 >> 2) & 1);
-	PRINTER(printer, buffer,
+	PRINTER(m_printer, buffer,
 		"CR4 OSFXSR=%llu OSXMMEXCPT=%llu OSXSAVE=%llu\n",
 		(sregs.cr4 >> 9) & 1, (sregs.cr4 >> 10) & 1, (sregs.cr4 >> 18) & 1);
 #endif
@@ -291,7 +291,7 @@ void Machine::print_registers(std::function<void(const char*, size_t)> printer)
 }
 
 TINYKVM_COLD()
-void Machine::handle_exception(uint8_t intr, printer_func printer)
+void Machine::handle_exception(uint8_t intr)
 {
 	auto regs = registers();
 	char buffer[1024];
@@ -299,44 +299,44 @@ void Machine::handle_exception(uint8_t intr, printer_func printer)
 	if (intr == 14) {
 		struct kvm_sregs sregs;
 		get_special_registers(sregs);
-		PRINTER(printer, buffer,
+		PRINTER(m_printer, buffer,
 			"*** %s on address 0x%llX\n",
 			amd64_exception_name(intr), sregs.cr2);
 		uint64_t code;
 		unsafe_copy_from_guest(&code, regs.rsp+8,  8);
-		PRINTER(printer, buffer,
+		PRINTER(m_printer, buffer,
 			"Error code: 0x%lX (%s)\n", code,
 			(code & 0x02) ? "memory write" : "memory read");
 		if (code & 0x01) {
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"* Protection violation\n");
 		} else {
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"* Page not present\n");
 		}
 		if (code & 0x02) {
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"* Invalid write on page\n");
 		}
 		if (code & 0x04) {
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"* CPL=3 Page fault\n");
 		}
 		if (code & 0x08) {
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"* Page contains invalid bits\n");
 		}
 		if (code & 0x10) {
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"* Instruction fetch failed (NX-bit was set)\n");
 		}
 	} else {
-		PRINTER(printer, buffer,
+		PRINTER(m_printer, buffer,
 			"*** CPU EXCEPTION: %s (code: %s)\n",
 			amd64_exception_name(intr),
 			amd64_exception_code(intr) ? "true" : "false");
 	}
-	this->print_registers(printer);
+	this->print_registers();
 	//print_pagetables(memory);
 	const bool has_code = amd64_exception_code(intr);
 
@@ -350,13 +350,13 @@ void Machine::handle_exception(uint8_t intr, printer_func printer)
 			unsafe_copy_from_guest(&rsp, off+24, 8);
 			unsafe_copy_from_guest(&ss,  off+32, 8);
 
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"Failing RIP: 0x%lX\n", rip);
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"Failing CS:  0x%lX\n", cs);
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"Failing RSP: 0x%lX\n", rsp);
-			PRINTER(printer, buffer,
+			PRINTER(m_printer, buffer,
 				"Failing SS:  0x%lX\n", ss);
 		} catch (...) {}
 
@@ -367,15 +367,15 @@ void Machine::handle_exception(uint8_t intr, printer_func printer)
 				unsafe_copy_from_guest(&code,  regs.rsp, 8);
 			} catch (...) {}
 			if (code != 0x0) {
-				PRINTER(printer, buffer,
+				PRINTER(m_printer, buffer,
 					"Reason: Failing segment 0x%lX\n", code);
 			} else if (cs & 0x3) {
 				/* Best guess: Privileged instruction */
-				PRINTER(printer, buffer,
+				PRINTER(m_printer, buffer,
 					"Reason: Executing a privileged instruction\n");
 			} else {
 				/* Kernel GPFs should be exceedingly rare */
-				PRINTER(printer, buffer,
+				PRINTER(m_printer, buffer,
 					"Reason: Protection fault in kernel mode\n");
 			}
 		}
@@ -430,9 +430,10 @@ long Machine::run_once()
 				auto regs = registers();
 				const uint64_t addr = regs.rdi & ~(uint64_t) 0x8000000000000FFF;
 #ifdef VERBOSE_PAGE_FAULTS
+				char buffer[256];
 				#define PV(val, off) \
 					{ uint64_t value; unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
-					printf("Value %s: 0x%lX\n", val, value); }
+					PRINTER(m_printer, buffer, "Value %s: 0x%lX\n", val, value); }
 				try {
 					PV("Origin SS",  48);
 					PV("Origin RSP", 40);
@@ -441,9 +442,9 @@ long Machine::run_once()
 					PV("Origin RIP", 16);
 					PV("Error code", 8);
 				} catch (...) {}
-				fprintf(stderr, "*** %s on address 0x%lX (0x%llX)\n",
+				PRINTER(m_printer, buffer,
+					"*** %s on address 0x%lX (0x%llX)\n",
 					amd64_exception_name(intr), addr, regs.rdi);
-				handle_exception(intr, m_printer);
 #endif
 				/* Page fault handling */
 				/* We should be in kernel mode, otherwise it's fishy! */
@@ -460,7 +461,7 @@ long Machine::run_once()
 				return KVM_EXIT_IO;
 			}
 			/* CPU Exception */
-			this->handle_exception(intr, m_printer);
+			this->handle_exception(intr);
 			throw MachineException(amd64_exception_name(intr), intr);
 		} else {
 			/* Custom Output handler */
@@ -536,6 +537,10 @@ void Machine::prepare_copy_on_write()
 	/* Cache all the special registers, which we will use on forks */
 	vcpu.cached_sregs = new kvm_sregs {};
 	get_special_registers(*vcpu.cached_sregs);
+}
+
+void Machine::print_pagetables() const {
+	tinykvm::print_pagetables(this->memory);
 }
 
 Machine::address_t Machine::entry_address() const noexcept {

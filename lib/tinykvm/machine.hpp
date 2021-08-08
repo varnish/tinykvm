@@ -102,9 +102,10 @@ struct Machine
 	const auto& mmap() const { return m_mm; }
 	auto& mmap() { return m_mm; }
 
-	void print_registers(printer_func = m_default_printer);
+	void print_registers();
 	void set_printer(printer_func pf = m_default_printer) { m_printer = std::move(pf); }
 	void print(const char*, size_t);
+	void print_pagetables() const;
 
 	void install_memory(uint32_t idx, const VirtualMem&);
 	void delete_memory(uint32_t idx);
@@ -138,7 +139,7 @@ private:
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const Machine* other);
-	void handle_exception(uint8_t intr, printer_func);
+	void handle_exception(uint8_t intr);
 	long run_once();
 
 	vCPU  vcpu;
