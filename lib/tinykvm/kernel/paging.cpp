@@ -21,6 +21,7 @@ namespace tinykvm {
 
 /* We want to remove the CLONEABLE bit after a page has been duplicated */
 static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~PDE64_CLONEABLE;
+static constexpr uint64_t PDE64_PD_SPLIT_MASK = 0x8000000000000FFF & ~(PDE64_RW | PDE64_CLONEABLE);
 
 using ptentry_pair = std::tuple<uint64_t, uint64_t, uint64_t>;
 inline ptentry_pair pdpt_from_index(size_t i, uint64_t* pml4) {
@@ -207,9 +208,9 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 }
 
 TINYKVM_COLD()
-void print_pte(vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
+void print_pte(const vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
 {
-	uint64_t* pt = (uint64_t*) memory.at(pte_mem);
+	uint64_t* pt = memory.page_at(pte_mem);
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pt[i] & PDE64_PRESENT) {
 			printf("    |-- 4k PT (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s\n",
@@ -221,9 +222,9 @@ void print_pte(vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
 	}
 }
 TINYKVM_COLD()
-void print_pd(vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
+void print_pd(const vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
 {
-	uint64_t* pd = (uint64_t*) memory.at(pd_mem);
+	uint64_t* pd = memory.page_at(pd_mem);
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pd[i] & PDE64_PRESENT) {
 			uint64_t addr = pd_addr + (i << 21);
@@ -240,9 +241,9 @@ void print_pd(vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
 	}
 }
 TINYKVM_COLD()
-void print_pdpt(vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
+void print_pdpt(const vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
 {
-	uint64_t* pdpt = (uint64_t*) memory.at(pdpt_mem);
+	uint64_t* pdpt = memory.page_at(pdpt_mem);
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pdpt[i] & PDE64_PRESENT) {
 			uint64_t addr = pdpt_base + (i << 30);
@@ -257,9 +258,9 @@ void print_pdpt(vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
 }
 
 TINYKVM_COLD()
-void print_pagetables(vMemory& memory)
+void print_pagetables(const vMemory& memory)
 {
-	uint64_t* pml4 = (uint64_t*) memory.at(memory.page_tables);
+	uint64_t* pml4 = memory.page_at(memory.page_tables);
 	for (size_t i = 0; i < 512; i++) {
 		if (pml4[i] & PDE64_PRESENT) {
 			printf("* 512GB PML4: W=%lu  E=%d  %s  %s\n",
@@ -420,7 +421,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 					/* Remove PS flag */
 					pd[k] &= ~(uint64_t)PDE64_PS;
 					/* Copy flags from 2MB page, except read-write */
-					uint64_t flags = pd[k] & (0x8000000000000FFF & ~(uint64_t)PDE64_RW);
+					uint64_t flags = pd[k] & PDE64_PD_SPLIT_MASK;
 					uint64_t branch_flags = flags | PDE64_CLONEABLE;
 					/* Allocate pagetable and fill 4k entries */
 					auto page = memory.new_page();

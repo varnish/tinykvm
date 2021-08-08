@@ -5,7 +5,7 @@
 namespace tinykvm {
 
 extern uint64_t setup_amd64_paging(vMemory&, std::string_view binary);
-extern void print_pagetables(vMemory&);
+extern void print_pagetables(const vMemory&);
 
 using foreach_page_t = std::function<void(uint64_t, uint64_t&, size_t)>;
 extern void foreach_page(vMemory&, foreach_page_t callback);
