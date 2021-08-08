@@ -46,25 +46,25 @@ void Machine::vCPU::init(Machine& machine)
 {
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, 0);
 	if (UNLIKELY(this->fd < 0)) {
-		throw MachineException("Failed to KVM_CREATE_VCPU");
+		machine_exception("Failed to KVM_CREATE_VCPU");
 	}
 
 	this->kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
 	if (UNLIKELY(this->kvm_run == MAP_FAILED)) {
-		throw MachineException("Failed to create KVM run-time mapped memory");
+		machine_exception("Failed to create KVM run-time mapped memory");
 	}
 
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
-		throw MachineException("KVM_SET_CPUID2 failed");
+		machine_exception("KVM_SET_CPUID2 failed");
 	}
 
 	static bool minit = false;
 	if (!minit) {
 		minit = true;
 		if (ioctl(this->fd, KVM_GET_SREGS, &master_sregs) < 0) {
-			throw MachineException("KVM_GET_SREGS failed");
+			machine_exception("KVM_GET_SREGS failed");
 		}
 		master_sregs.cr3 = PT_ADDR;
 		master_sregs.cr4 =
@@ -78,7 +78,7 @@ void Machine::vCPU::init(Machine& machine)
 		setup_amd64_exception_regs(master_sregs, IDT_ADDR);
 
 		if (ioctl(this->fd, KVM_GET_XCRS, &master_xregs) < 0) {
-			throw MachineException("KVM_GET_XCRS failed");
+			machine_exception("KVM_GET_XCRS failed");
 		}
 		/* Enable AVX instructions */
 		master_xregs.xcrs[0].xcr = 0;
@@ -88,7 +88,7 @@ void Machine::vCPU::init(Machine& machine)
 
 	/* Extended control registers */
 	if (ioctl(this->fd, KVM_SET_XCRS, &master_xregs) < 0) {
-		throw MachineException("KVM_SET_XCRS failed");
+		machine_exception("KVM_SET_XCRS failed");
 	}
 
 	/* Enable SYSCALL/SYSRET instructions */
@@ -105,7 +105,7 @@ void Machine::vCPU::init(Machine& machine)
 	msrs.entries[1].data  = interrupt_header().vm64_syscall;
 
 	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < 2) {
-		throw MachineException("KVM_SET_MSRS: failed to set STAR/LSTAR");
+		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
 	}
 
 	/* LAPIC
@@ -114,20 +114,20 @@ void Machine::vCPU::init(Machine& machine)
 	msrs.nmsrs = 1;
 
 	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 1) {
-		throw MachineException("KVM_SET_MSRS: failed to enable xAPIC");
+		machine_exception("KVM_SET_MSRS: failed to enable xAPIC");
 	}
 
 	//struct local_apic lapic {};
 	struct kvm_lapic_state lapic;
 	if (ioctl(this->vcpu.fd, KVM_GET_LAPIC, &lapic)) {
-		throw MachineException("KVM_GET_LAPIC: failed to get initial LAPIC");
+		machine_exception("KVM_GET_LAPIC: failed to get initial LAPIC");
 	}
 
 	//lapic.lvt_lint0.delivery_mode = AMD64_APIC_MODE_EXTINT;
 	//lapic.lvt_lint1.delivery_mode = AMD64_APIC_MODE_NMI;
 
 	if (ioctl(this->vcpu.fd, KVM_SET_LAPIC, &lapic)) {
-		throw MachineException("KVM_SET_LAPIC: failed to set initial LAPIC");
+		machine_exception("KVM_SET_LAPIC: failed to set initial LAPIC");
 	}*/
 }
 
@@ -146,26 +146,26 @@ tinykvm_x86regs Machine::vCPU::registers() const
 {
 	struct tinykvm_x86regs regs;
 	if (ioctl(this->fd, KVM_GET_REGS, &regs) < 0) {
-		throw MachineException("KVM_SET_REGS failed");
+		machine_exception("KVM_SET_REGS failed");
 	}
 	return regs;
 }
 void Machine::vCPU::assign_registers(const struct tinykvm_x86regs& regs)
 {
 	if (ioctl(this->fd, KVM_SET_REGS, &regs) < 0) {
-		throw MachineException("KVM_SET_REGS failed");
+		machine_exception("KVM_SET_REGS failed");
 	}
 }
 void Machine::vCPU::get_special_registers(struct kvm_sregs& sregs) const
 {
 	if (ioctl(this->fd, KVM_GET_SREGS, &sregs) < 0) {
-		throw MachineException("KVM_GET_SREGS failed");
+		machine_exception("KVM_GET_SREGS failed");
 	}
 }
 void Machine::vCPU::set_special_registers(const struct kvm_sregs& sregs)
 {
 	if (ioctl(this->fd, KVM_SET_SREGS, &sregs) < 0) {
-		throw MachineException("KVM_GET_SREGS failed");
+		machine_exception("KVM_GET_SREGS failed");
 	}
 }
 
@@ -393,21 +393,21 @@ long Machine::run_once()
 {
 	if (ioctl(vcpu.fd, KVM_RUN, 0) < 0) {
 		/* NOTE: This is probably EINTR */
-		throw MachineException("KVM_RUN failed");
+		machine_exception("KVM_RUN failed");
 	}
 
 	switch (vcpu.kvm_run->exit_reason) {
 	case KVM_EXIT_HLT:
-		throw MachineException("Halt from kernel space", 5);
+		machine_exception("Halt from kernel space", 5);
 
 	case KVM_EXIT_DEBUG:
 		return KVM_EXIT_DEBUG;
 
 	case KVM_EXIT_FAIL_ENTRY:
-		throw MachineException("Failed to start guest! Misconfigured?", KVM_EXIT_FAIL_ENTRY);
+		machine_exception("Failed to start guest! Misconfigured?", KVM_EXIT_FAIL_ENTRY);
 
 	case KVM_EXIT_SHUTDOWN:
-		throw MachineException("Shutdown! Triple fault?", 32);
+		machine_exception("Shutdown! Triple fault?", 32);
 
 	case KVM_EXIT_IO:
 		if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT) {
@@ -449,7 +449,7 @@ long Machine::run_once()
 				/* Page fault handling */
 				/* We should be in kernel mode, otherwise it's fishy! */
 				if (UNLIKELY(regs.rip > 0x3000)) {
-					throw MachineException("Security violation", intr);
+					machine_exception("Security violation", intr);
 				}
 
 				memory.get_writable_page(addr, false);
@@ -462,7 +462,7 @@ long Machine::run_once()
 			}
 			/* CPU Exception */
 			this->handle_exception(intr);
-			throw MachineException(amd64_exception_name(intr), intr);
+			machine_exception(amd64_exception_name(intr), intr);
 		} else {
 			/* Custom Output handler */
 			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
@@ -481,15 +481,15 @@ long Machine::run_once()
 			PRINTER(m_printer, buffer,
 				"Unknown MMIO write at 0x%llX\n",
 				vcpu.kvm_run->mmio.phys_addr);
-			throw MachineException("Invalid MMIO write");
+			machine_exception("Invalid MMIO write");
 		}
 	case KVM_EXIT_INTERNAL_ERROR:
-		throw MachineException("KVM internal error");
+		machine_exception("KVM internal error");
 	}
 	char buffer[256];
 	PRINTER(m_printer, buffer,
 		"Unexpected exit reason %d\n", vcpu.kvm_run->exit_reason);
-	throw MachineException("Unexpected KVM exit reason",
+	machine_exception("Unexpected KVM exit reason",
 		vcpu.kvm_run->exit_reason);
 }
 
@@ -500,7 +500,7 @@ long Machine::step_one()
 	dbg.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
 
 	if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
-		throw MachineException("KVM_RUN failed");
+		machine_exception("KVM_RUN failed");
 	}
 
 	return run_once();
@@ -521,7 +521,7 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 	//	bp[0], bp[1], bp[2], bp[3]);
 
 	if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
-		throw MachineException("KVM_RUN failed");
+		machine_exception("KVM_RUN failed");
 	}
 
 	return run_once();

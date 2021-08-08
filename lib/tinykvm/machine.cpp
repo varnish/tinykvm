@@ -153,7 +153,7 @@ void Machine::delete_memory(uint32_t idx)
 	printf("UMR: Remove slot %u\n", memreg.slot);
 #endif
 	if (UNLIKELY(ioctl(this->fd, KVM_SET_USER_MEMORY_REGION, &memreg) < 0)) {
-		throw MachineException("Failed to delete guest memory region", idx);
+		machine_exception("Failed to delete guest memory region", idx);
 	}
 }
 uint64_t Machine::translate(uint64_t virt) const
@@ -185,6 +185,12 @@ long Machine::return_value() const
 void Machine::print(const char* buffer, size_t len)
 {
 	m_printer(buffer, len);
+}
+
+__attribute__((cold, noreturn))
+void Machine::machine_exception(const char* msg, uint64_t data)
+{
+	throw MachineException(msg, data);
 }
 
 __attribute__ ((cold))
@@ -223,7 +229,7 @@ int Machine::create_kvm_vm()
 {
 	int fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
 	if (UNLIKELY(fd < 0)) {
-		throw MachineException("Failed to KVM_CREATE_VM");
+		machine_exception("Failed to KVM_CREATE_VM");
 	}
 
 	/*if (ioctl(fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {

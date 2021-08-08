@@ -140,6 +140,7 @@ private:
 	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const Machine* other);
 	void handle_exception(uint8_t intr);
+	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	long run_once();
 
 	vCPU  vcpu;
