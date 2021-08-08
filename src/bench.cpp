@@ -2,6 +2,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cassert>
+#include "load_file.hpp"
 
 #include <tinykvm/rsp_client.hpp>
 
@@ -10,7 +11,6 @@
 #define GUEST_MEMORY  0x40000000  /* 1024MB memory */
 #define GUEST_COW_MEM 65536  /* 64KB memory */
 
-std::vector<uint8_t> load_file(const std::string& filename);
 inline timespec time_now();
 inline long nanodiff(timespec start_time, timespec end_time);
 
@@ -245,27 +245,6 @@ int main(int argc, char** argv)
 	printf("VM fork totals: %ldns (%ld micros)\n", nanos_per_fc, nanos_per_fc / 1000);
 	printf("Fast reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
 	printf("Fast vmcall: %ldns (%ld micros)\n", frtotal, frtotal / 1000);
-}
-
-#include <stdexcept>
-std::vector<uint8_t> load_file(const std::string& filename)
-{
-	size_t size = 0;
-	FILE* f = fopen(filename.c_str(), "rb");
-	if (f == NULL) throw std::runtime_error("Could not open file: " + filename);
-
-	fseek(f, 0, SEEK_END);
-	size = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	std::vector<uint8_t> result(size);
-	if (size != fread(result.data(), 1, size, f))
-	{
-		fclose(f);
-		throw std::runtime_error("Error when reading from file: " + filename);
-	}
-	fclose(f);
-	return result;
 }
 
 timespec time_now()

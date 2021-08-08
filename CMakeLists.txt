@@ -24,3 +24,9 @@ add_executable(tinytest
 	src/functions.cpp
 )
 target_link_libraries(tinytest tinykvm)
+
+add_executable(simplekvm
+	src/simple.cpp
+	src/functions.cpp
+)
+target_link_libraries(simplekvm tinykvm)
