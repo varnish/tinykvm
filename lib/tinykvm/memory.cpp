@@ -48,7 +48,7 @@ char* vMemory::at(uint64_t addr, size_t asize)
 	if (is_alt_arena(addr, asize)) {
 		return at(arena_transform(addr), asize);
 	}
-	throw MemoryException("Memory::at() invalid region", addr, asize);
+	memory_exception("Memory::at() invalid region", addr, asize);
 }
 uint64_t* vMemory::page_at(uint64_t addr) const
 {
@@ -58,7 +58,7 @@ uint64_t* vMemory::page_at(uint64_t addr) const
 		if (bank.within(addr, PAGE_SIZE))
 			return (uint64_t *)bank.at(addr);
 	}
-	throw MemoryException("Memory::page_at() invalid region", addr, 4096);
+	memory_exception("Memory::page_at() invalid region", addr, 4096);
 }
 char* vMemory::safely_at(uint64_t addr, size_t asize)
 {
@@ -73,7 +73,7 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 	if (is_alt_arena(addr, asize)) {
 		return safely_at(arena_transform(addr), asize);
 	}
-	throw MemoryException("Memory::safely_at() invalid region", addr, asize);
+	memory_exception("Memory::safely_at() invalid region", addr, asize);
 }
 std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 	if (safely_within(addr, asize))
@@ -87,7 +87,7 @@ std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 	if (is_alt_arena(addr, asize)) {
 		return view(arena_transform(addr), asize);
 	}
-	throw MemoryException("vMemory::view failed", addr, asize);
+	memory_exception("vMemory::view failed", addr, asize);
 }
 
 bool vMemory::is_alt_arena(uint64_t addr, uint64_t asize) const noexcept {
@@ -106,17 +106,17 @@ vMemory vMemory::New(Machine& m, const MachineOptions& options,
 	// open a temporary file with owner privs
 	int fd = memfd_create("tinykvm", 0);
 	if (fd < 0) {
-		throw MemoryException("Failed to open mkstemp file", 0, 0);
+		memory_exception("Failed to open mkstemp file", 0, 0);
 	}
 	if (ftruncate(fd, size) < 0) {
-		throw MemoryException("Failed to truncate memfd (Out of memory?)", 0, size);
+		memory_exception("Failed to truncate memfd (Out of memory?)", 0, size);
 	}
 #endif
 
 	auto* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
 		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
 	if (ptr == MAP_FAILED) {
-		throw MemoryException("Failed to allocate guest memory", 0, size);
+		memory_exception("Failed to allocate guest memory", 0, size);
 	}
 	madvise(ptr, size, MADV_MERGEABLE);
 	return vMemory(m, options, phys, safe, ptr, size);
@@ -162,6 +162,12 @@ char* vMemory::get_userpage_at(uint64_t addr)
 {
 	constexpr uint64_t flags = PDE64_PRESENT | PDE64_USER;
 	return readable_page_at(*this, addr, flags);
+}
+
+__attribute__((cold, noreturn))
+void vMemory::memory_exception(const char* msg, uint64_t addr, uint64_t size)
+{
+	throw MemoryException(msg, addr, size);
 }
 
 }
