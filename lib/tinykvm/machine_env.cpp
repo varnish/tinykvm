@@ -4,11 +4,18 @@
 #include <cstring>
 #include <ctime>
 #include <random>
-#include "util/auxvec.hpp"
+#include <sys/auxv.h>
 #include "util/elf.hpp"
 
 namespace tinykvm {
 using address_t = Machine::address_t;
+
+template<typename T>
+struct AuxVec
+{
+	T a_type;		/* Entry type */
+	T a_val;		/* Register value */
+};
 
 static inline
 void push_arg(Machine& m, std::vector<address_t>& vec, address_t& dst, const std::string& str)
@@ -81,8 +88,8 @@ void Machine::setup_linux(__u64& rsp,
 	push_down(*this, dst, canary.data(), canary.size());
 	const auto canary_addr = dst;
 
-	const std::string platform = "AMD64 Tiny KVM Guest";
-	push_down(*this, dst, platform.data(), platform.size());
+	const char platform[] = "AMD64 TinyKVM Guest";
+	push_down(*this, dst, platform, sizeof(platform));
 	const auto platform_addr = dst;
 
 	/* Push program headers */
@@ -112,7 +119,7 @@ void Machine::setup_linux(__u64& rsp,
 
 	/* Push auxiliary vector */
 	push_aux(argv, {AT_PAGESZ, 0x1000});
-	push_aux(argv, {AT_CLKTCK, 100});
+	push_aux(argv, {AT_CLKTCK, getauxval(AT_CLKTCK)});
 
 	// ELF related
 	push_aux(argv, {AT_PHENT, sizeof(*binary_phdr)});
@@ -120,17 +127,28 @@ void Machine::setup_linux(__u64& rsp,
 	push_aux(argv, {AT_PHNUM, phdr_count});
 
 	// Misc
-	push_aux(argv, {AT_BASE, 0});
-	push_aux(argv, {AT_FLAGS, 0});
+	push_aux(argv, {AT_BASE, 0x400000});
 	push_aux(argv, {AT_ENTRY, binary_ehdr->e_entry});
-	push_aux(argv, {AT_HWCAP, 0});
-	push_aux(argv, {AT_UID, 0});
+	push_aux(argv, {AT_HWCAP,  getauxval(AT_HWCAP)});
+	push_aux(argv, {AT_HWCAP2, getauxval(AT_HWCAP2)});
+	push_aux(argv, {AT_UID, 1000});
 	push_aux(argv, {AT_EUID, 0});
 	push_aux(argv, {AT_GID, 0});
 	push_aux(argv, {AT_EGID, 0});
-	push_aux(argv, {AT_SECURE, 1});
-
+	push_aux(argv, {AT_SECURE, 0});
 	push_aux(argv, {AT_PLATFORM, platform_addr});
+
+	push_aux(argv, {AT_DCACHEBSIZE, getauxval(AT_DCACHEBSIZE)});
+	push_aux(argv, {AT_ICACHEBSIZE, getauxval(AT_ICACHEBSIZE)});
+	push_aux(argv, {AT_L1D_CACHEGEOMETRY, getauxval(AT_L1D_CACHEGEOMETRY)});
+	push_aux(argv, {AT_L1D_CACHESIZE, getauxval(AT_L1D_CACHESIZE)});
+	push_aux(argv, {AT_L1I_CACHEGEOMETRY, getauxval(AT_L1I_CACHEGEOMETRY)});
+	push_aux(argv, {AT_L1I_CACHESIZE, getauxval(AT_L1I_CACHESIZE)});
+	push_aux(argv, {AT_L2_CACHEGEOMETRY, getauxval(AT_L2_CACHEGEOMETRY)});
+	push_aux(argv, {AT_L2_CACHESIZE, getauxval(AT_L2_CACHESIZE)});
+	push_aux(argv, {AT_L3_CACHEGEOMETRY, getauxval(AT_L3_CACHEGEOMETRY)});
+	push_aux(argv, {AT_L3_CACHESIZE, getauxval(AT_L3_CACHESIZE)});
+	push_aux(argv, {AT_UCACHEBSIZE, getauxval(AT_UCACHEBSIZE)});
 
 	// Canary / randomness
 	push_aux(argv, {AT_RANDOM, canary_addr});
@@ -140,7 +158,7 @@ void Machine::setup_linux(__u64& rsp,
 	// install the arg vector
 	const size_t argsize = argv.size() * sizeof(argv[0]);
 	dst -= argsize;
-	dst &= ~0xF; // mandated 16-byte stack alignment
+	dst &= ~(uint64_t)0xF; // mandated 16-byte stack alignment
 	this->copy_to_guest(dst, argv.data(), argsize);
 	// re-initialize machine stack-pointer
 	rsp = dst;
