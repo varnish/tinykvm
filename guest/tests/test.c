@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <malloc.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -75,4 +76,13 @@ long test_syscall()
 	long ret = 60;
 	asm("syscall" : "+a"(ret) : "r"(status) : "rcx", "r11", "memory");
 	return ret;
+}
+
+__attribute__((used))
+long test_malloc()
+{
+
+	int* p = (int *)malloc(4);
+
+	return (uintptr_t) p;
 }

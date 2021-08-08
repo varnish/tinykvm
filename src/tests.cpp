@@ -4,8 +4,8 @@
 #include "assert.hpp"
 
 #include <tinykvm/rsp_client.hpp>
-#define GUEST_MEMORY  0x40000000  /* 1024MB memory */
-#define GUEST_COW_MEM 65536  /* 16KB memory */
+#define GUEST_MEMORY   0x40000000  /* 1024MB memory */
+#define GUEST_WORK_MEM 2*1024*1024 /* 2MB working memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
 static void test_master_vm(tinykvm::Machine&);
@@ -35,7 +35,7 @@ int main(int argc, char** argv)
 	/* Setup */
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
-		.max_cow_mem = GUEST_COW_MEM,
+		.max_cow_mem = GUEST_WORK_MEM,
 		.verbose_loader = false
 	};
 	tinykvm::Machine master_vm {binary, options};
@@ -110,7 +110,7 @@ int main(int argc, char** argv)
 	printf("*** VM forking OK\n");
 
 	printf("--- Beginning VM copy-on-write tests ---\n");
-	for (size_t i = 0; i < 100; i++) {
+	for (size_t i = 0; i < 10; i++) {
 		test_copy_on_write(master_vm);
 	}
 	printf("*** VM copy-on-write OK\n");
@@ -133,6 +133,8 @@ void test_master_vm(tinykvm::Machine& vm)
 	vm.vmcall("test_syscall");
 	vm.vmcall("test_read");
 	KASSERT(vm.return_value() == 200);
+	vm.vmcall("test_malloc");
+	KASSERT(vm.return_value() != 0);
 }
 
 void test_forking(tinykvm::Machine& master_vm)
@@ -140,7 +142,7 @@ void test_forking(tinykvm::Machine& master_vm)
 	/* Create VM fork */
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
-		.max_cow_mem = GUEST_COW_MEM,
+		.max_cow_mem = GUEST_WORK_MEM,
 		.verbose_loader = false
 	};
 	tinykvm::Machine vm {master_vm, options};
@@ -169,6 +171,8 @@ void test_forking(tinykvm::Machine& master_vm)
 		KASSERT(vm.return_value() == 555);
 		vm.vmcall("test_read");
 		KASSERT(vm.return_value() == 200);
+		vm.vmcall("test_malloc");
+		KASSERT(vm.return_value() != 0);
 	}
 
 	/* Reset and call into VM */
@@ -196,6 +200,8 @@ void test_forking(tinykvm::Machine& master_vm)
 		KASSERT(vm.return_value() == 555);
 		vm.vmcall("test_read");
 		KASSERT(vm.return_value() == 200);
+		vm.vmcall("test_malloc");
+		KASSERT(vm.return_value() != 0);
 	}
 }
 
@@ -203,16 +209,26 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 {
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
-		.max_cow_mem = GUEST_COW_MEM,
+		.max_cow_mem = GUEST_WORK_MEM,
 		.verbose_loader = false
 	};
 	tinykvm::Machine vm {master_vm, options};
 
-	for (size_t i = 0; i < 1; i++)
+	for (size_t i = 0; i < 100; i++)
 	{
-		vm.reset_to(master_vm);
-		vm.vmcall("test_copy_on_write");
-		KASSERT(vm.return_value() == 666);
+		try {
+			vm.reset_to(master_vm);
+			vm.vmcall("test_copy_on_write");
+			KASSERT(vm.return_value() == 666);
+			vm.vmcall("test_malloc");
+			KASSERT(vm.return_value() != 0);
+			vm.vmcall("test_expensive");
+			KASSERT(vm.return_value() != 0);
+		} catch (...) {
+			vm.print_pagetables();
+			vm.print_registers();
+			throw;
+		}
 	}
 }
 

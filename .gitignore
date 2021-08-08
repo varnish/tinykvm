@@ -7,6 +7,8 @@ guest/musl/glibc
 guest/glibc/glibc
 guest/go/go
 
-guest/tests/test
+guest/tests/glibc_test
+guest/tests/musl_test
+guest/tests/cxx_test
 guest/mini/mini.o
 guest/mini/mini
