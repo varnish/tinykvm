@@ -86,6 +86,7 @@ void MemoryBanks::reset()
 			m_mem.pop_back();
 		}
 		m_idx = m_idx_begin;
+		m_num_pages = 0;
 		/* We always start fresh at arena start */
 		m_arena_next = m_arena_begin;
 	}
