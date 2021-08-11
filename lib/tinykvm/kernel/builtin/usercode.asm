@@ -8,7 +8,9 @@ ALIGN 0x10
 .vm64_entry:
 	push rax
 	mov rax, 0x1F777
+	push rcx
 	syscall
+	pop rcx
 	pop rax
 	jmp rax
 .vm64_rexit:
