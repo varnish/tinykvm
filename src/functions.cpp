@@ -227,6 +227,24 @@ void setup_kvm_system_calls()
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		25, [] (auto& machine) { // MREMAP
+			auto regs = machine.registers();
+			const uint64_t mmap_start = machine.heap_address() + BRK_MAX;
+			auto& mm = machine.mmap();
+			uint64_t old_addr = regs.rdi & ~(uint64_t)0xFFF;
+			uint64_t old_len = regs.rsi & ~(uint64_t)0xFFF;
+			uint64_t new_len = regs.rdx & ~(uint64_t)0xFFF;
+			if (old_addr + old_len == mm && mm >= mmap_start) {
+				mm = old_addr + new_len;
+				regs.rax = old_addr;
+			} else {
+				regs.rax = ~(uint64_t) 0; /* MAP_FAILED */
+			}
+			PRINTMMAP("mremap(0x%llX, %llu, %llu) = 0x%llX\n",
+				regs.rdi, regs.rsi, regs.rdx, regs.rax);
+			machine.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		28, [] (auto& machine) { // MADVISE
 			auto regs = machine.registers();
 			regs.rax = 0;
