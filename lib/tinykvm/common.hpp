@@ -44,15 +44,15 @@ namespace tinykvm
 
 	class MemoryException: public std::exception {
 	public:
-	    MemoryException(const std::string& msg, uint64_t addr, uint64_t sz)
+	    MemoryException(const char* msg, uint64_t addr, uint64_t sz)
 			: m_msg(msg), m_addr(addr), m_size(sz) {}
 	    const char* what() const noexcept override {
-	        return m_msg.c_str();
+	        return m_msg;
 	    }
 		auto addr() const noexcept { return m_addr; }
 		auto size() const noexcept { return m_size; }
 	private:
-		std::string m_msg;
+		const char* m_msg;
 		uint64_t m_addr;
 		uint64_t m_size;
 	};

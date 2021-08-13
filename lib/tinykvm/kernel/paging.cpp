@@ -23,6 +23,9 @@ namespace tinykvm {
 static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~PDE64_CLONEABLE;
 static constexpr uint64_t PDE64_PD_SPLIT_MASK = 0x8000000000000FFF & ~(PDE64_RW | PDE64_CLONEABLE);
 
+__attribute__((cold, noinline, noreturn))
+static void memory_exception(const char*, uint64_t addr, uint64_t sz);
+
 using ptentry_pair = std::tuple<uint64_t, uint64_t, uint64_t>;
 inline ptentry_pair pdpt_from_index(size_t i, uint64_t* pml4) {
 	return {i << 39, pml4[i] & ~(uint64_t) 0xFFF, 1ul << 39};
@@ -352,14 +355,14 @@ void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback)
 						callback(pte_base, pt[e], pte_size);
 						return;
 					} // pt
-					throw MemoryException("page_at: pt entry not present", addr, PDE64_PTE_SIZE);
+					memory_exception("page_at: pt entry not present", addr, PDE64_PTE_SIZE);
 				}
 			} // pd
-			throw MemoryException("page_at: page table not present", addr, PDE64_PT_SIZE);
+			memory_exception("page_at: page table not present", addr, PDE64_PT_SIZE);
 		} // pdpt
-		throw MemoryException("page_at: page directory not present", addr, PDE64_PD_SIZE);
+		memory_exception("page_at: page directory not present", addr, PDE64_PD_SIZE);
 	} // pml4
-	throw MemoryException("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
+	memory_exception("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
 }
 
 inline bool is_copy_on_write(uint64_t entry) {
@@ -455,13 +458,13 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 					CLPRINT("-> Returning data: %p\n", data);
 					return (char *)data;
 				} // pt
-				throw MemoryException("page_at: pt entry not present", addr, PDE64_PTE_SIZE);
+				memory_exception("page_at: pt entry not present", addr, PDE64_PTE_SIZE);
 			} // pd
-			throw MemoryException("page_at: page table not present", addr, PDE64_PT_SIZE);
+			memory_exception("page_at: page table not present", addr, PDE64_PT_SIZE);
 		} // pdpt
-		throw MemoryException("page_at: page directory not present", addr, PDE64_PD_SIZE);
+		memory_exception("page_at: page directory not present", addr, PDE64_PD_SIZE);
 	} // pml4
-	throw MemoryException("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
+	memory_exception("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
 }
 
 char * readable_page_at(vMemory& memory, uint64_t addr, uint64_t flags)
@@ -496,13 +499,18 @@ char * readable_page_at(vMemory& memory, uint64_t addr, uint64_t flags)
 					CLPRINT("-> Returning 4k data: %p\n", data);
 					return (char *)data;
 				} // pt
-				throw MemoryException("readable_userpage_at: pt entry not readable", addr, PDE64_PTE_SIZE);
+				memory_exception("readable_userpage_at: pt entry not readable", addr, PDE64_PTE_SIZE);
 			} // pd
-			throw MemoryException("readable_userpage_at: page table not readable", addr, PDE64_PT_SIZE);
+			memory_exception("readable_userpage_at: page table not readable", addr, PDE64_PT_SIZE);
 		} // pdpt
-		throw MemoryException("readable_userpage_at: page directory not readable", addr, PDE64_PD_SIZE);
+		memory_exception("readable_userpage_at: page directory not readable", addr, PDE64_PD_SIZE);
 	} // pml4
-	throw MemoryException("readable_userpage_at: pml4 entry not readable", addr, PDE64_PDPT_SIZE);
+	memory_exception("readable_userpage_at: pml4 entry not readable", addr, PDE64_PDPT_SIZE);
+}
+
+void memory_exception(const char* msg, uint64_t addr, uint64_t sz)
+{
+	throw MemoryException(msg, addr, sz);
 }
 
 }
