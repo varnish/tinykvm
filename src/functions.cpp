@@ -294,6 +294,14 @@ void setup_kvm_system_calls()
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		89, [] (Machine& machine) { // READLINK
+			auto regs = machine.registers();
+			regs.rax = -ENOENT;
+			SYSPRINT("READLINK 0x%llX, bufd=0x%llX, size=%llu = %lld\n",
+				regs.rdi, regs.rsi, regs.rdx, regs.rax);
+			machine.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		96, [] (auto& machine) { // gettimeofday
 			auto regs = machine.registers();
 			struct timeval tv;
