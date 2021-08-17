@@ -15,7 +15,6 @@
 
 #include <cstdint>
 #include <exception>
-#include <functional>
 #include <string>
 
 namespace tinykvm
@@ -25,8 +24,6 @@ namespace tinykvm
 		uint32_t max_cow_mem = 0;
 
 		bool verbose_loader = false;
-		std::function<char*(size_t N)> page_allocator = nullptr;
-		std::function<void(char*)> page_deallocator = nullptr;
 	};
 
 	class MachineException : public std::exception {

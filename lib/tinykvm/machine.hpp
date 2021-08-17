@@ -4,6 +4,7 @@
 #include "memory.hpp"
 #include "memory_bank.hpp"
 #include <array>
+#include <functional>
 #include <memory>
 #include <vector>
 

@@ -17,9 +17,7 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	  m_arena_next { m_arena_begin },
 	  m_idx_begin { 2 },
 	  m_idx { m_idx_begin },
-	  m_max_pages { options.max_cow_mem / PAGE_SIZE },
-	  page_allocator { options.page_allocator },
-	  page_deallocator { options.page_deallocator }
+	  m_max_pages { options.max_cow_mem / PAGE_SIZE }
 {
 	/* Reserve the maximum number of banks possible.
 	   We have to + 1 to make sure it's rounded up, avoiding
@@ -30,11 +28,7 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 
 char* MemoryBanks::try_alloc(size_t N)
 {
-	if (page_allocator == nullptr) {
-		return (char *)memalign(PAGE_SIZE, N * PAGE_SIZE);
-	} else {
-		return this->page_allocator(N);
-	}
+	return (char *)memalign(PAGE_SIZE, N * PAGE_SIZE);
 }
 
 MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
@@ -78,23 +72,9 @@ MemoryBank& MemoryBanks::get_available_bank()
 }
 void MemoryBanks::reset(const MachineOptions& options)
 {
-	if (page_allocator != nullptr)
-	{
-		/* With a custom allocator, we reset everything */
-		while (!m_mem.empty()) {
-			m_machine.delete_memory(m_mem.back().idx);
-			m_mem.pop_back();
-		}
-		m_idx = m_idx_begin;
-		m_num_pages = 0;
-		/* We always start fresh at arena start */
-		m_arena_next = m_arena_begin;
-	}
-	else {
-		/* Reset page usage, but keep banks */
-		for (auto& bank : m_mem) {
-			bank.n_used = 0;
-		}
+	/* Reset page usage, but keep banks */
+	for (auto& bank : m_mem) {
+		bank.n_used = 0;
 	}
 	m_search = 0;
 	m_max_pages = options.max_cow_mem / PAGE_SIZE;
@@ -105,11 +85,7 @@ MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint16_t np, uint16_
 {}
 MemoryBank::~MemoryBank()
 {
-	if (banks.page_deallocator != nullptr) {
-		banks.page_deallocator(this->mem);
-	} else {
-		std::free(this->mem);
-	}
+	free(this->mem);
 }
 
 MemoryBank::Page MemoryBank::get_next_page()

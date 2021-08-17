@@ -1,5 +1,4 @@
 #pragma once
-#include <functional>
 #include <vector>
 #include "common.hpp"
 #include "virtual_mem.hpp"
@@ -65,8 +64,6 @@ private:
 	/* Max number of pages in all the banks */
 	uint32_t m_max_pages;
 
-	std::function<char*(size_t N)> page_allocator = nullptr;
-	std::function<void(char*)> page_deallocator = nullptr;
 	friend struct MemoryBank;
 };
 
