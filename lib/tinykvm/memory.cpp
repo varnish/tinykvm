@@ -31,9 +31,18 @@ void vMemory::reset()
 {
 	std::memset(this->ptr, 0, this->size);
 }
-void vMemory::fork_reset()
+void vMemory::fork_reset(const MachineOptions& options)
 {
-	banks.reset();
+	banks.reset(options);
+}
+void vMemory::fork_reset(vMemory& other, const MachineOptions& options)
+{
+	this->physbase = other.physbase;
+	this->safebase = other.safebase;
+	this->owned    = false;
+	this->ptr  = other.ptr;
+	this->size = other.size;
+	banks.reset(options);
 }
 
 char* vMemory::at(uint64_t addr, size_t asize)

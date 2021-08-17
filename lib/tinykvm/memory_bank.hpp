@@ -43,7 +43,7 @@ struct MemoryBanks {
 	MemoryBanks(Machine&, const MachineOptions&);
 
 	MemoryBank& get_available_bank();
-	void reset();
+	void reset(const MachineOptions&);
 
 	auto begin() { return m_mem.begin(); }
 	auto end()   { return m_mem.end(); }

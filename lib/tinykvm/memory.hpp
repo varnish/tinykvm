@@ -48,7 +48,8 @@ struct vMemory {
 
 	[[noreturn]] static void memory_exception(const char*, uint64_t, uint64_t);
 	void reset();
-	void fork_reset();
+	void fork_reset(const MachineOptions&);
+	void fork_reset(vMemory& other, const MachineOptions&);
 	static vMemory New(Machine&, const MachineOptions&, uint64_t phys, uint64_t safe, size_t size);
 
 	/* Create new identity-mapped memory regions */

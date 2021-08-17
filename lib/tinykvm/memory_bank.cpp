@@ -76,7 +76,7 @@ MemoryBank& MemoryBanks::get_available_bank()
 	}
 	throw MemoryException("Out of memory", m_num_pages, m_max_pages);
 }
-void MemoryBanks::reset()
+void MemoryBanks::reset(const MachineOptions& options)
 {
 	if (page_allocator != nullptr)
 	{
@@ -97,6 +97,7 @@ void MemoryBanks::reset()
 		}
 	}
 	m_search = 0;
+	m_max_pages = options.max_cow_mem / PAGE_SIZE;
 }
 
 MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint16_t np, uint16_t x)

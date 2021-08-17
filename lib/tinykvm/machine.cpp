@@ -36,7 +36,6 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->fd = create_kvm_vm();
 
-	/* Disallow viewing memory below 1MB */
 	install_memory(0, memory.vmem());
 
 	this->elf_loader(options);
@@ -65,6 +64,8 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	assert(kvm_fd != -1 && "Call Machine::init() first");
 	assert(other.m_prepped == true && "Call Machine::prepare_copy_on_write() first");
 
+	/* Unfortunately we have to create a new VM because
+	   memory is tied to VMs and not vCPUs. */
 	this->fd = create_kvm_vm();
 
 	/* Reuse pre-CoWed pagetable from the master machine */
@@ -84,7 +85,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 __attribute__ ((cold))
 Machine::~Machine()
 {
-	if (fd > 0) {
+	if (!m_forked) {
 		close(fd);
 	}
 	vcpu.deinit();
@@ -93,15 +94,32 @@ Machine::~Machine()
 	}
 }
 
-void Machine::reset_to(Machine& other)
+void Machine::reset_to(Machine& other, const MachineOptions& options)
 {
-	assert(m_forked);
-	memory.fork_reset();
+	assert(m_forked && other.m_prepped &&
+		"This machine must be forked, and the source must be prepped");
+
+	if (this->m_binary.begin() != other.m_binary.begin()) {
+		/* This could be dangerous, but we will allow it anyway,
+		   for those who dare to mutate an existing VM in prod. */
+		this->m_binary = other.m_binary;
+		this->m_stack_address = other.m_stack_address;
+		this->m_heap_address  = other.m_heap_address;
+		this->m_start_address = other.m_start_address;
+		memory.fork_reset(other.memory, options);
+		/* Unfortunately we need to both delete and reinstall main mem */
+		this->delete_memory(0);
+		this->install_memory(0, memory.vmem());
+	} else {
+		memory.fork_reset(options);
+	}
 
 	this->m_mm = other.m_mm;
 
-	if (other.has_threads()) {
+	if (other.has_threads() && has_threads()) {
 		this->m_mt->reset_to(*other.m_mt);
+	} else if (other.has_threads()) {
+		this->m_mt.reset(new MultiThreading{*other.m_mt});
 	} else {
 		m_mt = nullptr;
 	}

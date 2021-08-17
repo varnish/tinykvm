@@ -35,7 +35,7 @@ struct Machine
 	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
 	bool stopped() const noexcept { return m_stopped; }
-	void reset_to(Machine&);
+	void reset_to(Machine&, const MachineOptions&);
 
 	/* When zeroes == true, new pages will be zeroed instead of duplicated */
 	void copy_to_guest(address_t addr, const void*, size_t, bool zeroes = false);
@@ -150,7 +150,7 @@ private:
 	bool  m_forked = false;
 	void* m_userdata = nullptr;
 
-	const std::string_view m_binary;
+	std::string_view m_binary;
 
 	vMemory memory;  // guest memory
 
