@@ -49,6 +49,8 @@ int main(int argc, char** argv)
 	verify_exists(master_vm, "test_ud2");
 	verify_exists(master_vm, "test_read");
 	verify_exists(master_vm, "test_copy_on_write");
+	verify_exists(master_vm, "write_value");
+	verify_exists(master_vm, "test_is_value");
 
 	/* Remote debugger session */
 	if (getenv("DEBUG"))
@@ -213,6 +215,12 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 		.max_cow_mem = GUEST_WORK_MEM,
 		.verbose_loader = false
 	};
+	const tinykvm::MachineOptions giga_options {
+		.max_mem = GUEST_MEMORY,
+		.max_cow_mem = GUEST_WORK_MEM,
+		.verbose_loader = false,
+		.linearize_memory = true,
+	};
 	tinykvm::Machine vm {master_vm, options};
 
 	for (size_t i = 0; i < 100; i++)
@@ -223,8 +231,14 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 			KASSERT(vm.return_value() == 666);
 			vm.vmcall("test_malloc");
 			KASSERT(vm.return_value() != 0);
-			vm.vmcall("test_expensive");
-			KASSERT(vm.return_value() != 0);
+			//vm.vmcall("test_expensive");
+			//KASSERT(vm.return_value() != 0);
+			/* This VM has sequential memory again */
+			vm.vmcall("write_value", 10 + i);
+			KASSERT(vm.return_value() == 10 + i);
+			tinykvm::Machine gigavm {vm, giga_options};
+			gigavm.vmcall("test_is_value", 10 + i);
+			KASSERT(gigavm.return_value() == 666);
 		} catch (...) {
 			vm.print_pagetables();
 			vm.print_registers();

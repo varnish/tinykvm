@@ -86,3 +86,17 @@ long test_malloc()
 
 	return (uintptr_t) p;
 }
+
+
+__attribute__((used))
+int write_value(int value)
+{
+	cow = value;
+	return value;
+}
+__attribute__((used))
+int test_is_value(int value)
+{
+	assert(cow == value);
+	return 666;
+}

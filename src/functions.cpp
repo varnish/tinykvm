@@ -6,7 +6,6 @@
 //#define VERBOSE_GUEST_EXITS
 //#define VERBOSE_MMAP
 //#define VERBOSE_SYSCALLS
-static const uint64_t BRK_MAX = 0x100000;
 
 #ifdef VERBOSE_MMAP
 #define PRINTMMAP(fmt, ...) printf(fmt, __VA_ARGS__);
@@ -97,7 +96,7 @@ void setup_kvm_system_calls()
 			}
 			else {
 				auto& mm = machine.mmap();
-				const uint64_t mmap_start = machine.heap_address() + BRK_MAX;
+				const uint64_t mmap_start = machine.mmap_start();
 				if (mm < mmap_start)
 					mm = mmap_start;
 				regs.rax = mm;
@@ -128,8 +127,8 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		12, [] (auto& machine) { // BRK
 			auto regs = machine.registers();
-			if (regs.rdi > machine.heap_address() + BRK_MAX) {
-				regs.rax = machine.heap_address() + BRK_MAX;
+			if (regs.rdi > machine.heap_address() + Machine::BRK_MAX) {
+				regs.rax = machine.heap_address() + Machine::BRK_MAX;
 			} else if (regs.rdi < machine.heap_address()) {
 				regs.rax = machine.heap_address();
 			} else {
@@ -200,13 +199,17 @@ void setup_kvm_system_calls()
 			/* writev: Stdout, Stderr */
 			else if (fd == 1 || fd == 2)
 			{
-				size_t written = 0;
+				ssize_t written = 0;
 				for (size_t i = 0; i < count; i++) {
 					g_iovec vec;
 					machine.copy_from_guest(&vec, regs.rsi + i * sizeof(g_iovec), sizeof(g_iovec));
 					// Ignore empty writes? Max 4k writes.
-					if (vec.iov_len == 0 || vec.iov_len > 4096)
+					if (vec.iov_len == 0)
 						continue;
+					if (vec.iov_len > 4096) {
+						written = -ENOMEM;
+						continue;
+					}
 					const size_t bytes = vec.iov_len;
 					char buffer[bytes];
 					machine.copy_from_guest(buffer, vec.iov_base, bytes);
@@ -215,7 +218,7 @@ void setup_kvm_system_calls()
 				}
 				regs.rax = written;
 			} else {
-				regs.rax = -1;
+				regs.rax = -EPERM;
 			}
 			machine.set_registers(regs);
 		});
@@ -229,7 +232,7 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		25, [] (auto& machine) { // MREMAP
 			auto regs = machine.registers();
-			const uint64_t mmap_start = machine.heap_address() + BRK_MAX;
+			const uint64_t mmap_start = machine.mmap_start();
 			auto& mm = machine.mmap();
 			uint64_t old_addr = regs.rdi & ~(uint64_t)0xFFF;
 			uint64_t old_len = regs.rsi & ~(uint64_t)0xFFF;
