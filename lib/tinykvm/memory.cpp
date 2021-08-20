@@ -15,6 +15,15 @@
 
 namespace tinykvm {
 
+static bool page_is_zeroed(uint64_t* page) {
+	for (size_t i = 0; i < 512; i += 8) {
+		if ((page[i+0] | page[i+1] | page[i+2] | page[i+3]) != 0 ||
+			(page[i+4] | page[i+5] | page[i+6] | page[i+7]) != 0)
+			return false;
+	}
+	return true;
+}
+
 vMemory::vMemory(Machine& m, const MachineOptions& options,
 	uint64_t ph, uint64_t sf, char* p, size_t s, bool own)
 	: machine(m), physbase(ph), safebase(sf),
@@ -38,7 +47,12 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 		this->owned = true;
 		// Copy the entire memory from the original VM (expensive!)
 		// XXX: Brutally slow. TODO: Change for MAP_SHARED!!!
-		std::memcpy(ptr, other.ptr, other.size);
+		for (uint64_t off = 0; off < other.size; off += PAGE_SIZE) {
+			uint64_t* other_page = (uint64_t*)&other.ptr[off];
+			if (!page_is_zeroed(other_page)) {
+				std::memcpy(&ptr[off], other_page, PAGE_SIZE);
+			}
+		}
 		// For each active bank page, commit it to master memory
 		// then clear out all the memory banks.
 		for (const auto& bank : other.banks) {
