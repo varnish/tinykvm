@@ -179,7 +179,7 @@ void test_forking(tinykvm::Machine& master_vm)
 	/* Reset and call into VM */
 	for (size_t i = 0; i < 20; i++)
 	{
-		vm.reset_to(master_vm);
+		vm.reset_to(master_vm, options);
 		vm.vmcall("test_return");
 		KASSERT(vm.return_value() == 666);
 		vm.set_printer([] (auto, size_t) {});
@@ -218,7 +218,7 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 	for (size_t i = 0; i < 100; i++)
 	{
 		try {
-			vm.reset_to(master_vm);
+			vm.reset_to(master_vm, options);
 			vm.vmcall("test_copy_on_write");
 			KASSERT(vm.return_value() == 666);
 			vm.vmcall("test_malloc");

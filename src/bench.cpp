@@ -210,7 +210,7 @@ int main(int argc, char** argv)
 	/* Warmup for resets */
 	for (unsigned i = 0; i < 10; i++)
 	{
-		fvm.reset_to(master_vm);
+		fvm.reset_to(master_vm, options);
 		fvm.vmcall(vmcall_address);
 	}
 
@@ -222,7 +222,7 @@ int main(int argc, char** argv)
 	{
 		auto frt0 = time_now();
 		asm("" : : : "memory");
-		fvm.reset_to(master_vm);
+		fvm.reset_to(master_vm, options);
 		asm("" : : : "memory");
 		auto frt1 = time_now();
 		asm("" : : : "memory");
