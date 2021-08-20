@@ -24,6 +24,7 @@ namespace tinykvm
 		uint32_t max_cow_mem = 0;
 
 		bool verbose_loader = false;
+		bool linearize_memory = false;
 	};
 
 	class MachineException : public std::exception {

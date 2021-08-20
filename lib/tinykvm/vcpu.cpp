@@ -175,7 +175,7 @@ std::string_view Machine::io_data() const
 	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
 }
 
-void Machine::setup_long_mode(const Machine* other)
+void Machine::setup_long_mode(const Machine* other, const MachineOptions& options)
 {
 	if (other == nullptr)
 	{
@@ -193,10 +193,10 @@ void Machine::setup_long_mode(const Machine* other)
 
 		vcpu.set_special_registers(master_sregs);
 	}
-	else
+	else if (LIKELY(!options.linearize_memory))
 	{
 		/* Clone master PML4 page */
-		auto pml4 = memory.new_page();
+		auto pml4 = memory.new_page(0x0);
 		tinykvm::page_duplicate(pml4.pmem, other->memory.page_at(other->memory.page_tables));
 		memory.page_tables = pml4.addr;
 
@@ -221,6 +221,15 @@ void Machine::setup_long_mode(const Machine* other)
 			(void) entry;
 		});
 #endif
+	} else { /* Forked linearized VM */
+		/* Inherit the special registers of the master machine */
+		struct kvm_sregs sregs;
+		other->vcpu.get_special_registers(sregs);
+
+		/* Restore the original linearized memory */
+		sregs.cr3 = PT_ADDR;
+
+		vcpu.set_special_registers(sregs);
 	}
 }
 
@@ -535,7 +544,9 @@ void Machine::prepare_copy_on_write()
 	foreach_page_makecow(this->memory);
 	//print_pagetables(this->memory);
 	/* Cache all the special registers, which we will use on forks */
-	vcpu.cached_sregs = new kvm_sregs {};
+	if (vcpu.cached_sregs == nullptr) {
+		vcpu.cached_sregs = new kvm_sregs {};
+	}
 	get_special_registers(*vcpu.cached_sregs);
 }
 

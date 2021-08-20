@@ -20,6 +20,7 @@
 namespace tinykvm {
 
 /* We want to remove the CLONEABLE bit after a page has been duplicated */
+static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
 static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~PDE64_CLONEABLE;
 static constexpr uint64_t PDE64_PD_SPLIT_MASK = 0x8000000000000FFF & ~(PDE64_RW | PDE64_CLONEABLE);
 
@@ -319,7 +320,7 @@ void foreach_page(const vMemory& mem, foreach_page_t callback)
 void foreach_page_makecow(vMemory& mem)
 {
 	foreach_page(mem,
-		[] (uint64_t addr, uint64_t& entry, size_t size) {
+		[] (uint64_t addr, uint64_t& entry, size_t /*size*/) {
 			if (addr != 0xffe00000) {
 				const uint64_t flags = (PDE64_PRESENT | PDE64_RW);
 				if ((entry & flags) == flags) {
@@ -371,8 +372,8 @@ inline bool is_copy_on_write(uint64_t entry) {
 	return (entry & (PDE64_CLONEABLE | PDE64_RW)) == PDE64_CLONEABLE;
 }
 static void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
-	/* Allocate new page */
-	auto page = memory.new_page();
+	/* Allocate new page, pass old vaddr to memory banks */
+	auto page = memory.new_page(entry & PDE64_ADDR_MASK);
 	assert((page.addr & 0x8000000000000FFF) == 0x0);
 	/* Copy all entries from old page */
 	tinykvm::page_duplicate(page.pmem, data);
@@ -381,11 +382,11 @@ static void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& 
 	data = page.pmem;
 }
 static void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
-	/* Allocate new page */
-	auto page = memory.new_page();
+	/* Allocate new page, pass old vaddr to memory banks */
+	auto page = memory.new_page(entry & PDE64_ADDR_MASK);
 	assert((page.addr & 0x8000000000000FFF) == 0x0);
 	/* Zero all entries from old page */
-	page_memzero(page.pmem);
+	tinykvm::page_memzero(page.pmem);
 	/* Set new entry, copy flags and set as cloned */
 	entry = page.addr | (entry & PDE64_CLONED_MASK) | flags;
 	data = page.pmem;
@@ -427,7 +428,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 					uint64_t flags = pd[k] & PDE64_PD_SPLIT_MASK;
 					uint64_t branch_flags = flags | PDE64_CLONEABLE;
 					/* Allocate pagetable and fill 4k entries */
-					auto page = memory.new_page();
+					auto page = memory.new_page(0x0);
 					for (size_t e = 0; e < 512; e++) {
 						page.pmem[e] = pt_base | (e << 12) | branch_flags;
 					}

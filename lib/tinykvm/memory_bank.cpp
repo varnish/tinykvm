@@ -9,7 +9,6 @@
 #define PAGE_SIZE   0x1000
 
 namespace tinykvm {
-static constexpr unsigned N_PAGES = 16;
 
 MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	: m_machine { machine },
@@ -23,7 +22,7 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	   We have to + 1 to make sure it's rounded up, avoiding
 	   any possible reallocations close to being out of memory.
 	   NOTE: DO NOT modify this! Needs deque behavior. */
-	m_mem.reserve(m_max_pages / N_PAGES + 1);
+	m_mem.reserve(m_max_pages / MemoryBank::N_PAGES + 1);
 }
 
 char* MemoryBanks::try_alloc(size_t N)
@@ -33,7 +32,7 @@ char* MemoryBanks::try_alloc(size_t N)
 
 MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 {
-	size_t pages = N_PAGES;
+	size_t pages = MemoryBank::N_PAGES;
 	char* mem = this->try_alloc(pages);
 	if (mem == nullptr) {
 		pages = 4;
@@ -88,10 +87,11 @@ MemoryBank::~MemoryBank()
 	free(this->mem);
 }
 
-MemoryBank::Page MemoryBank::get_next_page()
+MemoryBank::Page MemoryBank::get_next_page(uint64_t vaddr)
 {
 	assert(n_used < n_pages);
 	uint64_t offset = PAGE_SIZE * n_used;
+	page_vaddr.at(n_used) = vaddr;
 	n_used++;
 	return {(uint64_t *)&mem[offset], addr + offset};
 }

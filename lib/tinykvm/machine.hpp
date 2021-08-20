@@ -91,7 +91,9 @@ struct Machine
 	address_t entry_address() const noexcept;
 	address_t exit_address() const noexcept;
 	void set_stack_address(address_t addr) { this->m_stack_address = addr; }
+	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
+	static constexpr uint64_t BRK_MAX = 0x100000;
 
 	uint64_t address_of(const char*) const;
 
@@ -139,7 +141,7 @@ private:
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
-	void setup_long_mode(const Machine* other);
+	void setup_long_mode(const Machine* other, const MachineOptions&);
 	void handle_exception(uint8_t intr);
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	long run_once();

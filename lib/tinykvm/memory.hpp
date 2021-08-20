@@ -42,12 +42,11 @@ struct vMemory {
 	char *get_userpage_at(uint64_t addr);
 	char *get_kernelpage_at(uint64_t addr);
 	char *get_writable_page(uint64_t addr, bool zeroes);
-	MemoryBank::Page new_page();
+	MemoryBank::Page new_page(uint64_t vaddr);
 
 	VirtualMem vmem() const;
 
 	[[noreturn]] static void memory_exception(const char*, uint64_t, uint64_t);
-	void reset();
 	void fork_reset(const MachineOptions&);
 	void fork_reset(vMemory& other, const MachineOptions&);
 	static vMemory New(Machine&, const MachineOptions&, uint64_t phys, uint64_t safe, size_t size);
@@ -56,6 +55,7 @@ struct vMemory {
 	vMemory(Machine&, const MachineOptions&, uint64_t, uint64_t, char*, size_t, bool = true);
 	/* Loan memory from another machine */
 	vMemory(Machine&, const MachineOptions&, const vMemory& other);
+	~vMemory();
 };
 
 struct MemRange {

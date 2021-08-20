@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <vector>
 #include "common.hpp"
 #include "virtual_mem.hpp"
@@ -8,21 +9,24 @@ struct Machine;
 struct MemoryBanks;
 
 struct MemoryBank {
+	static constexpr unsigned N_PAGES = 16;
+
 	char*    mem;
 	uint64_t addr;
 	uint16_t       n_used = 0;
 	const uint16_t n_pages;
 	const uint16_t idx;
+	std::array<uint64_t, N_PAGES> page_vaddr;
 	MemoryBanks& banks;
 
 	bool within(uint64_t a, uint64_t s) const noexcept {
 		return (a >= addr) && (a + s <= addr + this->size());
 	}
-	char* at(uint64_t vaddr) {
-		return &mem[vaddr - this->addr];
+	char* at(uint64_t paddr) {
+		return &mem[paddr - this->addr];
 	}
-	const char* at(uint64_t vaddr) const {
-		return &mem[vaddr - this->addr];
+	const char* at(uint64_t paddr) const {
+		return &mem[paddr - this->addr];
 	}
 	uint64_t size() const noexcept { return n_pages * 4096; }
 	bool empty() const noexcept { return n_used == n_pages; }
@@ -30,7 +34,7 @@ struct MemoryBank {
 		uint64_t* pmem;
 		uint64_t  addr;
 	};
-	Page get_next_page();
+	Page get_next_page(uint64_t vaddr);
 
 	VirtualMem to_vmem() const noexcept;
 

@@ -8,7 +8,6 @@
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
-#include <sys/mman.h>
 extern "C" int close(int);
 //#define KVM_VERBOSE_MEMORY
 
@@ -41,7 +40,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->elf_loader(options);
 
 	this->vcpu.init(*this);
-	this->setup_long_mode(nullptr);
+	this->setup_long_mode(nullptr, options);
 	struct tinykvm_x86regs regs {};
 	/* Store the registers, so that Machine is ready to go */
 	this->setup_registers(regs);
@@ -52,7 +51,8 @@ Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 
 Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_stopped {true},
-	  m_forked  {true},
+	  m_prepped {false},
+	  m_forked  {!options.linearize_memory},
 	  m_binary {other.m_binary},
 	  memory   {*this, options, other.memory},
 	  m_stack_address {other.m_stack_address},
@@ -62,7 +62,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_mt     {nullptr}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
-	assert(other.m_prepped == true && "Call Machine::prepare_copy_on_write() first");
+	assert((other.m_prepped || options.linearize_memory) && "Call Machine::prepare_copy_on_write() first");
 
 	/* Unfortunately we have to create a new VM because
 	   memory is tied to VMs and not vCPUs. */
@@ -73,7 +73,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(*this);
-	this->setup_long_mode(&other);
+	this->setup_long_mode(&other, options);
 
 	/* We have to make a copy here, to make sure the fork knows
 	   about the multi-threading state. */
@@ -89,9 +89,6 @@ Machine::~Machine()
 		close(fd);
 	}
 	vcpu.deinit();
-	if (memory.owned) {
-		munmap(memory.ptr, memory.size);
-	}
 }
 
 void Machine::reset_to(Machine& other, const MachineOptions& options)
@@ -124,7 +121,7 @@ void Machine::reset_to(Machine& other, const MachineOptions& options)
 		m_mt = nullptr;
 	}
 
-	this->setup_long_mode(&other);
+	this->setup_long_mode(&other, options);
 
 	this->set_registers(other.registers());
 }

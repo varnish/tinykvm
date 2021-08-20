@@ -11,6 +11,7 @@
 #define ALT_ARENA_SIZE 0x4000000000
 #define ALT_ARENA_END  (ALT_ARENA + ALT_ARENA_SIZE)
 #define ALT_ARENA_PHYS 0x8000000
+#define KERNEL_BOUNDARY  0x40000
 
 namespace tinykvm {
 
@@ -25,12 +26,45 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other)
 	: vMemory{m, options, other.physbase, other.safebase, other.ptr, other.size, false}
 {
+	if (UNLIKELY(options.linearize_memory))
+	{
+		// Allocate new memory for this VM, own it
+		this->ptr = (char*)mmap(NULL, this->size, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+		if (ptr == MAP_FAILED) {
+			memory_exception("Failed to allocate guest memory", 0, this->size);
+		}
+		madvise(ptr, size, MADV_MERGEABLE);
+		this->owned = true;
+		// Copy the entire memory from the original VM (expensive!)
+		// XXX: Brutally slow. TODO: Change for MAP_SHARED!!!
+		std::memcpy(ptr, other.ptr, other.size);
+		// For each active bank page, commit it to master memory
+		// then clear out all the memory banks.
+		for (const auto& bank : other.banks) {
+			for (size_t i = 0; i < bank.n_used; i++) {
+				const uint64_t vaddr = bank.page_vaddr.at(i);
+				// Pages "at" zero are pagetable pages, and we don't want
+				// those anymore as we are sequentializing memory.
+				if (vaddr >= KERNEL_BOUNDARY && within(vaddr, PAGE_SIZE)) {
+					std::memcpy(&ptr[vaddr], &bank.mem[i * PAGE_SIZE], PAGE_SIZE);
+				} else {
+					/*char buffer[128];
+					const int len = snprintf(buffer, sizeof(buffer),
+						"WARNING: Skipped page 0x%lX\n", vaddr);
+					m.print(buffer, len);*/
+				}
+			}
+		}
+	}
+}
+vMemory::~vMemory()
+{
+	if (this->owned) {
+		munmap(this->ptr, this->size);
+	}
 }
 
-void vMemory::reset()
-{
-	std::memset(this->ptr, 0, this->size);
-}
 void vMemory::fork_reset(const MachineOptions& options)
 {
 	banks.reset(options);
@@ -146,9 +180,9 @@ VirtualMem vMemory::vmem() const
 	return VirtualMem::New(physbase, ptr, size);
 }
 
-MemoryBank::Page vMemory::new_page()
+MemoryBank::Page vMemory::new_page(uint64_t vaddr)
 {
-	return banks.get_available_bank().get_next_page();
+	return banks.get_available_bank().get_next_page(vaddr);
 }
 
 char* vMemory::get_writable_page(uint64_t addr, bool zeroes)
