@@ -85,10 +85,8 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 __attribute__ ((cold))
 Machine::~Machine()
 {
-	if (!m_forked) {
-		close(fd);
-	}
 	vcpu.deinit();
+	close(this->fd);
 }
 
 void Machine::reset_to(Machine& other, const MachineOptions& options)

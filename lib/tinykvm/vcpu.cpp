@@ -232,7 +232,7 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 		other->vcpu.get_special_registers(sregs);
 
 		/* Restore the original linearized memory */
-		sregs.cr3 = PT_ADDR;
+		sregs.cr3 = memory.page_tables;
 		sregs.cr0 |= CR0_WP;
 
 		vcpu.set_special_registers(sregs);
