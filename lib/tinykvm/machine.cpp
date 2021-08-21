@@ -53,7 +53,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_stopped {true},
 	  m_prepped {false},
 	  m_forked  {!options.linearize_memory},
-	  m_binary {other.m_binary},
+	  m_binary {options.binary.empty() ? other.m_binary : options.binary},
 	  memory   {*this, options, other.memory},
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address {other.m_heap_address},

@@ -16,12 +16,14 @@
 #include <cstdint>
 #include <exception>
 #include <string>
+#include <string_view>
 
 namespace tinykvm
 {
 	struct MachineOptions {
 		uint64_t max_mem;
 		uint32_t max_cow_mem = 0;
+		std::string_view binary = {};
 
 		bool verbose_loader = false;
 		bool linearize_memory = false;
