@@ -223,7 +223,7 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 	};
 	tinykvm::Machine vm {master_vm, options};
 
-	for (size_t i = 0; i < 100; i++)
+	for (size_t i = 0; i < 10; i++)
 	{
 		try {
 			vm.reset_to(master_vm, options);
@@ -233,16 +233,30 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 			KASSERT(vm.return_value() != 0);
 			//vm.vmcall("test_expensive");
 			//KASSERT(vm.return_value() != 0);
-			/* This VM has sequential memory again */
+
 			vm.vmcall("write_value", 10 + i);
 			KASSERT(vm.return_value() == 10 + i);
-			tinykvm::Machine gigavm {vm, giga_options};
-			gigavm.vmcall("test_is_value", 10 + i);
-			KASSERT(gigavm.return_value() == 666);
 		} catch (...) {
 			vm.print_pagetables();
 			vm.print_registers();
 			throw;
 		}
+		/* This VM has sequential memory again */
+		tinykvm::Machine gigavm {vm, giga_options};
+		try {
+			gigavm.vmcall("test_is_value", 10 + i);
+			KASSERT(gigavm.return_value() == 666);
+			/* Make it forkable */
+			gigavm.prepare_copy_on_write();
+		} catch (...) {
+			gigavm.print_pagetables();
+			gigavm.print_registers();
+			throw;
+		}
+		/* Fork the re-linearized forked VM */
+		tinykvm::Machine forked_gigavm {gigavm, options};
+		/* Verify value is still there */
+		forked_gigavm.vmcall("test_is_value", 10 + i);
+		KASSERT(forked_gigavm.return_value() == 666);
 	}
 }

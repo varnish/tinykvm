@@ -222,12 +222,18 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 		});
 #endif
 	} else { /* Forked linearized VM */
+		/* We have to re-initialize the page tables,
+		   because the source machine has been CoW-prepped.
+		   NOTE: Better solution is to replace CLONEABLE flags with W=2 */
+		setup_amd64_paging(memory, m_binary);
+
 		/* Inherit the special registers of the master machine */
 		struct kvm_sregs sregs;
 		other->vcpu.get_special_registers(sregs);
 
 		/* Restore the original linearized memory */
 		sregs.cr3 = PT_ADDR;
+		sregs.cr0 |= CR0_WP;
 
 		vcpu.set_special_registers(sregs);
 	}
