@@ -1,10 +1,7 @@
 #include "page_streaming.hpp"
-#include <cstring>
 
-#define ENABLE_AVX2_PAGE_UTILS
 #if defined(ENABLE_AVX2_PAGE_UTILS)
 #include <x86intrin.h>
-#endif
 
 namespace tinykvm {
 
@@ -58,3 +55,6 @@ void page_memzero(uint64_t* dest)
 }
 
 } // tinykvm
+
+
+#endif
