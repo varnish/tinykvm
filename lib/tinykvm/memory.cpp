@@ -79,6 +79,11 @@ vMemory::~vMemory()
 	}
 }
 
+bool vMemory::compare(const vMemory& other)
+{
+	return this->ptr == other.ptr;
+}
+
 void vMemory::fork_reset(const MachineOptions& options)
 {
 	banks.reset(options);

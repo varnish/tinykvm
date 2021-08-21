@@ -258,5 +258,11 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 		/* Verify value is still there */
 		forked_gigavm.vmcall("test_is_value", 10 + i);
 		KASSERT(forked_gigavm.return_value() == 666);
+
+		/* Reset back to the VM */
+		vm.reset_to(gigavm, options);
+		/* Verify value is still there */
+		vm.vmcall("test_is_value", 10 + i);
+		KASSERT(vm.return_value() == 666);
 	}
 }

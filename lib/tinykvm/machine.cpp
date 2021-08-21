@@ -96,7 +96,9 @@ void Machine::reset_to(Machine& other, const MachineOptions& options)
 	assert(m_forked && other.m_prepped &&
 		"This machine must be forked, and the source must be prepped");
 
-	if (this->m_binary.begin() != other.m_binary.begin()) {
+	if (this->m_binary.begin() != other.m_binary.begin() ||
+		memory.compare(other.memory) == false)
+	{
 		/* This could be dangerous, but we will allow it anyway,
 		   for those who dare to mutate an existing VM in prod. */
 		this->m_binary = other.m_binary;

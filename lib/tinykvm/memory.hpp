@@ -44,6 +44,8 @@ struct vMemory {
 	char *get_writable_page(uint64_t addr, bool zeroes);
 	MemoryBank::Page new_page(uint64_t vaddr);
 
+	bool compare(const vMemory& other);
+
 	VirtualMem vmem() const;
 
 	[[noreturn]] static void memory_exception(const char*, uint64_t, uint64_t);
