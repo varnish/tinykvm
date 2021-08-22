@@ -6,18 +6,11 @@ dw .vm64_rexit
 
 ALIGN 0x10
 .vm64_entry:
-	;; XXX: This is a known problem.
-	;; Page table races will trash this RCX eventually.
-	;; You *need* to find a way to enter kernel mode
-	;; without pushing to stack here.
-	push rcx
+	mov r14, rcx
 	mov rax, 0x1F777
 	syscall
-	pop rcx
-	;; Set RBP to 0x0 here?
-	mov rax, rbp
-	xor rbp, rbp
-	jmp rax
+	mov rcx, r14
+	jmp r15
 .vm64_rexit:
 	mov rdi, rax
 .vm64_rexit_retry:
