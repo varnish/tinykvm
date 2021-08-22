@@ -36,7 +36,7 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, uint64_t rsp, Args&&... args)
 	struct tinykvm_x86regs regs {};
 	/* Set IOPL=3 to allow I/O instructions */
 	regs.rflags = 2 | (3 << 12);
-	regs.rax = addr;
+	regs.rbp = addr;
 	regs.rip = this->entry_address();
 	regs.rsp = rsp;
 	[[maybe_unused]] unsigned iargs = 0;
