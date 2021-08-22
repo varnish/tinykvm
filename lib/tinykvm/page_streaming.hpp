@@ -19,4 +19,6 @@ namespace tinykvm {
 	}
 #endif
 
+	extern void avx2_page_duplicate(uint64_t* dest, const uint64_t* source);
+
 }

@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 #include <string>
 #include <unistd.h>
+#include "page_streaming.hpp"
 #include "kernel/amd64.hpp"
 #include "kernel/paging.hpp"
 #include "kernel/memory_layout.hpp"
@@ -38,11 +39,15 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 		this->owned = true;
 		// Copy the entire memory from the original VM (expensive!)
 		// XXX: Brutally slow. TODO: Change for MAP_SHARED!!!
-		for (uint64_t off = PAGE_SIZE; off < other.size; off += PAGE_SIZE) {
+		const uint64_t mmap_end = other.machine.mmap();
+		const uint64_t memory_end = std::min(other.size, mmap_end);
+		//printf("Memory end is 0x%lX vs mmap end: 0x%lX\n",
+		//	memory_end, mmap_end);
+		for (uint64_t off = PAGE_SIZE; off < memory_end; off += PAGE_SIZE) {
 			if (off < KERNEL_BOUNDARY || off >= m.stack_address()) {
 				uint64_t* other_page = (uint64_t*)&other.ptr[off];
 				if (!page_is_zeroed(other_page))
-					std::memcpy(&ptr[off], other_page, PAGE_SIZE);
+					avx2_page_duplicate((uint64_t*)&ptr[off], other_page);
 			}
 		}
 		// For each active bank page, commit it to master memory
@@ -55,7 +60,8 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 				// Also, the stack is below the program itself, so we can
 				// just ignore everything below that point.
 				if (vaddr >= m.stack_address() && within(vaddr, PAGE_SIZE)) {
-					std::memcpy(&ptr[vaddr], &bank.mem[i * PAGE_SIZE], PAGE_SIZE);
+					avx2_page_duplicate(
+						(uint64_t*)&ptr[vaddr], (uint64_t*)&bank.mem[i * PAGE_SIZE]);
 				} else {
 					/*char buffer[128];
 					const int len = snprintf(buffer, sizeof(buffer),
