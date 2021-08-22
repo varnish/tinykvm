@@ -96,9 +96,6 @@ void setup_kvm_system_calls()
 			}
 			else {
 				auto& mm = machine.mmap();
-				const uint64_t mmap_start = machine.mmap_start();
-				if (mm < mmap_start)
-					mm = mmap_start;
 				regs.rax = mm;
 				// XXX: MAP_ANONYMOUS -->
 				//memset(machine.rw_memory_at(regs.rax, regs.rsi), 0, regs.rsi);
@@ -232,12 +229,11 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		25, [] (auto& machine) { // MREMAP
 			auto regs = machine.registers();
-			const uint64_t mmap_start = machine.mmap_start();
 			auto& mm = machine.mmap();
 			uint64_t old_addr = regs.rdi & ~(uint64_t)0xFFF;
 			uint64_t old_len = regs.rsi & ~(uint64_t)0xFFF;
 			uint64_t new_len = regs.rdx & ~(uint64_t)0xFFF;
-			if (old_addr + old_len == mm && mm >= mmap_start) {
+			if (old_addr + old_len == mm) {
 				mm = old_addr + new_len;
 				regs.rax = old_addr;
 			} else {

@@ -78,6 +78,8 @@ void Machine::elf_loader(const MachineOptions& options)
 	if (this->m_stack_address < 0x100000) {
 		this->m_stack_address = 0x100000;
 	}
+	/* Make sure mmap starts at a sane offset */
+	this->m_mm = this->mmap_start();
 
 	//this->relocate_section(".rela.plt", ".symtab");
 
