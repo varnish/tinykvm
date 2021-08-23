@@ -122,8 +122,6 @@ void Machine::reset_to(Machine& other, const MachineOptions& options)
 	}
 
 	this->setup_long_mode(&other, options);
-
-	this->set_registers(other.registers());
 }
 
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
