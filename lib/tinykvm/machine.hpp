@@ -113,6 +113,7 @@ struct Machine
 
 	void install_memory(uint32_t idx, const VirtualMem&);
 	void delete_memory(uint32_t idx);
+	std::string_view binary() const noexcept { return m_binary; }
 
 	template <typename... Args> constexpr
 	tinykvm_x86regs setup_call(uint64_t addr, uint64_t rsp, Args&&... args);
