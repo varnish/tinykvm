@@ -186,10 +186,7 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 		/* Userspace entry/exit code */
 		setup_vm64_usercode(memory.at(USER_ASM_ADDR));
 
-		uint64_t last_page = setup_amd64_paging(memory, m_binary);
-		//this->ptmem = MemRange::New("Page tables",
-		//	memory.page_tables, last_page - memory.page_tables);
-		(void) last_page;
+		this->m_kernel_end = setup_amd64_paging(memory, m_binary);
 
 		vcpu.set_special_registers(master_sregs);
 	}
@@ -225,7 +222,7 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 		/* We have to re-initialize the page tables,
 		   because the source machine has been CoW-prepped.
 		   NOTE: Better solution is to replace CLONEABLE flags with W=2 */
-		setup_amd64_paging(memory, m_binary);
+		this->m_kernel_end = setup_amd64_paging(memory, m_binary);
 
 		/* Inherit the special registers of the master machine */
 		struct kvm_sregs sregs;

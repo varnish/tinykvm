@@ -12,7 +12,6 @@
 #define ALT_ARENA_SIZE 0x4000000000
 #define ALT_ARENA_END  (ALT_ARENA + ALT_ARENA_SIZE)
 #define ALT_ARENA_PHYS 0x8000000
-#define KERNEL_BOUNDARY  0x40000
 
 namespace tinykvm {
 
@@ -39,16 +38,20 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 		this->owned = true;
 		// Copy the entire memory from the original VM (expensive!)
 		// XXX: Brutally slow. TODO: Change for MAP_SHARED!!!
-		const uint64_t mmap_end = other.machine.mmap();
+		const uint64_t kernel_end = other.machine.kernel_end_address();
+		const uint64_t mmap_end   = other.machine.mmap();
 		const uint64_t memory_end = std::min(other.size, mmap_end);
-		//printf("Memory end is 0x%lX vs mmap end: 0x%lX\n",
-		//	memory_end, mmap_end);
-		for (uint64_t off = PAGE_SIZE; off < memory_end; off += PAGE_SIZE) {
-			if (off < KERNEL_BOUNDARY || off >= m.stack_address()) {
-				uint64_t* other_page = (uint64_t*)&other.ptr[off];
-				if (!page_is_zeroed(other_page))
-					avx2_page_duplicate((uint64_t*)&ptr[off], other_page);
-			}
+		//printf("Kernel end is 0x%lX. Memory end is 0x%lX vs mmap end: 0x%lX\n",
+		//	kernel_end, other.size, mmap_end);
+		for (uint64_t off = 0x1000; off < kernel_end; off += PAGE_SIZE) {
+			const auto* other_page = (uint64_t*)&other.ptr[off];
+			if (!page_is_zeroed(other_page))
+				page_duplicate((uint64_t*)&ptr[off], other_page);
+		}
+		for (uint64_t off = m.stack_address(); off < memory_end; off += PAGE_SIZE) {
+			const auto* other_page = (uint64_t*)&other.ptr[off];
+			if (!page_is_zeroed(other_page))
+				page_duplicate((uint64_t*)&ptr[off], other_page);
 		}
 		// For each active bank page, commit it to master memory
 		// then clear out all the memory banks.
@@ -60,7 +63,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 				// Also, the stack is below the program itself, so we can
 				// just ignore everything below that point.
 				if (vaddr >= m.stack_address() && within(vaddr, PAGE_SIZE)) {
-					avx2_page_duplicate(
+					page_duplicate(
 						(uint64_t*)&ptr[vaddr], (uint64_t*)&bank.mem[i * PAGE_SIZE]);
 				} else {
 					/*char buffer[128];

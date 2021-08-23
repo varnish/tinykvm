@@ -91,6 +91,7 @@ struct Machine
 	address_t entry_address() const noexcept;
 	address_t exit_address() const noexcept;
 	void set_stack_address(address_t addr) { this->m_stack_address = addr; }
+	address_t kernel_end_address() const noexcept { return m_kernel_end; }
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
 	static constexpr uint64_t BRK_MAX = 0x100000;
@@ -160,6 +161,7 @@ private:
 	uint64_t m_stack_address;
 	uint64_t m_heap_address;
 	uint64_t m_start_address;
+	uint64_t m_kernel_end;
 
 	uint64_t m_mm = 0;
 	mutable std::unique_ptr<MultiThreading> m_mt;

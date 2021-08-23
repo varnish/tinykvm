@@ -56,8 +56,9 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_binary {options.binary.empty() ? other.m_binary : options.binary},
 	  memory   {*this, options, other.memory},
 	  m_stack_address {other.m_stack_address},
-	  m_heap_address {other.m_heap_address},
+	  m_heap_address  {other.m_heap_address},
 	  m_start_address {other.m_start_address},
+	  m_kernel_end    {other.m_kernel_end},
 	  m_mm     {other.m_mm},
 	  m_mt     {nullptr}
 {
@@ -103,6 +104,7 @@ void Machine::reset_to(Machine& other, const MachineOptions& options)
 		this->m_stack_address = other.m_stack_address;
 		this->m_heap_address  = other.m_heap_address;
 		this->m_start_address = other.m_start_address;
+		this->m_kernel_end    = other.m_kernel_end;
 		memory.fork_reset(other.memory, options);
 		/* Unfortunately we need to both delete and reinstall main mem */
 		this->delete_memory(0);

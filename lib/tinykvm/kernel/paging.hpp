@@ -16,7 +16,7 @@ extern void page_at(vMemory&, uint64_t addr, foreach_page_t);
 extern char * writable_page_at(vMemory&, uint64_t addr, bool zeroes = false);
 extern char * readable_page_at(vMemory&, uint64_t addr, uint64_t flags);
 
-static inline bool page_is_zeroed(uint64_t* page) {
+static inline bool page_is_zeroed(const uint64_t* page) {
 	for (size_t i = 0; i < 512; i += 8) {
 		if ((page[i+0] | page[i+1] | page[i+2] | page[i+3]) != 0 ||
 			(page[i+4] | page[i+5] | page[i+6] | page[i+7]) != 0)
