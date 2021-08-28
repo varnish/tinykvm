@@ -184,8 +184,8 @@ uint64_t Machine::translate(uint64_t virt) const
 
 void Machine::setup_registers(tinykvm_x86regs& regs)
 {
-	/* Set IOPL=3 to allow I/O instructions */
-	regs.rflags = 2 | (3 << 12);
+	/* Set IOPL=3 to allow I/O instructions, IF enabled */
+	regs.rflags = 2 | (3 << 12) | 0x200;
 	regs.rip = this->start_address();
 	regs.rsp = this->stack_address();
 }

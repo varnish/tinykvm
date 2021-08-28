@@ -118,7 +118,7 @@ struct Machine
 	std::string_view binary() const noexcept { return m_binary; }
 
 	template <typename... Args> constexpr
-	tinykvm_x86regs setup_call(uint64_t addr, uint64_t rsp, bool intr, Args&&... args);
+	tinykvm_x86regs setup_call(uint64_t addr, uint64_t rsp, Args&&... args);
 	void prepare_copy_on_write();
 	static void init();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
