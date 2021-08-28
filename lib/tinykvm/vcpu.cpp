@@ -10,6 +10,7 @@
 //#include "kernel/lapic.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
+#include "kernel/lapic.hpp"
 #include "kernel/tss.hpp"
 #include "kernel/paging.hpp"
 #include "kernel/memory_layout.hpp"
@@ -20,6 +21,7 @@ extern "C" int close(int);
 namespace tinykvm {
 	static struct kvm_sregs master_sregs;
 	static struct kvm_xcrs master_xregs;
+	static struct kvm_lapic_state master_lapic;
 	static struct {
 		__u32 nent;
 		__u32 padding;
@@ -42,7 +44,7 @@ void initialize_vcpu_stuff(int kvm_fd)
 	}
 }
 
-void Machine::vCPU::init(Machine& machine)
+void Machine::vCPU::init(Machine& machine, const MachineOptions& options)
 {
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, 0);
 	if (UNLIKELY(this->fd < 0)) {
@@ -84,6 +86,30 @@ void Machine::vCPU::init(Machine& machine)
 		master_xregs.xcrs[0].xcr = 0;
 		master_xregs.xcrs[0].value |= 0x7; // FPU, SSE, YMM
 		master_xregs.nr_xcrs = 1;
+
+		if (ioctl(this->fd, KVM_GET_LAPIC, &master_lapic)) {
+			machine_exception("KVM_GET_LAPIC: failed to get initial LAPIC");
+		}
+
+		/* A global timeout */
+		auto& lapic = *(local_apic *)&master_lapic;
+		lapic.svr.apic_enabled = 0x1;
+		lapic.lvt_lint0.delivery_mode = AMD64_APIC_MODE_EXTINT;
+		lapic.lvt_lint1.delivery_mode = AMD64_APIC_MODE_NMI;
+		lapic.lvt_timer.vector = 32;
+		lapic.lvt_timer.mask   = (options.timeout == 0) ? 0x1 : 0x0;
+		lapic.timer_icr.initial_count = options.timeout;
+		/**
+			0x0  - divide by 2
+			0x1  - divide by 4
+			0x2  - divide by 8
+			0x3  - divide by 16
+			0x4  - divide by 32
+			0x5  - divide by 64
+			0x6  - divide by 128
+			0x7  - divide by 1
+		**/
+		lapic.timer_dcr.divisor = 0x7;
 	}
 
 	/* Extended control registers */
@@ -96,39 +122,23 @@ void Machine::vCPU::init(Machine& machine)
 		__u32 nmsrs; /* number of msrs in entries */
 		__u32 pad;
 
-		struct kvm_msr_entry entries[2];
+		struct kvm_msr_entry entries[3];
 	} msrs;
-	msrs.nmsrs = 2;
+	msrs.nmsrs = 3;
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
+	msrs.entries[2].index = AMD64_MSR_APICBASE;
 	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
 	msrs.entries[1].data  = interrupt_header().vm64_syscall;
+	msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_X2APIC_ENABLE;
 
-	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < 2) {
-		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
+	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < 3) {
+		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR/X2APIC");
 	}
 
-	/* LAPIC
-	msrs.entries[0].index = AMD64_MSR_APICBASE;
-	msrs.entries[0].data  = 0xfee00000 | AMD64_MSR_XAPIC_ENABLE;
-	msrs.nmsrs = 1;
-
-	if (ioctl(this->vcpu.fd, KVM_SET_MSRS, &msrs) < 1) {
-		machine_exception("KVM_SET_MSRS: failed to enable xAPIC");
-	}
-
-	//struct local_apic lapic {};
-	struct kvm_lapic_state lapic;
-	if (ioctl(this->vcpu.fd, KVM_GET_LAPIC, &lapic)) {
-		machine_exception("KVM_GET_LAPIC: failed to get initial LAPIC");
-	}
-
-	//lapic.lvt_lint0.delivery_mode = AMD64_APIC_MODE_EXTINT;
-	//lapic.lvt_lint1.delivery_mode = AMD64_APIC_MODE_NMI;
-
-	if (ioctl(this->vcpu.fd, KVM_SET_LAPIC, &lapic)) {
+	if (ioctl(this->fd, KVM_SET_LAPIC, &master_lapic)) {
 		machine_exception("KVM_SET_LAPIC: failed to set initial LAPIC");
-	}*/
+	}
 }
 
 void Machine::vCPU::deinit()
@@ -466,6 +476,10 @@ long Machine::run_once()
 
 				memory.get_writable_page(addr, false);
 				return KVM_EXIT_IO;
+			}
+			else if (intr == 32)
+			{
+				machine_exception(amd64_exception_name(intr), intr);
 			}
 			else if (intr == 1) /* Debug trap */
 			{

@@ -39,7 +39,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->elf_loader(options);
 
-	this->vcpu.init(*this);
+	this->vcpu.init(*this, options);
 	this->setup_long_mode(nullptr, options);
 	struct tinykvm_x86regs regs {};
 	/* Store the registers, so that Machine is ready to go */
@@ -73,7 +73,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->install_memory(0, memory.vmem());
 
 	/* Initialize vCPU and long mode (fast path) */
-	this->vcpu.init(*this);
+	this->vcpu.init(*this, options);
 	this->setup_long_mode(&other, options);
 
 	/* We have to make a copy here, to make sure the fork knows
@@ -205,7 +205,10 @@ void Machine::print(const char* buffer, size_t len)
 __attribute__((cold, noreturn))
 void Machine::machine_exception(const char* msg, uint64_t data)
 {
-	throw MachineException(msg, data);
+	if (data < 32)
+		throw MachineException(msg, data);
+	else
+		throw MachineTimeoutException(msg, data);
 }
 
 __attribute__ ((cold))
@@ -245,6 +248,10 @@ int Machine::create_kvm_vm()
 	int fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
 	if (UNLIKELY(fd < 0)) {
 		machine_exception("Failed to KVM_CREATE_VM");
+	}
+
+	if (ioctl(fd, KVM_CREATE_IRQCHIP, 0) < 0) {
+		machine_exception("KVM_CREATE_IRQCHIP: failed to create LAPIC");
 	}
 
 	/*if (ioctl(fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {

@@ -84,6 +84,10 @@ ALIGN 0x10
 	add rsp, 8
 	iretq
 
+.vm64_timeout:
+	out 128 + 33, ax
+	iretq
+
 ALIGN 0x8
 .vm64_exception:
 	CPU_EXCEPT 0
@@ -109,3 +113,5 @@ ALIGN 0x8
 	CPU_EXCEPT 18
 	CPU_EXCEPT 19
 	CPU_EXCEPT 20
+	ALIGN 0x8 ;; timer interrupt
+		jmp .vm64_timeout

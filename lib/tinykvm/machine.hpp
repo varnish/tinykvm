@@ -126,7 +126,7 @@ struct Machine
 
 private:
 	struct vCPU {
-		void init(Machine&);
+		void init(Machine&, const MachineOptions&);
 		void deinit();
 		tinykvm_x86regs registers() const;
 		void assign_registers(const struct tinykvm_x86regs&);

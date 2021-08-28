@@ -34,8 +34,8 @@ template <typename... Args> inline constexpr
 tinykvm_x86regs Machine::setup_call(uint64_t addr, uint64_t rsp, Args&&... args)
 {
 	struct tinykvm_x86regs regs {};
-	/* Set IOPL=3 to allow I/O instructions */
-	regs.rflags = 2 | (3 << 12);
+	/* Set IOPL=3 to allow I/O instructions, enable IF */
+	regs.rflags = 2 | (3 << 12) | 0x200;
 	regs.r15 = addr;
 	regs.rip = this->entry_address();
 	regs.rsp = rsp;
