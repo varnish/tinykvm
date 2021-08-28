@@ -37,7 +37,7 @@ int main(int argc, char** argv)
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_WORK_MEM,
-		.verbose_loader = false
+		.verbose_loader = false,
 	};
 	tinykvm::Machine master_vm {binary, options};
 	master_vm.setup_linux(
@@ -139,7 +139,13 @@ void test_master_vm(tinykvm::Machine& vm)
 	KASSERT(vm.return_value() == 200);
 	vm.vmcall("test_malloc");
 	KASSERT(vm.return_value() != 0);
-	vm.vmcall("test_loop");
+	try {
+		const auto addr = vm.address_of("test_loop");
+		vm.timed_vmcall(addr, 0x100000);
+	} catch (const tinykvm::MachineTimeoutException& me) {
+		/* Allow timeout exception */
+		KASSERT(me.data() == 33);
+	}
 }
 
 void test_forking(tinykvm::Machine& master_vm)
@@ -245,41 +251,45 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 			throw;
 		}
 		/* This VM has sequential memory again */
-		tinykvm::Machine gigavm {vm, giga_options};
-			gigavm.vmcall("test_is_value", 10 + i);
-			KASSERT(gigavm.return_value() == 666);
-			/* Make it forkable */
-			gigavm.prepare_copy_on_write();
 		try {
-		} catch (...) {
-			gigavm.print_pagetables();
-			gigavm.print_registers();
-			fprintf(stderr, "gigavm fork (vm) failed\n");
-			throw;
-		}
-		/* Fork the re-linearized forked VM */
-		tinykvm::Machine forked_gigavm {gigavm, options};
-		try {
-			/* Verify value is still there */
-			//forked_gigavm.vmcall("test_is_value", 10 + i);
-			//KASSERT(forked_gigavm.return_value() == 666);
-		} catch (...) {
-			forked_gigavm.print_pagetables();
-			forked_gigavm.print_registers();
-			fprintf(stderr, "forked_gigavm failed\n");
-			throw;
-		}
+			tinykvm::Machine gigavm {vm, giga_options};
+			try {
+				gigavm.vmcall("test_is_value", 10 + i);
+				KASSERT(gigavm.return_value() == 666);
+				/* Make it forkable */
+				gigavm.prepare_copy_on_write();
+			} catch (...) {
+				gigavm.print_pagetables();
+				gigavm.print_registers();
+				fprintf(stderr, "gigavm tests failed\n");
+				throw;
+			}
 
-		try {
-			/* Reset back to the VM */
-			vm.reset_to(gigavm, options);
-			/* Verify value is still there */
-			vm.vmcall("test_is_value", 10 + i);
-			KASSERT(vm.return_value() == 666);
+			/* Fork the re-linearized forked VM */
+			try {
+				tinykvm::Machine forked_gigavm {gigavm, options};
+				/* Verify value is still there */
+				//forked_gigavm.vmcall("test_is_value", 10 + i);
+				//KASSERT(forked_gigavm.return_value() == 666);
+			} catch (...) {
+				fprintf(stderr, "forked_gigavm failed\n");
+				throw;
+			}
+
+			try {
+				/* Reset back to the VM */
+				vm.reset_to(gigavm, options);
+				/* Verify value is still there */
+				vm.vmcall("test_is_value", 10 + i);
+				KASSERT(vm.return_value() == 666);
+			} catch (...) {
+				vm.print_pagetables();
+				vm.print_registers();
+				fprintf(stderr, "last vm.reset_to(gigavm) failed\n");
+				throw;
+			}
 		} catch (...) {
-			vm.print_pagetables();
-			vm.print_registers();
-			fprintf(stderr, "last vm.reset_to(gigavm) failed\n");
+			fprintf(stderr, "gigavm fork (vm) failed\n");
 			throw;
 		}
 		/* We have to acknowledge that the parent VM for 'vm'

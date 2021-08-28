@@ -97,8 +97,6 @@ void Machine::vCPU::init(Machine& machine, const MachineOptions& options)
 		lapic.lvt_lint0.delivery_mode = AMD64_APIC_MODE_EXTINT;
 		lapic.lvt_lint1.delivery_mode = AMD64_APIC_MODE_NMI;
 		lapic.lvt_timer.vector = 32;
-		lapic.lvt_timer.mask   = (options.timeout == 0) ? 0x1 : 0x0;
-		lapic.timer_icr.initial_count = options.timeout;
 		/**
 			0x0  - divide by 2
 			0x1  - divide by 4
@@ -136,7 +134,13 @@ void Machine::vCPU::init(Machine& machine, const MachineOptions& options)
 		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR/X2APIC");
 	}
 
-	if (ioctl(this->fd, KVM_SET_LAPIC, &master_lapic)) {
+	auto timed_lapic = master_lapic;
+	auto& lapic = *(local_apic *)&timed_lapic;
+	lapic.lvt_timer.mask   = (options.timeout == 0) ? 0x1 : 0x0;
+	lapic.timer_icr.initial_count = options.timeout;
+	lapic.timer_ccr.curr_count = options.timeout;
+
+	if (ioctl(this->fd, KVM_SET_LAPIC, &timed_lapic)) {
 		machine_exception("KVM_SET_LAPIC: failed to set initial LAPIC");
 	}
 }
@@ -412,6 +416,7 @@ void Machine::run(unsigned timeout)
 		auto& lapic = *(local_apic *)&timed_lapic;
 		lapic.lvt_timer.mask   = 0x0;
 		lapic.timer_icr.initial_count = timeout;
+		lapic.timer_ccr.curr_count = timeout;
 
 		if (ioctl(this->vcpu.fd, KVM_SET_LAPIC, &lapic)) {
 			machine_exception("KVM_SET_LAPIC: failed to set runtime LAPIC");

@@ -232,8 +232,7 @@ struct local_apic {
 		__u32 __reserved_2[3];
 	} timer_icr;
 
-/*390*/	const
-	struct { /* Timer Current Count Register */
+/*390*/ struct { /* Timer Current Count Register */
 		__u32   curr_count;
 		__u32 __reserved_2[3];
 	} timer_ccr;

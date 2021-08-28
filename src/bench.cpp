@@ -226,7 +226,7 @@ int main(int argc, char** argv)
 		asm("" : : : "memory");
 		auto frt1 = time_now();
 		asm("" : : : "memory");
-		fvm.vmcall(vmcall_address);
+		fvm.timed_vmcall(vmcall_address, 0x400000);
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		frtime += nanodiff(frt0, frt1);
