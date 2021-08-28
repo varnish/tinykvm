@@ -9,11 +9,6 @@
 #include "kernel/paging.hpp"
 #include "kernel/memory_layout.hpp"
 
-#define ALT_ARENA      0xC000000000
-#define ALT_ARENA_SIZE 0x4000000000
-#define ALT_ARENA_END  (ALT_ARENA + ALT_ARENA_SIZE)
-#define ALT_ARENA_PHYS 0x8000000
-
 namespace tinykvm {
 
 vMemory::vMemory(Machine& m, const MachineOptions& options,
@@ -114,9 +109,6 @@ char* vMemory::at(uint64_t addr, size_t asize)
 			return bank.at(addr);
 		}
 	}
-	if (is_alt_arena(addr, asize)) {
-		return at(arena_transform(addr), asize);
-	}
 	memory_exception("Memory::at() invalid region", addr, asize);
 }
 uint64_t* vMemory::page_at(uint64_t addr) const
@@ -139,9 +131,6 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 			return bank.at(addr);
 		}
 	}
-	if (is_alt_arena(addr, asize)) {
-		return safely_at(arena_transform(addr), asize);
-	}
 	memory_exception("Memory::safely_at() invalid region", addr, asize);
 }
 std::string_view vMemory::view(uint64_t addr, size_t asize) const {
@@ -153,20 +142,8 @@ std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 			return bank.at(addr);
 		}
 	}
-	if (is_alt_arena(addr, asize)) {
-		return view(arena_transform(addr), asize);
-	}
 	memory_exception("vMemory::view failed", addr, asize);
 }
-
-bool vMemory::is_alt_arena(uint64_t addr, uint64_t asize) const noexcept {
-	return addr >= ALT_ARENA && addr + asize < ALT_ARENA_END;
-}
-uint64_t vMemory::arena_transform(uint64_t addr) const noexcept {
-	uint64_t offset = addr - ALT_ARENA;
-	return ALT_ARENA_PHYS + offset;
-}
-
 
 vMemory vMemory::New(Machine& m, const MachineOptions& options,
 	uint64_t phys, uint64_t safe, size_t size)

@@ -36,9 +36,6 @@ struct vMemory {
 	char* safely_at(uint64_t addr, size_t asize);
 	std::string_view view(uint64_t addr, size_t asize) const;
 
-	bool is_alt_arena(uint64_t a, uint64_t sz) const noexcept;
-	uint64_t arena_transform(uint64_t) const noexcept;
-
 	char *get_userpage_at(uint64_t addr);
 	char *get_kernelpage_at(uint64_t addr);
 	char *get_writable_page(uint64_t addr, bool zeroes);

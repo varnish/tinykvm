@@ -67,7 +67,7 @@ MemoryBank& MemoryBanks::get_available_bank()
 		m_arena_next += bank.size();
 		return bank;
 	}
-	throw MemoryException("Out of memory", m_num_pages, m_max_pages);
+	throw MemoryException("Out of working memory", m_num_pages, m_max_pages);
 }
 void MemoryBanks::reset(const MachineOptions& options)
 {

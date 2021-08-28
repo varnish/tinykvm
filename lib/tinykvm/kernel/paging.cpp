@@ -71,23 +71,17 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	auto* pd   = (uint64_t*) (pagetable + 0x2000);
 	auto* lowpage = (uint64_t*) (pagetable + 0x4000);
 
-	const uint64_t arena_pdpt_addr = pml4_addr + 0x5000;
-	const uint64_t arena_pd_addr   = pml4_addr + 0x6000;
-	auto* arena_pdpt = (uint64_t*) (pagetable + 0x5000);
-	auto* arena_pd   = (uint64_t*) (pagetable + 0x6000);
-
-	const uint64_t vdso_pdpt_addr = pml4_addr + 0x7000;
-	const uint64_t vsyscall_pd_addr = pml4_addr + 0x8000;
-	const uint64_t vsyscall_pt_addr = pml4_addr + 0x9000;
-	auto* vdso_pdpt = (uint64_t*) (pagetable + 0x7000);
-	auto* vsyscall_pd = (uint64_t*) (pagetable + 0x8000);
-	auto* vsyscall_pt = (uint64_t*) (pagetable + 0x9000);
+	const uint64_t vdso_pdpt_addr = pml4_addr + 0x5000;
+	const uint64_t vsyscall_pd_addr = pml4_addr + 0x6000;
+	const uint64_t vsyscall_pt_addr = pml4_addr + 0x7000;
+	auto* vdso_pdpt = (uint64_t*) (pagetable + 0x5000);
+	auto* vsyscall_pd = (uint64_t*) (pagetable + 0x6000);
+	auto* vsyscall_pt = (uint64_t*) (pagetable + 0x7000);
 
 	// next free page for ELF loader
-	uint64_t free_page = pml4_addr + 0xA000;
+	uint64_t free_page = pml4_addr + 0x8000;
 
 	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
-	pml4[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | arena_pdpt_addr;
 	pml4[511] = PDE64_PRESENT | PDE64_USER | vdso_pdpt_addr;
 	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd1_addr;
 	pdpt[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd2_addr;
@@ -123,14 +117,6 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	/* Initial userspace area (no execute) */
 	for (unsigned i = 1; i < 1024; i++) {
 		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | (i << 21);
-	}
-
-	arena_pdpt[256] = PDE64_PRESENT | PDE64_USER | PDE64_RW | arena_pd_addr;
-
-	/* Arena memory mapping at 0xC000000000 */
-	for (unsigned i = 0; i < 512; i++) {
-		uint64_t dst = 0x8'000'000 + (i << 21);
-		arena_pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | dst;
 	}
 
 	/* ELF executable area */
