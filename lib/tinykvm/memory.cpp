@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 #include <string>
 #include <unistd.h>
+#include <unordered_set>
 #include "page_streaming.hpp"
 #include "kernel/amd64.hpp"
 #include "kernel/paging.hpp"
@@ -36,23 +37,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 		}
 		madvise(ptr, size, MADV_MERGEABLE);
 		this->owned = true;
-		// Copy the entire memory from the original VM (expensive!)
-		// XXX: Brutally slow. TODO: Change for MAP_SHARED!!!
-		const uint64_t kernel_end = other.machine.kernel_end_address();
-		const uint64_t mmap_end   = other.machine.mmap();
-		const uint64_t memory_end = std::min(other.size, mmap_end);
-		//printf("Kernel end is 0x%lX. Memory end is 0x%lX vs mmap end: 0x%lX\n",
-		//	kernel_end, other.size, mmap_end);
-		for (uint64_t off = 0x1000; off < kernel_end; off += PAGE_SIZE) {
-			const auto* other_page = (uint64_t*)&other.ptr[off];
-			if (!page_is_zeroed(other_page))
-				page_duplicate((uint64_t*)&ptr[off], other_page);
-		}
-		for (uint64_t off = m.stack_address(); off < memory_end; off += PAGE_SIZE) {
-			const auto* other_page = (uint64_t*)&other.ptr[off];
-			if (!page_is_zeroed(other_page))
-				page_duplicate((uint64_t*)&ptr[off], other_page);
-		}
+		std::unordered_set<uint64_t> already_duplicated;
 		// For each active bank page, commit it to master memory
 		// then clear out all the memory banks.
 		for (const auto& bank : other.banks) {
@@ -65,6 +50,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 				if (vaddr >= m.stack_address() && within(vaddr, PAGE_SIZE)) {
 					page_duplicate(
 						(uint64_t*)&ptr[vaddr], (uint64_t*)&bank.mem[i * PAGE_SIZE]);
+					already_duplicated.insert(vaddr);
 				} else {
 					/*char buffer[128];
 					const int len = snprintf(buffer, sizeof(buffer),
@@ -72,6 +58,24 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 					m.print(buffer, len);*/
 				}
 			}
+		}
+		// Copy the entire memory from the original VM (expensive!)
+		// XXX: Brutally slow. TODO: Change for MAP_SHARED!!!
+		const uint64_t kernel_end = other.machine.kernel_end_address();
+		const uint64_t mmap_end   = other.machine.mmap();
+		const uint64_t memory_end = std::min(other.size, mmap_end);
+		const uint64_t stack_base = m.stack_address() & ~0xFFFL;
+		//printf("Kernel end is 0x%lX. Memory end is 0x%lX vs mmap end: 0x%lX\n",
+		//	kernel_end, other.size, mmap_end);
+		for (uint64_t off = 0x1000; off < kernel_end; off += PAGE_SIZE) {
+			const auto* other_page = (uint64_t*)&other.ptr[off];
+			if (!page_is_zeroed(other_page))
+				page_duplicate((uint64_t*)&ptr[off], other_page);
+		}
+		for (uint64_t off = stack_base; off < memory_end; off += PAGE_SIZE) {
+			const auto* other_page = (uint64_t*)&other.ptr[off];
+			if (already_duplicated.count(off) == 0 && !page_is_zeroed(other_page))
+				page_duplicate((uint64_t*)&ptr[off], other_page);
 		}
 	}
 }
