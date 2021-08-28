@@ -100,3 +100,9 @@ int test_is_value(int value)
 	assert(cow == value);
 	return 666;
 }
+
+__attribute__((used))
+int test_loop()
+{
+	while(1);
+}

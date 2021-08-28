@@ -73,10 +73,10 @@ int main(int argc, char** argv)
 		if (getenv("FORK")) {
 			master_vm.prepare_copy_on_write();
 			vm = new tinykvm::Machine {master_vm, options};
-			auto regs = vm->setup_call(call_addr, rsp);
+			auto regs = vm->setup_call(call_addr, rsp, false);
 			vm->set_registers(regs);
 		} else {
-			auto regs = master_vm.setup_call(call_addr, rsp);
+			auto regs = master_vm.setup_call(call_addr, rsp, false);
 			master_vm.set_registers(regs);
 		}
 
@@ -109,8 +109,8 @@ int main(int argc, char** argv)
 	tinykvm::Machine vm{master_vm, options};
 
 	/* Make a VM function call */
-	auto regs = vm.setup_call(call_addr, rsp);
+	auto regs = vm.setup_call(call_addr, rsp, true);
 	vm.set_registers(regs);
 	printf("Calling 0x%lX\n", call_addr);
-	vm.run();
+	vm.run(0x400000);
 }

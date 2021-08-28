@@ -31,11 +31,11 @@ inline void Machine::set_special_registers(const struct kvm_sregs& sregs) {
 
 
 template <typename... Args> inline constexpr
-tinykvm_x86regs Machine::setup_call(uint64_t addr, uint64_t rsp, Args&&... args)
+tinykvm_x86regs Machine::setup_call(uint64_t addr, uint64_t rsp, bool intr, Args&&... args)
 {
 	struct tinykvm_x86regs regs {};
 	/* Set IOPL=3 to allow I/O instructions, enable IF */
-	regs.rflags = 2 | (3 << 12) | 0x200;
+	regs.rflags = 2 | (3 << 12) | (intr ? 0x200 : 0x0);
 	regs.r15 = addr;
 	regs.rip = this->entry_address();
 	regs.rsp = rsp;
@@ -82,7 +82,7 @@ tinykvm_x86regs Machine::setup_call(uint64_t addr, uint64_t rsp, Args&&... args)
 template <typename... Args> inline constexpr
 void Machine::vmcall(uint64_t addr, Args&&... args)
 {
-	auto regs = this->setup_call(addr, this->stack_address(), std::forward<Args> (args)...);
+	auto regs = this->setup_call(addr, this->stack_address(), false, std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
 	this->run();
 }
@@ -92,6 +92,14 @@ void Machine::vmcall(const char* function, Args&&... args)
 {
 	auto address = address_of(function);
 	vmcall(address, std::forward<Args> (args)...);
+}
+
+template <typename... Args> inline constexpr
+void Machine::timed_vmcall(uint64_t addr, uint32_t timeout, Args&&... args)
+{
+	auto regs = this->setup_call(addr, this->stack_address(), true, std::forward<Args> (args)...);
+	vcpu.assign_registers(regs);
+	this->run(timeout);
 }
 
 inline uint64_t Machine::stack_push(__u64& sp, const std::string& string)

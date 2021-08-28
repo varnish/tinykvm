@@ -5,7 +5,7 @@
 #include "load_file.hpp"
 
 #include <tinykvm/rsp_client.hpp>
-#define GUEST_MEMORY   0x40000000  /* 1024MB memory */
+#define GUEST_MEMORY   0x10000000  /* 256MB memory */
 #define GUEST_WORK_MEM 2*1024*1024 /* 2MB working memory */
 
 std::vector<uint8_t> load_file(const std::string& filename);
@@ -51,6 +51,7 @@ int main(int argc, char** argv)
 	verify_exists(master_vm, "test_copy_on_write");
 	verify_exists(master_vm, "write_value");
 	verify_exists(master_vm, "test_is_value");
+	verify_exists(master_vm, "test_loop");
 
 	/* Remote debugger session */
 	if (getenv("DEBUG"))
@@ -63,10 +64,10 @@ int main(int argc, char** argv)
 		if (getenv("FORK")) {
 			master_vm.prepare_copy_on_write();
 			vm = new tinykvm::Machine {master_vm, options};
-			auto regs = vm->setup_call(vm->address_of("test_return"), rsp);
+			auto regs = vm->setup_call(vm->address_of("test_return"), rsp, false);
 			vm->set_registers(regs);
 		} else {
-			auto regs = master_vm.setup_call(master_vm.address_of("test_return"), rsp);
+			auto regs = master_vm.setup_call(master_vm.address_of("test_return"), rsp, false);
 			master_vm.set_registers(regs);
 		}
 
@@ -113,7 +114,7 @@ int main(int argc, char** argv)
 	printf("*** VM forking OK\n");
 
 	printf("--- Beginning VM copy-on-write tests ---\n");
-	for (size_t i = 0; i < 10; i++) {
+	for (size_t i = 0; i < 20; i++) {
 		test_copy_on_write(master_vm);
 	}
 	printf("*** VM copy-on-write OK\n");
@@ -138,6 +139,7 @@ void test_master_vm(tinykvm::Machine& vm)
 	KASSERT(vm.return_value() == 200);
 	vm.vmcall("test_malloc");
 	KASSERT(vm.return_value() != 0);
+	vm.vmcall("test_loop");
 }
 
 void test_forking(tinykvm::Machine& master_vm)
@@ -239,30 +241,49 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 		} catch (...) {
 			vm.print_pagetables();
 			vm.print_registers();
+			fprintf(stderr, "first vm.reset_to(vm) failed\n");
 			throw;
 		}
 		/* This VM has sequential memory again */
 		tinykvm::Machine gigavm {vm, giga_options};
-		try {
 			gigavm.vmcall("test_is_value", 10 + i);
 			KASSERT(gigavm.return_value() == 666);
 			/* Make it forkable */
 			gigavm.prepare_copy_on_write();
+		try {
 		} catch (...) {
 			gigavm.print_pagetables();
 			gigavm.print_registers();
+			fprintf(stderr, "gigavm fork (vm) failed\n");
 			throw;
 		}
 		/* Fork the re-linearized forked VM */
 		tinykvm::Machine forked_gigavm {gigavm, options};
-		/* Verify value is still there */
-		forked_gigavm.vmcall("test_is_value", 10 + i);
-		KASSERT(forked_gigavm.return_value() == 666);
+		try {
+			/* Verify value is still there */
+			//forked_gigavm.vmcall("test_is_value", 10 + i);
+			//KASSERT(forked_gigavm.return_value() == 666);
+		} catch (...) {
+			forked_gigavm.print_pagetables();
+			forked_gigavm.print_registers();
+			fprintf(stderr, "forked_gigavm failed\n");
+			throw;
+		}
 
-		/* Reset back to the VM */
-		vm.reset_to(gigavm, options);
-		/* Verify value is still there */
-		vm.vmcall("test_is_value", 10 + i);
-		KASSERT(vm.return_value() == 666);
+		try {
+			/* Reset back to the VM */
+			vm.reset_to(gigavm, options);
+			/* Verify value is still there */
+			vm.vmcall("test_is_value", 10 + i);
+			KASSERT(vm.return_value() == 666);
+		} catch (...) {
+			vm.print_pagetables();
+			vm.print_registers();
+			fprintf(stderr, "last vm.reset_to(gigavm) failed\n");
+			throw;
+		}
+		/* We have to acknowledge that the parent VM for 'vm'
+		   falls out-of-scope here, which is dangerous, but
+		   *must* be supported. */
 	}
 }

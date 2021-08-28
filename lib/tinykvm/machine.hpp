@@ -23,13 +23,15 @@ struct Machine
 					const std::vector<std::string>& env = {});
 	void setup_linux(const std::vector<std::string>& args,
 					const std::vector<std::string>& env = {});
-	void run(unsigned timeout = 10);
+	void run(unsigned timeout = 0);
 
 	/* Make a function call into the VM */
 	template <typename... Args>
 	void vmcall(const char*, Args&&...);
 	template <typename... Args> constexpr
 	void vmcall(address_t, Args&&...);
+	template <typename... Args> constexpr
+	void timed_vmcall(address_t, uint32_t timeout, Args&&...);
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
 
@@ -116,7 +118,7 @@ struct Machine
 	std::string_view binary() const noexcept { return m_binary; }
 
 	template <typename... Args> constexpr
-	tinykvm_x86regs setup_call(uint64_t addr, uint64_t rsp, Args&&... args);
+	tinykvm_x86regs setup_call(uint64_t addr, uint64_t rsp, bool intr, Args&&... args);
 	void prepare_copy_on_write();
 	static void init();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);

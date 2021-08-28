@@ -404,8 +404,20 @@ void Machine::handle_exception(uint8_t intr)
 	} catch (...) {}
 }
 
-void Machine::run(unsigned fixme_timeout)
+void Machine::run(unsigned timeout)
 {
+	if (timeout != 0)
+	{
+		auto timed_lapic = master_lapic;
+		auto& lapic = *(local_apic *)&timed_lapic;
+		lapic.lvt_timer.mask   = 0x0;
+		lapic.timer_icr.initial_count = timeout;
+
+		if (ioctl(this->vcpu.fd, KVM_SET_LAPIC, &lapic)) {
+			machine_exception("KVM_SET_LAPIC: failed to set runtime LAPIC");
+		}
+	}
+
 	/* XXX: Remember to set a timeout. */
 	this->m_stopped = false;
 	while(run_once());
