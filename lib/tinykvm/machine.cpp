@@ -205,10 +205,13 @@ void Machine::print(const char* buffer, size_t len)
 __attribute__((cold, noreturn))
 void Machine::machine_exception(const char* msg, uint64_t data)
 {
-	if (data < 32)
-		throw MachineException(msg, data);
-	else
-		throw MachineTimeoutException(msg, data);
+	throw MachineException(msg, data);
+}
+
+__attribute__((cold, noreturn))
+void Machine::timeout_exception(const char* msg, uint32_t data)
+{
+	throw MachineTimeoutException(msg, data);
 }
 
 __attribute__ ((cold))

@@ -23,7 +23,7 @@ struct Machine
 					const std::vector<std::string>& env = {});
 	void setup_linux(const std::vector<std::string>& args,
 					const std::vector<std::string>& env = {});
-	void run(unsigned timeout = 0);
+	void run(float timeout_secs = 0.f);
 
 	/* Make a function call into the VM */
 	template <typename... Args>
@@ -31,7 +31,7 @@ struct Machine
 	template <typename... Args> constexpr
 	void vmcall(address_t, Args&&...);
 	template <typename... Args> constexpr
-	void timed_vmcall(address_t, uint32_t timeout, Args&&...);
+	void timed_vmcall(address_t, float timeout, Args&&...);
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
 
@@ -148,6 +148,7 @@ private:
 	void setup_long_mode(const Machine* other, const MachineOptions&);
 	void handle_exception(uint8_t intr);
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
+	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
 	long run_once();
 
 	vCPU  vcpu;

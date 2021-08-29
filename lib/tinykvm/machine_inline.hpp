@@ -95,7 +95,7 @@ void Machine::vmcall(const char* function, Args&&... args)
 }
 
 template <typename... Args> inline constexpr
-void Machine::timed_vmcall(uint64_t addr, uint32_t timeout, Args&&... args)
+void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 {
 	auto regs = this->setup_call(addr, this->stack_address(), std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);

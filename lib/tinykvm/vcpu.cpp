@@ -44,6 +44,13 @@ void initialize_vcpu_stuff(int kvm_fd)
 	}
 }
 
+/* Timer ticks for execution timeouts */
+static float ticks_to_seconds(uint32_t ticks) { return ticks / 62500000.0; }
+static uint32_t to_ticks(float seconds) {
+	const float val = seconds * 62500000.0;
+	return (val < (float)UINT32_MAX) ? (uint32_t)val : UINT32_MAX;
+}
+
 void Machine::vCPU::init(Machine& machine, const MachineOptions& options)
 {
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, 0);
@@ -137,8 +144,8 @@ void Machine::vCPU::init(Machine& machine, const MachineOptions& options)
 	auto timed_lapic = master_lapic;
 	auto& lapic = *(local_apic *)&timed_lapic;
 	lapic.lvt_timer.mask   = (options.timeout == 0) ? 0x1 : 0x0;
-	lapic.timer_icr.initial_count = options.timeout;
-	lapic.timer_ccr.curr_count = options.timeout;
+	lapic.timer_icr.initial_count = to_ticks(options.timeout);
+	lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
 
 	if (ioctl(this->fd, KVM_SET_LAPIC, &timed_lapic)) {
 		machine_exception("KVM_SET_LAPIC: failed to set initial LAPIC");
@@ -408,15 +415,15 @@ void Machine::handle_exception(uint8_t intr)
 	} catch (...) {}
 }
 
-void Machine::run(unsigned timeout)
+void Machine::run(float timeout)
 {
-	if (timeout != 0)
+	if (timeout != 0.f)
 	{
 		auto timed_lapic = master_lapic;
 		auto& lapic = *(local_apic *)&timed_lapic;
 		lapic.lvt_timer.mask   = 0x0;
-		lapic.timer_icr.initial_count = timeout;
-		lapic.timer_ccr.curr_count = timeout;
+		lapic.timer_icr.initial_count = to_ticks(timeout);
+		lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
 
 		if (ioctl(this->vcpu.fd, KVM_SET_LAPIC, &lapic)) {
 			machine_exception("KVM_SET_LAPIC: failed to set runtime LAPIC");
@@ -494,9 +501,16 @@ long Machine::run_once()
 				memory.get_writable_page(addr, false);
 				return KVM_EXIT_IO;
 			}
-			else if (intr == 32)
+			else if (intr == 33)
 			{
-				machine_exception(amd64_exception_name(intr), intr);
+				struct kvm_lapic_state kvmlapic;
+				if (ioctl(vcpu.fd, KVM_GET_LAPIC, &kvmlapic)) {
+					machine_exception("KVM_GET_LAPIC: failed to get LAPIC (timeout)");
+				}
+				/* A global timeout */
+				auto& lapic = *(local_apic *)&kvmlapic;
+				timeout_exception(amd64_exception_name(intr),
+					lapic.timer_icr.initial_count);
 			}
 			else if (intr == 1) /* Debug trap */
 			{

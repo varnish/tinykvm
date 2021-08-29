@@ -23,7 +23,7 @@ namespace tinykvm
 	struct MachineOptions {
 		uint64_t max_mem;
 		uint32_t max_cow_mem = 0;
-		uint32_t timeout = 0x8000000;
+		float timeout = 0.f;
 		std::string_view binary = {};
 
 		bool verbose_loader = false;
@@ -44,7 +44,9 @@ namespace tinykvm
 	};
 
 	class MachineTimeoutException: public MachineException {
+	public:
 		using MachineException::MachineException;
+		float seconds() const noexcept { return data() / 62500000.0; }
 	};
 
 	class MemoryException: public std::exception {
