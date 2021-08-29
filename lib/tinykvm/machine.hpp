@@ -120,6 +120,7 @@ struct Machine
 	template <typename... Args> constexpr
 	tinykvm_x86regs setup_call(uint64_t addr, uint64_t rsp, Args&&... args);
 	void prepare_copy_on_write();
+	bool is_forked() const noexcept { return m_forked; }
 	static void init();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);
