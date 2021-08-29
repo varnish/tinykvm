@@ -63,34 +63,16 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 			"Stack base: 0x%lX\n",
 			kernel_end, other.size, mmap_end,
 			stack_base);*/
-		uint64_t* (*kernel_get) (const vMemory&, uint64_t) = nullptr;
-		uint64_t* (*user_get) (const vMemory&, uint64_t) = nullptr;
-		if (other.machine.is_forked()) {
-			/* The other machine operates with CoW working memory */
-			kernel_get = [] (const vMemory& other, uint64_t off) {
-				return (uint64_t*)other.get_kernelpage_at(off);
-			};
-			user_get = [] (const vMemory& other, uint64_t off) {
-				return (uint64_t*)other.get_userpage_at(off);
-			};
-		} else {
-			/* The other machine has sequential memory */
-			kernel_get = [] (const vMemory& other, uint64_t off) {
-				return other.page_at(off);
-			};
-			user_get = [] (const vMemory& other, uint64_t off) {
-				/* It's always going to be safe */
-				return other.page_at(off);
-			};
-		}
+		/* NOTE to self: Don't use permission- or pagetable-based
+		   page getters here. This is how it's supposed to work. */
 		for (uint64_t off = 0x1000; off < kernel_end; off += PAGE_SIZE) {
-			const auto* other_page = kernel_get(other, off);
+			const auto* other_page = other.page_at(off);
 			if (!page_is_zeroed(other_page)) {
 				page_duplicate((uint64_t*)&ptr[off], other_page);
 			}
 		}
 		for (uint64_t off = stack_base; off < memory_end; off += PAGE_SIZE) {
-			const auto* other_page = user_get(other, off);
+			const auto* other_page = other.page_at(off);
 			if (already_duplicated.count(off) == 0 && !page_is_zeroed(other_page))
 				page_duplicate((uint64_t*)&ptr[off], other_page);
 		}
