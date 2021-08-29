@@ -114,7 +114,7 @@ int main(int argc, char** argv)
 	printf("*** VM forking OK\n");
 
 	printf("--- Beginning VM copy-on-write tests ---\n");
-	for (size_t i = 0; i < 20; i++) {
+	for (size_t i = 0; i < 100; i++) {
 		test_copy_on_write(master_vm);
 	}
 	printf("*** VM copy-on-write OK\n");
@@ -269,8 +269,8 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 			try {
 				tinykvm::Machine forked_gigavm {gigavm, options};
 				/* Verify value is still there */
-				//forked_gigavm.vmcall("test_is_value", 10 + i);
-				//KASSERT(forked_gigavm.return_value() == 666);
+				forked_gigavm.vmcall("test_is_value", 10 + i);
+				KASSERT(forked_gigavm.return_value() == 666);
 			} catch (...) {
 				fprintf(stderr, "forked_gigavm failed\n");
 				throw;
