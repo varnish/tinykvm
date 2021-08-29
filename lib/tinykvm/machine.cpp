@@ -35,7 +35,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->fd = create_kvm_vm();
 
-	install_memory(0, memory.vmem());
+	install_memory(0, memory.vmem(), false);
 
 	this->elf_loader(options);
 
@@ -70,7 +70,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->fd = create_kvm_vm();
 
 	/* Reuse pre-CoWed pagetable from the master machine */
-	this->install_memory(0, memory.vmem());
+	this->install_memory(0, memory.vmem(), true);
 
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(*this, options);
@@ -108,7 +108,7 @@ void Machine::reset_to(Machine& other, const MachineOptions& options)
 		memory.fork_reset(other.memory, options);
 		/* Unfortunately we need to both delete and reinstall main mem */
 		this->delete_memory(0);
-		this->install_memory(0, memory.vmem());
+		this->install_memory(0, memory.vmem(), true);
 	} else {
 		memory.fork_reset(options);
 	}
@@ -137,11 +137,11 @@ uint64_t Machine::stack_push_cstr(__u64& sp, const char* string)
 	return stack_push(sp, string, strlen(string)+1);
 }
 
-void Machine::install_memory(uint32_t idx, const VirtualMem& mem)
+void Machine::install_memory(uint32_t idx, const VirtualMem& mem, bool ro)
 {
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
-		.flags = (mem.ptr) ? 0u : (uint32_t) KVM_MEM_READONLY,
+		.flags = 0u, //(ro) ? (uint32_t)KVM_MEM_READONLY : 0u,
 		.guest_phys_addr = mem.physbase,
 		.memory_size = mem.size,
 		.userspace_addr = (uintptr_t) mem.ptr,

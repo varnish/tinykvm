@@ -113,7 +113,7 @@ struct Machine
 	void print(const char*, size_t);
 	void print_pagetables() const;
 
-	void install_memory(uint32_t idx, const VirtualMem&);
+	void install_memory(uint32_t idx, const VirtualMem&, bool ro);
 	void delete_memory(uint32_t idx);
 	std::string_view binary() const noexcept { return m_binary; }
 

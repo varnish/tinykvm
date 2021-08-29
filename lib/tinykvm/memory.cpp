@@ -55,20 +55,22 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 			}
 		}
 		// Copy the entire memory from the original VM (expensive!)
-		// XXX: Brutally slow. TODO: Change for MAP_SHARED!!!
 		const uint64_t kernel_end = other.machine.kernel_end_address();
 		const uint64_t mmap_end   = other.machine.mmap();
 		const uint64_t memory_end = std::min(other.size, mmap_end);
-		const uint64_t stack_base = m.stack_address() & ~0xFFFL;
-		//printf("Kernel end is 0x%lX. Memory end is 0x%lX vs mmap end: 0x%lX\n",
-		//	kernel_end, other.size, mmap_end);
+		const uint64_t stack_base = other.machine.stack_address() & ~(uint64_t)0xFFF;
+		/*printf("Kernel end is 0x%lX. Memory end is 0x%lX vs mmap end: 0x%lX\n"
+			"Stack base: 0x%lX\n",
+			kernel_end, other.size, mmap_end,
+			stack_base);*/
 		for (uint64_t off = 0x1000; off < kernel_end; off += PAGE_SIZE) {
-			const auto* other_page = (uint64_t*)&other.ptr[off];
-			if (!page_is_zeroed(other_page))
+			const auto* other_page = (uint64_t*)other.get_kernelpage_at(off);
+			if (!page_is_zeroed(other_page)) {
 				page_duplicate((uint64_t*)&ptr[off], other_page);
+			}
 		}
 		for (uint64_t off = stack_base; off < memory_end; off += PAGE_SIZE) {
-			const auto* other_page = (uint64_t*)&other.ptr[off];
+			const auto* other_page = (uint64_t*)other.get_userpage_at(off);
 			if (already_duplicated.count(off) == 0 && !page_is_zeroed(other_page))
 				page_duplicate((uint64_t*)&ptr[off], other_page);
 		}
@@ -198,13 +200,13 @@ char* vMemory::get_writable_page(uint64_t addr, bool zeroes)
 	return ret;
 }
 
-char* vMemory::get_kernelpage_at(uint64_t addr)
+char* vMemory::get_kernelpage_at(uint64_t addr) const
 {
 	constexpr uint64_t flags = PDE64_PRESENT;
 	return readable_page_at(*this, addr, flags);
 }
 
-char* vMemory::get_userpage_at(uint64_t addr)
+char* vMemory::get_userpage_at(uint64_t addr) const
 {
 	constexpr uint64_t flags = PDE64_PRESENT | PDE64_USER;
 	return readable_page_at(*this, addr, flags);

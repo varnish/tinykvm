@@ -104,18 +104,19 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	const uint64_t user_page = USER_ASM_ADDR >> 12;
 	lowpage[user_page] = PDE64_PRESENT | PDE64_USER | USER_ASM_ADDR;
 
-	/* Kernel area < 256KB */
-	for (unsigned i = 5; i < 64; i++) {
-		lowpage[i] = 0;
-	}
-
-	/* Stack area 256KB -> 2MB */
-	for (unsigned i = 64; i < 512; i++) {
-		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | (i << 12);
-	}
-
 	/* Initial userspace area (no execute) */
-	for (unsigned i = 1; i < 1024; i++) {
+	pd[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
+	{
+		/* Spend one page pre-splitting the (likely) stack area */
+		auto* pte = (uint64_t*) memory.at(free_page);
+		// Set writable 4k attributes
+		for (uint64_t i = 0; i < 512; i++) {
+			uint64_t addr4k = (1ul << 21) | (i << 12);
+			pte[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | addr4k;
+		}
+		free_page += 0x1000;
+	}
+	for (unsigned i = 2; i < 1024; i++) {
 		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | (i << 21);
 	}
 
@@ -187,6 +188,17 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	vdso_pdpt[511] = PDE64_PRESENT | PDE64_USER | vsyscall_pd_addr;
 	vsyscall_pd[507] = PDE64_PRESENT | PDE64_USER | vsyscall_pt_addr;
 	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | 0x4000;
+
+	/* Kernel area ~64KB */
+	const size_t kernel_end_idx = free_page >> 12;
+	for (unsigned i = 5; i < kernel_end_idx; i++) {
+		lowpage[i] = PDE64_PRESENT | PDE64_NX;
+	}
+
+	/* Stack area ~64KB -> 2MB */
+	for (unsigned i = kernel_end_idx; i < 512; i++) {
+		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | (i << 12);
+	}
 
 	return free_page;
 }
@@ -398,8 +410,14 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 			const uint64_t k = index_from_pd_entry(addr);
 			if (pd[k] & PDE64_PRESENT) {
 				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
+				uint64_t* pt = memory.page_at(pd[k] & ~(uint64_t)0x8000000000000FFF);
+				/* Make copy of page if needed (not likely) */
+				if (UNLIKELY(is_copy_on_write(pd[k]))) {
+					clone_and_update_entry(memory, pd[k], pt, PDE64_RW);
+					CLPRINT("-> Cloning a PD entry: 0x%lX\n", pd[k]);
+				}
+
 				/* NOTE: Make sure we are re-reading pd[k] */
-				uint64_t* pt = nullptr;
 				if (UNLIKELY(pd[k] & PDE64_PS)) { // 2MB page
 					CLPRINT("-> Splitting a 2MB PD entry into 4KB pages\n");
 					/* Remove PS flag */
@@ -415,14 +433,6 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 					/* Update 2MB entry, add read-write */
 					pd[k] = page.addr | flags | PDE64_RW;
 					pt = page.pmem;
-				} else {
-					pt = memory.page_at(pd[k] & ~(uint64_t)0x8000000000000FFF);
-				}
-
-				/* Make copy of page if needed (not likely) */
-				if (UNLIKELY(is_copy_on_write(pd[k]))) {
-					clone_and_update_entry(memory, pd[k], pt, PDE64_RW);
-					CLPRINT("-> Cloning a PD entry: 0x%lX\n", pd[k]);
 				}
 
 				const uint64_t e = index_from_pt_entry(addr);
@@ -448,7 +458,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 	memory_exception("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
 }
 
-char * readable_page_at(vMemory& memory, uint64_t addr, uint64_t flags)
+char * readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags)
 {
 	CLPRINT("Resolving a readable page for 0x%lX\n", addr);
 	auto* pml4 = memory.page_at(memory.page_tables);

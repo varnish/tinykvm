@@ -36,8 +36,8 @@ struct vMemory {
 	char* safely_at(uint64_t addr, size_t asize);
 	std::string_view view(uint64_t addr, size_t asize) const;
 
-	char *get_userpage_at(uint64_t addr);
-	char *get_kernelpage_at(uint64_t addr);
+	char *get_userpage_at(uint64_t addr) const;
+	char *get_kernelpage_at(uint64_t addr) const;
 	char *get_writable_page(uint64_t addr, bool zeroes);
 	MemoryBank::Page new_page(uint64_t vaddr);
 

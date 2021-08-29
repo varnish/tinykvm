@@ -409,7 +409,8 @@ void RSPClient::handle_readmem()
 	char* d = data;
 	try {
 		for (unsigned i = 0; i < len; i++) {
-			uint8_t val = *m_machine->unsafe_memory_at(addr + i, 1);
+			uint8_t val;
+			m_machine->unsafe_copy_from_guest(&val, addr + i, 1);
 			*d++ = lut[(val >> 4) & 0xF];
 			*d++ = lut[(val >> 0) & 0xF];
 		}
