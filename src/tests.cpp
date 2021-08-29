@@ -141,10 +141,9 @@ void test_master_vm(tinykvm::Machine& vm)
 	KASSERT(vm.return_value() != 0);
 	try {
 		const auto addr = vm.address_of("test_loop");
-		vm.timed_vmcall(addr, 0x100000);
+		vm.timed_vmcall(addr, 1.0);
 	} catch (const tinykvm::MachineTimeoutException& me) {
-		/* Allow timeout exception */
-		KASSERT(me.data() == 33);
+		KASSERT(me.seconds() == 1.0);
 	}
 }
 
