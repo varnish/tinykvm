@@ -56,7 +56,7 @@ void page_memzero(uint64_t* dest)
 }
 #endif
 
-__attribute__((feature("avx")))
+__attribute__((target("avx")))
 void avx2_page_duplicate(uint64_t* dest, const uint64_t* source)
 {
 	for (size_t i = 0; i < 16; i++) {
@@ -77,6 +77,21 @@ void avx2_page_duplicate(uint64_t* dest, const uint64_t* source)
 		_mm256_stream_pd((double *)&dest[4 * 5], *(__m256d *) &i5);
 		_mm256_stream_pd((double *)&dest[4 * 6], *(__m256d *) &i6);
 		_mm256_stream_pd((double *)&dest[4 * 7], *(__m256d *) &i7);
+		dest   += 4 * 8;
+		source += 4 * 8;
+	}
+}
+__attribute__((target("avx")))
+void avx2_page_dupliteit(uint64_t* dest, const uint64_t* source)
+{
+	for (size_t i = 0; i < 16; i++) {
+		#pragma unroll(8)
+		for (int j = 0; j < 8; j++) {
+			__m256i zmm = _mm256_load_si256((__m256i *)&source[4 * j]);
+			int is_zero = _mm256_testz_si256(zmm, zmm);
+			if (is_zero == 0)
+			_mm256_store_si256((__m256i *)&dest[4 * j], zmm);
+		}
 		dest   += 4 * 8;
 		source += 4 * 8;
 	}

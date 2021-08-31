@@ -43,7 +43,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 				// Also, the stack is below the program itself, so we can
 				// just ignore everything below that point.
 				if (vaddr >= m.stack_address() && within(vaddr, PAGE_SIZE)) {
-					page_duplicate(
+					avx2_page_dupliteit(
 						(uint64_t*)&ptr[vaddr], (uint64_t*)&bank.mem[i * PAGE_SIZE]);
 					already_duplicated.insert(vaddr);
 				} else {
@@ -67,14 +67,12 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 		   page getters here. This is how it's supposed to work. */
 		for (uint64_t off = 0x1000; off < kernel_end; off += PAGE_SIZE) {
 			const auto* other_page = other.page_at(off);
-			if (!page_is_zeroed(other_page)) {
-				page_duplicate((uint64_t*)&ptr[off], other_page);
-			}
+			avx2_page_dupliteit((uint64_t*)&ptr[off], other_page);
 		}
 		for (uint64_t off = stack_base; off < memory_end; off += PAGE_SIZE) {
 			const auto* other_page = other.page_at(off);
-			if (already_duplicated.count(off) == 0 && !page_is_zeroed(other_page))
-				page_duplicate((uint64_t*)&ptr[off], other_page);
+			if (already_duplicated.count(off) == 0)
+				avx2_page_dupliteit((uint64_t*)&ptr[off], other_page);
 		}
 	}
 }
