@@ -6,7 +6,7 @@
 
 #include <tinykvm/rsp_client.hpp>
 #define GUEST_MEMORY   0x40000000  /* 1024MB memory */
-#define GUEST_WORK_MEM 2*1024*1024 /* 2MB working memory */
+#define GUEST_WORK_MEM 256*1024*1024 /* 256MB working mem */
 
 static uint64_t verify_exists(tinykvm::Machine& vm, const char* name)
 {
