@@ -14,6 +14,7 @@
 inline timespec time_now();
 inline long nanodiff(timespec start_time, timespec end_time);
 static void benchmark_alternate_tenant_resets(tinykvm::Machine&);
+static void benchmark_two_tenants_two_vms(tinykvm::Machine&);
 
 int main(int argc, char** argv)
 {
@@ -113,8 +114,14 @@ int main(int argc, char** argv)
 
 	for (auto* vm : vms)
 	{
+		vm->set_printer(
+			[] (const char*, size_t) {
+			});
+
 		/* Normal execution of _start -> main() */
 		vm->run();
+
+		vm->set_printer();
 	}
 
 	asm("" : : : "memory");
@@ -202,6 +209,21 @@ int main(int argc, char** argv)
 	auto ft3 = time_now();
 	asm("" : : : "memory");
 
+	#define NUM_VMEXITS      200000
+	uint64_t bench_vmexit_address = cvm.address_of("bench_vmexits");
+	uint64_t bench_vmexit_time = 0;
+	for (unsigned i = 0; i < 1; i++)
+	{
+		asm("" : : : "memory");
+		auto ft0 = time_now();
+		asm("" : : : "memory");
+		cvm.vmcall(bench_vmexit_address, NUM_VMEXITS);
+		asm("" : : : "memory");
+		auto ft1 = time_now();
+		bench_vmexit_time += nanodiff(ft0, ft1);
+	}
+
+
 	/* Benchmark the fork reset feature */
 	printf("Benchmarking fast reset...\n");
 	tinykvm::Machine fvm {master_vm, options};
@@ -243,10 +265,15 @@ int main(int argc, char** argv)
 	printf("vmcall + destructor: %ldns (%ld micros)\n",
 		nanos_per_fc - nanos_per_gf, (nanos_per_fc - nanos_per_gf) / 1000);
 	printf("VM fork totals: %ldns (%ld micros)\n", nanos_per_fc, nanos_per_fc / 1000);
+
+	auto nanos_per_vmexit = bench_vmexit_time / NUM_VMEXITS;
+	printf("VM vmexit time: %ldns (%ld micros)\n", nanos_per_vmexit, nanos_per_vmexit / 1000);
+
 	printf("Fast reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
 	printf("Fast vmcall: %ldns (%ld micros)\n", frtotal, frtotal / 1000);
 
 	benchmark_alternate_tenant_resets(master_vm);
+	benchmark_two_tenants_two_vms(master_vm);
 }
 
 void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm)
@@ -300,6 +327,55 @@ void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm)
 
 	printf("Alternating reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
 	printf("Alternating vmcall: %ldns (%ld micros)\n", frtotal, frtotal / 1000);
+}
+
+void benchmark_two_tenants_two_vms(tinykvm::Machine& master_vm)
+{
+	const uint64_t vmcall_address = master_vm.address_of("bench");
+
+	tinykvm::Machine other_vm { master_vm,
+	{
+		.max_mem = GUEST_MEMORY,
+		.max_cow_mem = 0,
+		.linearize_memory = true
+	} };
+	other_vm.prepare_copy_on_write();
+
+	const tinykvm::MachineOptions options {
+		.max_mem = GUEST_MEMORY,
+		.max_cow_mem = GUEST_COW_MEM,
+	};
+
+	tinykvm::Machine fvm[2] {
+		tinykvm::Machine {master_vm, options},
+		tinykvm::Machine {master_vm, options},
+	};
+
+	/* Reset benchmark */
+	uint64_t frtime = 0;
+	uint64_t frtotal = 0;
+	uint64_t counter = 0;
+
+	for (unsigned i = 0; i < NUM_RESETS; i++)
+	{
+		auto frt0 = time_now();
+		asm("" : : : "memory");
+		counter = (counter + 1) % 2;
+		fvm[counter].reset_to(master_vm, options);
+		asm("" : : : "memory");
+		auto frt1 = time_now();
+		asm("" : : : "memory");
+		fvm[counter].timed_vmcall(vmcall_address, 0x400000);
+		asm("" : : : "memory");
+		auto frt2 = time_now();
+		frtime += nanodiff(frt0, frt1);
+		frtotal += nanodiff(frt0, frt2);
+	}
+	frtime /= NUM_RESETS;
+	frtotal /= NUM_RESETS;
+
+	printf("Alternating 2xVMs reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
+	printf("Alternating 2xVMs vmcall: %ldns (%ld micros)\n", frtotal, frtotal / 1000);
 }
 
 timespec time_now()

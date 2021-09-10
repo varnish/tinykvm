@@ -54,6 +54,19 @@ void bench_write()
 	assert(nprimes == 78498);
 }
 
+asm(".global one_vmexit\n" \
+".type one_vmexit, function\n" \
+"one_vmexit:\n" \
+"	out %ax, $1\n" \
+"	ret\n");
+extern void one_vmexit();
+
+__attribute__((used))
+void bench_vmexits(int count)
+{
+	while (count--) one_vmexit();
+}
+
 #include <assert.h>
 #include <pthread.h>
 
