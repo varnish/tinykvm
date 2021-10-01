@@ -5,6 +5,7 @@ project(tinykvm)
 #
 
 option(KVM_DEBUG        "Enable debugging features" OFF)
+option(KVM_AVX512       "Enable AVX512 instructions" OFF)
 option(KVM_EXPERIMENTAL "Enable experimental features" OFF)
 
 set (SOURCES
@@ -40,4 +41,7 @@ if (KVM_DEBUG)
 	target_compile_options(tinykvm PUBLIC -O0 -g)
 else()
 	target_compile_options(tinykvm PUBLIC -O2 -g)
+endif()
+if (KVM_AVX512)
+	target_compile_definitions(tinykvm PUBLIC KVM_AVX512=1)
 endif()

@@ -89,9 +89,12 @@ void Machine::vCPU::init(Machine& machine, const MachineOptions& options)
 		if (ioctl(this->fd, KVM_GET_XCRS, &master_xregs) < 0) {
 			machine_exception("KVM_GET_XCRS failed");
 		}
-		/* Enable AVX instructions */
+		/* Enable AVX and AVX512 instructions */
 		master_xregs.xcrs[0].xcr = 0;
 		master_xregs.xcrs[0].value |= 0x7; // FPU, SSE, YMM
+#  ifdef KVM_AVX512
+		master_xregs.xcrs[0].value |= 0xE0; // AVX512
+#  endif
 		master_xregs.nr_xcrs = 1;
 
 		if (ioctl(this->fd, KVM_GET_LAPIC, &master_lapic)) {
