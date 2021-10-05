@@ -35,9 +35,12 @@ struct Machine
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
 
+	template <typename... Args>
+	void timed_smpcall(size_t cpu_id, uint64_t stack, address_t addr, float timeout, Args&&...);
+
 	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
-	bool stopped() const noexcept { return m_stopped; }
+	bool stopped() const noexcept { return vcpu.stopped; }
 	void reset_to(Machine&, const MachineOptions&);
 
 	/* When zeroes == true, new pages will be zeroed instead of duplicated */
@@ -79,7 +82,6 @@ struct Machine
 	template <typename T> void set_userdata(T* data) { m_userdata = data; }
 	template <typename T> T* get_userdata() { return static_cast<T*> (m_userdata); }
 
-	std::string_view io_data() const;
 	std::string_view memory_at(uint64_t a, size_t s) const;
 	template <typename T = char>
 	T* rw_memory_at(uint64_t a, size_t s);
@@ -108,9 +110,9 @@ struct Machine
 	const auto& mmap() const { return m_mm; }
 	auto& mmap() { return m_mm; }
 
-	void print_registers();
 	void set_printer(printer_func pf = m_default_printer) { m_printer = std::move(pf); }
 	void print(const char*, size_t);
+	void print_registers() { vcpu.print_registers(); }
 	void print_pagetables() const;
 
 	void install_memory(uint32_t idx, const VirtualMem&, bool ro);
@@ -129,16 +131,27 @@ struct Machine
 
 private:
 	struct vCPU {
-		void init(Machine&, const MachineOptions&);
+		void init(int id, Machine&, const MachineOptions&);
+		void smp_init(int id, Machine&);
 		void deinit();
 		tinykvm_x86regs registers() const;
 		void assign_registers(const struct tinykvm_x86regs&);
 		void get_special_registers(struct kvm_sregs&) const;
 		void set_special_registers(const struct kvm_sregs&);
 
+		void run(float timeout);
+		long run_once();
+		std::string_view io_data() const;
+
+		void print_registers();
+		void handle_exception(uint8_t intr);
+
 		int fd = 0;
+		int cpu_id = 0;
+		bool stopped = true;
+	private:
 		struct kvm_run *kvm_run = nullptr;
-		struct kvm_sregs* cached_sregs = nullptr;
+		Machine* machine = nullptr;
 	};
 	void setup_registers(tinykvm_x86regs&);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
@@ -147,14 +160,13 @@ private:
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const Machine* other, const MachineOptions&);
-	void handle_exception(uint8_t intr);
+	void prepare_cpus(size_t num_cpus);
+	vCPU& smp_cpu(size_t idx);
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
-	long run_once();
 
 	vCPU  vcpu;
 	int   fd = 0;
-	bool  m_stopped = true;
 	bool  m_prepped = false;
 	bool  m_forked = false;
 	void* m_userdata = nullptr;
@@ -170,6 +182,9 @@ private:
 
 	uint64_t m_mm = 0;
 	mutable std::unique_ptr<MultiThreading> m_mt;
+	struct kvm_sregs* cached_sregs = nullptr;
+
+	std::vector<vCPU> m_cpus;
 
 	/* How to print exceptions, register dumps etc. */
 	printer_func m_printer = m_default_printer;

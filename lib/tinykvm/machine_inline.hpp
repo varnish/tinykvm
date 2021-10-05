@@ -1,7 +1,7 @@
 
 inline void Machine::stop(bool s)
 {
-	this->m_stopped = s;
+	vcpu.stopped = s;
 }
 
 inline void Machine::system_call(unsigned idx)
@@ -99,7 +99,18 @@ void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 {
 	auto regs = this->setup_call(addr, this->stack_address(), std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
-	this->run(timeout);
+	vcpu.run(timeout);
+}
+
+template <typename... Args> inline
+void Machine::timed_smpcall(size_t num_cpus, uint64_t stack, uint64_t addr, float timeout, Args&&... args)
+{
+	auto regs = this->setup_call(addr, stack, std::forward<Args> (args)...);
+	this->prepare_cpus(num_cpus);
+	for (size_t cpu = 0; cpu < num_cpus; cpu++) {
+		m_cpus.at(cpu).assign_registers(regs);
+		m_cpus.at(cpu).run(timeout);
+	}
 }
 
 inline uint64_t Machine::stack_push(__u64& sp, const std::string& string)

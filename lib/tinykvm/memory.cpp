@@ -32,7 +32,17 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 		}
 		madvise(ptr, size, MADV_MERGEABLE);
 		this->owned = true;
+
+		const uint64_t kernel_end = other.machine.kernel_end_address();
+		const uint64_t mmap_end   = other.machine.mmap();
+		const uint64_t memory_end = std::min(other.size, mmap_end);
+		const uint64_t stack_base = other.machine.stack_address() & ~(uint64_t)0xFFF;
+		/*printf("Kernel end is 0x%lX. Memory end is 0x%lX vs mmap end: 0x%lX\n"
+			"Stack base: 0x%lX\n",
+			kernel_end, other.size, mmap_end,
+			stack_base);*/
 		std::unordered_set<uint64_t> already_duplicated;
+
 		// For each active bank page, commit it to master memory
 		// then clear out all the memory banks.
 		for (const auto& bank : other.banks) {
@@ -42,27 +52,16 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 				// those anymore as we are sequentializing memory.
 				// Also, the stack is below the program itself, so we can
 				// just ignore everything below that point.
-				if (vaddr >= m.stack_address() && within(vaddr, PAGE_SIZE)) {
+				if (vaddr >= stack_base && within(vaddr, PAGE_SIZE)) {
 					avx2_page_dupliteit(
 						(uint64_t*)&ptr[vaddr], (uint64_t*)&bank.mem[i * PAGE_SIZE]);
 					already_duplicated.insert(vaddr);
 				} else {
-					/*char buffer[128];
-					const int len = snprintf(buffer, sizeof(buffer),
-						"WARNING: Skipped page 0x%lX\n", vaddr);
-					m.print(buffer, len);*/
+					//printf("WARNING: Skipped page 0x%lX\n", vaddr);
 				}
 			}
 		}
 		// Copy the entire memory from the original VM (expensive!)
-		const uint64_t kernel_end = other.machine.kernel_end_address();
-		const uint64_t mmap_end   = other.machine.mmap();
-		const uint64_t memory_end = std::min(other.size, mmap_end);
-		const uint64_t stack_base = other.machine.stack_address() & ~(uint64_t)0xFFF;
-		/*printf("Kernel end is 0x%lX. Memory end is 0x%lX vs mmap end: 0x%lX\n"
-			"Stack base: 0x%lX\n",
-			kernel_end, other.size, mmap_end,
-			stack_base);*/
 		/* NOTE to self: Don't use permission- or pagetable-based
 		   page getters here. This is how it's supposed to work. */
 		for (uint64_t off = 0x1000; off < kernel_end; off += PAGE_SIZE) {

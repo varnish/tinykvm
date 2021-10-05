@@ -51,16 +51,18 @@ static uint32_t to_ticks(float seconds) {
 	return (val < (float)UINT32_MAX) ? (uint32_t)val : UINT32_MAX;
 }
 
-void Machine::vCPU::init(Machine& machine, const MachineOptions& options)
+void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options)
 {
-	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, 0);
+	this->cpu_id = id;
+	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
+	this->machine = &machine;
 	if (UNLIKELY(this->fd < 0)) {
 		machine_exception("Failed to KVM_CREATE_VCPU");
 	}
 
-	this->kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
+	kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
-	if (UNLIKELY(this->kvm_run == MAP_FAILED)) {
+	if (UNLIKELY(kvm_run == MAP_FAILED)) {
 		machine_exception("Failed to create KVM run-time mapped memory");
 	}
 
@@ -155,15 +157,79 @@ void Machine::vCPU::init(Machine& machine, const MachineOptions& options)
 	}
 }
 
+void Machine::vCPU::smp_init(int id, Machine& machine)
+{
+	this->cpu_id = id;
+	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
+	this->machine = &machine;
+	if (UNLIKELY(this->fd < 0)) {
+		machine_exception("Failed to KVM_CREATE_VCPU");
+	}
+
+	kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
+		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
+	if (UNLIKELY(kvm_run == MAP_FAILED)) {
+		machine_exception("Failed to create KVM run-time mapped memory");
+	}
+
+	/* Assign CPUID features to guest */
+	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
+		machine_exception("KVM_SET_CPUID2 failed");
+	}
+
+	/* Extended control registers */
+	if (ioctl(this->fd, KVM_SET_XCRS, &master_xregs) < 0) {
+		machine_exception("KVM_SET_XCRS failed");
+	}
+
+	/* Enable SYSCALL/SYSRET instructions */
+	struct {
+		__u32 nmsrs; /* number of msrs in entries */
+		__u32 pad;
+
+		struct kvm_msr_entry entries[3];
+	} msrs;
+	msrs.nmsrs = 3;
+	msrs.entries[0].index = AMD64_MSR_STAR;
+	msrs.entries[1].index = AMD64_MSR_LSTAR;
+	msrs.entries[2].index = AMD64_MSR_APICBASE;
+	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
+	msrs.entries[1].data  = interrupt_header().vm64_syscall;
+	msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_X2APIC_ENABLE;
+
+	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < 3) {
+		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR/X2APIC");
+	}
+
+	auto timed_lapic = master_lapic;
+	auto& lapic = *(local_apic *)&timed_lapic;
+	lapic.lvt_timer.mask = 0x1;
+	lapic.timer_icr.initial_count = 0;
+	lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
+
+	if (ioctl(this->fd, KVM_SET_LAPIC, &timed_lapic)) {
+		machine_exception("KVM_SET_LAPIC: failed to set initial LAPIC");
+	}
+}
+
 void Machine::vCPU::deinit()
 {
 	if (this->fd > 0) {
 		close(this->fd);
 	}
-	if (this->kvm_run != nullptr) {
-		munmap(this->kvm_run, vcpu_mmap_size);
+	if (kvm_run != nullptr) {
+		munmap(kvm_run, vcpu_mmap_size);
 	}
-	delete cached_sregs;
+}
+
+void Machine::prepare_cpus(size_t num_cpus)
+{
+	while (m_cpus.size() < num_cpus) {
+		m_cpus.emplace_back();
+		/* Starts at 1..2..3..4.. */
+		const int cpu_id = m_cpus.size();
+		m_cpus.back().smp_init(cpu_id, *this);
+	}
 }
 
 tinykvm_x86regs Machine::vCPU::registers() const
@@ -193,10 +259,10 @@ void Machine::vCPU::set_special_registers(const struct kvm_sregs& sregs)
 	}
 }
 
-std::string_view Machine::io_data() const
+std::string_view Machine::vCPU::io_data() const
 {
-	char *p = (char *) vcpu.kvm_run;
-	return {&p[vcpu.kvm_run->io.data_offset], vcpu.kvm_run->io.size};
+	char *p = (char *) kvm_run;
+	return {&p[kvm_run->io.data_offset], kvm_run->io.size};
 }
 
 void Machine::setup_long_mode(const Machine* other, const MachineOptions& options)
@@ -225,11 +291,11 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 		memory.get_writable_page(IST_ADDR, true);
 
 		/* Inherit the special registers of the master machine */
-		struct kvm_sregs sregs = *other->vcpu.cached_sregs;
+		struct kvm_sregs sregs = *other->cached_sregs;
 
 		/* Page table entry will be cloned at the start */
 		sregs.cr3 = memory.page_tables;
-		sregs.cr0 &= ~CR0_WP;
+		sregs.cr0 &= ~CR0_WP; // XXX: Fix me!
 
 		vcpu.set_special_registers(sregs);
 		//print_pagetables(this->memory);
@@ -283,37 +349,35 @@ void Machine::set_tls_base(__u64 baseaddr)
 		fmt, ##__VA_ARGS__));
 
 TINYKVM_COLD()
-void Machine::print_registers()
+void Machine::vCPU::print_registers()
 {
 	struct kvm_sregs sregs;
-	vcpu.get_special_registers(sregs);
+	this->get_special_registers(sregs);
+	const auto& printer = machine->m_printer;
 
 	char buffer[1024];
-	PRINTER(m_printer, buffer,
+	PRINTER(printer, buffer,
 		"CR0: 0x%llX  CR3: 0x%llX\n", sregs.cr0, sregs.cr3);
-	PRINTER(m_printer, buffer,
+	PRINTER(printer, buffer,
 		"CR2: 0x%llX  CR4: 0x%llX\n", sregs.cr2, sregs.cr4);
 
 	auto regs = registers();
-	PRINTER(m_printer, buffer,
+	PRINTER(printer, buffer,
 		"RAX: 0x%llX  RBX: 0x%llX  RCX: 0x%llX\n", regs.rax, regs.rbx, regs.rcx);
-	PRINTER(m_printer, buffer,
+	PRINTER(printer, buffer,
 		"RDX: 0x%llX  RSI: 0x%llX  RDI: 0x%llX\n", regs.rdx, regs.rsi, regs.rdi);
-	PRINTER(m_printer, buffer,
+	PRINTER(printer, buffer,
 		"RIP: 0x%llX  RBP: 0x%llX  RSP: 0x%llX\n", regs.rip, regs.rbp, regs.rsp);
 
-	PRINTER(m_printer, buffer,
+	PRINTER(printer, buffer,
 		"SS: 0x%X  CS: 0x%X  DS: 0x%X  FS: 0x%X  GS: 0x%X\n",
 		sregs.ss.selector, sregs.cs.selector, sregs.ds.selector, sregs.fs.selector, sregs.gs.selector);
 
 #if 0
-	print_pagetables(memory);
-#endif
-#if 0
-	PRINTER(m_printer, buffer,
+	PRINTER(printer, buffer,
 		"CR0 PE=%llu MP=%llu EM=%llu\n",
 		sregs.cr0 & 1, (sregs.cr0 >> 1) & 1, (sregs.cr0 >> 2) & 1);
-	PRINTER(m_printer, buffer,
+	PRINTER(printer, buffer,
 		"CR4 OSFXSR=%llu OSXMMEXCPT=%llu OSXSAVE=%llu\n",
 		(sregs.cr4 >> 9) & 1, (sregs.cr4 >> 10) & 1, (sregs.cr4 >> 18) & 1);
 #endif
@@ -327,47 +391,48 @@ void Machine::print_registers()
 }
 
 TINYKVM_COLD()
-void Machine::handle_exception(uint8_t intr)
+void Machine::vCPU::handle_exception(uint8_t intr)
 {
 	auto regs = registers();
 	char buffer[1024];
 	// Page fault
+	const auto& printer = machine->m_printer;
 	if (intr == 14) {
 		struct kvm_sregs sregs;
 		get_special_registers(sregs);
-		PRINTER(m_printer, buffer,
+		PRINTER(printer, buffer,
 			"*** %s on address 0x%llX\n",
 			amd64_exception_name(intr), sregs.cr2);
 		uint64_t code;
-		unsafe_copy_from_guest(&code, regs.rsp+8,  8);
-		PRINTER(m_printer, buffer,
+		machine->unsafe_copy_from_guest(&code, regs.rsp+8,  8);
+		PRINTER(printer, buffer,
 			"Error code: 0x%lX (%s)\n", code,
 			(code & 0x02) ? "memory write" : "memory read");
 		if (code & 0x01) {
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"* Protection violation\n");
 		} else {
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"* Page not present\n");
 		}
 		if (code & 0x02) {
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"* Invalid write on page\n");
 		}
 		if (code & 0x04) {
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"* CPL=3 Page fault\n");
 		}
 		if (code & 0x08) {
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"* Page contains invalid bits\n");
 		}
 		if (code & 0x10) {
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"* Instruction fetch failed (NX-bit was set)\n");
 		}
 	} else {
-		PRINTER(m_printer, buffer,
+		PRINTER(printer, buffer,
 			"*** CPU EXCEPTION: %s (code: %s)\n",
 			amd64_exception_name(intr),
 			amd64_exception_code(intr) ? "true" : "false");
@@ -381,18 +446,18 @@ void Machine::handle_exception(uint8_t intr)
 		if (intr == 14) off += 8;
 		uint64_t rip, cs = 0x0, rsp, ss;
 		try {
-			unsafe_copy_from_guest(&rip, off+0,  8);
-			unsafe_copy_from_guest(&cs,  off+8,  8);
-			unsafe_copy_from_guest(&rsp, off+24, 8);
-			unsafe_copy_from_guest(&ss,  off+32, 8);
+			machine->unsafe_copy_from_guest(&rip, off+0,  8);
+			machine->unsafe_copy_from_guest(&cs,  off+8,  8);
+			machine->unsafe_copy_from_guest(&rsp, off+24, 8);
+			machine->unsafe_copy_from_guest(&ss,  off+32, 8);
 
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"Failing RIP: 0x%lX\n", rip);
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"Failing CS:  0x%lX\n", cs);
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"Failing RSP: 0x%lX\n", rsp);
-			PRINTER(m_printer, buffer,
+			PRINTER(printer, buffer,
 				"Failing SS:  0x%lX\n", ss);
 		} catch (...) {}
 
@@ -400,25 +465,25 @@ void Machine::handle_exception(uint8_t intr)
 		if (has_code && intr == 13) {
 			uint64_t code = 0x0;
 			try {
-				unsafe_copy_from_guest(&code,  regs.rsp, 8);
+				machine->unsafe_copy_from_guest(&code,  regs.rsp, 8);
 			} catch (...) {}
 			if (code != 0x0) {
-				PRINTER(m_printer, buffer,
+				PRINTER(printer, buffer,
 					"Reason: Failing segment 0x%lX\n", code);
 			} else if (cs & 0x3) {
 				/* Best guess: Privileged instruction */
-				PRINTER(m_printer, buffer,
+				PRINTER(printer, buffer,
 					"Reason: Executing a privileged instruction\n");
 			} else {
 				/* Kernel GPFs should be exceedingly rare */
-				PRINTER(m_printer, buffer,
+				PRINTER(printer, buffer,
 					"Reason: Protection fault in kernel mode\n");
 			}
 		}
 	} catch (...) {}
 }
 
-void Machine::run(float timeout)
+void Machine::vCPU::run(float timeout)
 {
 	if (timeout != 0.f)
 	{
@@ -428,24 +493,23 @@ void Machine::run(float timeout)
 		lapic.timer_icr.initial_count = to_ticks(timeout);
 		lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
 
-		if (ioctl(this->vcpu.fd, KVM_SET_LAPIC, &lapic)) {
+		if (ioctl(this->fd, KVM_SET_LAPIC, &lapic)) {
 			machine_exception("KVM_SET_LAPIC: failed to set runtime LAPIC");
 		}
 	}
 
-	/* XXX: Remember to set a timeout. */
-	this->m_stopped = false;
+	this->stopped = false;
 	while(run_once());
 }
 
-long Machine::run_once()
+long Machine::vCPU::run_once()
 {
-	if (ioctl(vcpu.fd, KVM_RUN, 0) < 0) {
+	if (ioctl(this->fd, KVM_RUN, 0) < 0) {
 		/* NOTE: This is probably EINTR */
 		machine_exception("KVM_RUN failed");
 	}
 
-	switch (vcpu.kvm_run->exit_reason) {
+	switch (kvm_run->exit_reason) {
 	case KVM_EXIT_HLT:
 		machine_exception("Halt from kernel space", 5);
 
@@ -459,21 +523,21 @@ long Machine::run_once()
 		machine_exception("Shutdown! Triple fault?", 32);
 
 	case KVM_EXIT_IO:
-		if (vcpu.kvm_run->io.direction == KVM_EXIT_IO_OUT) {
-		if (vcpu.kvm_run->io.port == 0x0) {
-			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
+		if (kvm_run->io.direction == KVM_EXIT_IO_OUT) {
+		if (kvm_run->io.port == 0x0) {
+			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
 			const uint32_t intr = *(uint32_t *)data;
 			if (intr != 0xFFFF) {
-				this->system_call(intr);
-				if (this->m_stopped) return 0;
+				machine->system_call(intr);
+				if (this->stopped) return 0;
 				return KVM_EXIT_IO;
 			} else {
-				this->m_stopped = true;
+				this->stopped = true;
 				return 0;
 			}
 		}
-		else if (vcpu.kvm_run->io.port >= 0x80 && vcpu.kvm_run->io.port < 0x100) {
-			auto intr = vcpu.kvm_run->io.port - 0x80;
+		else if (kvm_run->io.port >= 0x80 && kvm_run->io.port < 0x100) {
+			auto intr = kvm_run->io.port - 0x80;
 			if (intr == 14)
 			{
 				auto regs = registers();
@@ -482,7 +546,7 @@ long Machine::run_once()
 				char buffer[256];
 				#define PV(val, off) \
 					{ uint64_t value; unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
-					PRINTER(m_printer, buffer, "Value %s: 0x%lX\n", val, value); }
+					PRINTER(machine->m_printer, buffer, "Value %s: 0x%lX\n", val, value); }
 				try {
 					PV("Origin SS",  48);
 					PV("Origin RSP", 40);
@@ -491,7 +555,7 @@ long Machine::run_once()
 					PV("Origin RIP", 16);
 					PV("Error code", 8);
 				} catch (...) {}
-				PRINTER(m_printer, buffer,
+				PRINTER(machine->m_printer, buffer,
 					"*** %s on address 0x%lX (0x%llX)\n",
 					amd64_exception_name(intr), addr, regs.rdi);
 #endif
@@ -501,13 +565,13 @@ long Machine::run_once()
 					machine_exception("Security violation", intr);
 				}
 
-				memory.get_writable_page(addr, false);
+				machine->memory.get_writable_page(addr, false);
 				return KVM_EXIT_IO;
 			}
 			else if (intr == 33)
 			{
 				struct kvm_lapic_state kvmlapic;
-				if (ioctl(vcpu.fd, KVM_GET_LAPIC, &kvmlapic)) {
+				if (ioctl(this->fd, KVM_GET_LAPIC, &kvmlapic)) {
 					machine_exception("KVM_GET_LAPIC: failed to get LAPIC (timeout)");
 				}
 				/* A global timeout */
@@ -517,7 +581,7 @@ long Machine::run_once()
 			}
 			else if (intr == 1) /* Debug trap */
 			{
-				m_on_breakpoint(*this);
+				machine->m_on_breakpoint(*machine);
 				return KVM_EXIT_IO;
 			}
 			/* CPU Exception */
@@ -525,32 +589,32 @@ long Machine::run_once()
 			machine_exception(amd64_exception_name(intr), intr);
 		} else {
 			/* Custom Output handler */
-			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
-			m_on_output(*this, vcpu.kvm_run->io.port, *(uint32_t *)data);
+			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
+			machine->m_on_output(*machine, kvm_run->io.port, *(uint32_t *)data);
 		}
 		} else { // IN
 			/* Custom Input handler */
-			const char* data = ((char *)vcpu.kvm_run) + vcpu.kvm_run->io.data_offset;
-			m_on_input(*this, vcpu.kvm_run->io.port, *(uint32_t *)data);
+			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
+			machine->m_on_input(*machine, kvm_run->io.port, *(uint32_t *)data);
 		}
-		if (this->m_stopped) return 0;
+		if (this->stopped) return 0;
 		return KVM_EXIT_IO;
 
 	case KVM_EXIT_MMIO: {
 			char buffer[256];
-			PRINTER(m_printer, buffer,
+			PRINTER(machine->m_printer, buffer,
 				"Unknown MMIO write at 0x%llX\n",
-				vcpu.kvm_run->mmio.phys_addr);
+				kvm_run->mmio.phys_addr);
 			machine_exception("Invalid MMIO write");
 		}
 	case KVM_EXIT_INTERNAL_ERROR:
 		machine_exception("KVM internal error");
 	}
 	char buffer[256];
-	PRINTER(m_printer, buffer,
-		"Unexpected exit reason %d\n", vcpu.kvm_run->exit_reason);
+	PRINTER(machine->m_printer, buffer,
+		"Unexpected exit reason %d\n", kvm_run->exit_reason);
 	machine_exception("Unexpected KVM exit reason",
-		vcpu.kvm_run->exit_reason);
+		kvm_run->exit_reason);
 }
 
 TINYKVM_COLD()
@@ -563,7 +627,7 @@ long Machine::step_one()
 		machine_exception("KVM_RUN failed");
 	}
 
-	return run_once();
+	return vcpu.run_once();
 }
 
 TINYKVM_COLD()
@@ -584,7 +648,7 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 		machine_exception("KVM_RUN failed");
 	}
 
-	return run_once();
+	return vcpu.run_once();
 }
 
 void Machine::prepare_copy_on_write()
@@ -595,10 +659,10 @@ void Machine::prepare_copy_on_write()
 	foreach_page_makecow(this->memory);
 	//print_pagetables(this->memory);
 	/* Cache all the special registers, which we will use on forks */
-	if (vcpu.cached_sregs == nullptr) {
-		vcpu.cached_sregs = new kvm_sregs {};
+	if (this->cached_sregs == nullptr) {
+		this->cached_sregs = new kvm_sregs {};
 	}
-	get_special_registers(*vcpu.cached_sregs);
+	get_special_registers(*this->cached_sregs);
 }
 
 void Machine::print_pagetables() const {

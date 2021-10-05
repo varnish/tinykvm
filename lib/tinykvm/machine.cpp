@@ -39,7 +39,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->elf_loader(options);
 
-	this->vcpu.init(*this, options);
+	this->vcpu.init(0, *this, options);
 	this->setup_long_mode(nullptr, options);
 	struct tinykvm_x86regs regs {};
 	/* Store the registers, so that Machine is ready to go */
@@ -50,8 +50,7 @@ Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 	: Machine(std::string_view{(const char*)&bin[0], bin.size()}, opts) {}
 
 Machine::Machine(const Machine& other, const MachineOptions& options)
-	: m_stopped {true},
-	  m_prepped {false},
+	: m_prepped {false},
 	  m_forked  {!options.linearize_memory},
 	  m_binary {options.binary.empty() ? other.m_binary : options.binary},
 	  memory   {*this, options, other.memory},
@@ -73,7 +72,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->install_memory(0, memory.vmem(), true);
 
 	/* Initialize vCPU and long mode (fast path) */
-	this->vcpu.init(*this, options);
+	this->vcpu.init(0, *this, options);
 	this->setup_long_mode(&other, options);
 
 	/* We have to make a copy here, to make sure the fork knows
@@ -87,6 +86,7 @@ __attribute__ ((cold))
 Machine::~Machine()
 {
 	vcpu.deinit();
+	delete cached_sregs;
 	close(this->fd);
 }
 
@@ -199,7 +199,13 @@ long Machine::return_value() const
 
 void Machine::print(const char* buffer, size_t len)
 {
-	m_printer(buffer, len);
+	if (m_printer != nullptr)
+		m_printer(buffer, len);
+}
+
+void Machine::run(float timeout)
+{
+	return vcpu.run(timeout);
 }
 
 __attribute__((cold, noreturn))

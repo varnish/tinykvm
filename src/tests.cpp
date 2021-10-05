@@ -243,6 +243,8 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 
 			vm.vmcall("write_value", 10 + i);
 			KASSERT(vm.return_value() == 10 + i);
+			vm.vmcall("test_is_value", 10 + i);
+			KASSERT(vm.return_value() == 666);
 		} catch (...) {
 			vm.print_pagetables();
 			vm.print_registers();
