@@ -172,6 +172,13 @@ void Machine::vCPU::smp_init(int id, Machine& machine)
 		machine_exception("Failed to create KVM run-time mapped memory");
 	}
 
+	const kvm_mp_state state {
+		.mp_state = KVM_MP_STATE_RUNNABLE
+	};
+	if (ioctl(this->fd, KVM_SET_MP_STATE, &state) < 0) {
+		machine_exception("KVM_SET_MP_STATE failed");
+	}
+
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
 		machine_exception("KVM_SET_CPUID2 failed");
@@ -230,6 +237,15 @@ void Machine::prepare_cpus(size_t num_cpus)
 		const int cpu_id = m_cpus.size();
 		m_cpus.back().smp_init(cpu_id, *this);
 	}
+	/* Inherit the special registers of the main vCPU */
+	struct kvm_sregs sregs;
+	vcpu.get_special_registers(sregs);
+
+	for (size_t c = 0; c < num_cpus; c++) {
+		vCPU& cpu = m_cpus.at(c);
+		cpu.set_special_registers(sregs);
+	}
+	printf("%zu SMP vCPUs initialized\n", num_cpus);
 }
 
 tinykvm_x86regs Machine::vCPU::registers() const
@@ -667,6 +683,12 @@ void Machine::prepare_copy_on_write()
 
 void Machine::print_pagetables() const {
 	tinykvm::print_pagetables(this->memory);
+}
+void Machine::print_exception_handlers() const
+{
+	struct kvm_sregs sregs;
+	vcpu.get_special_registers(sregs);
+	tinykvm::print_exception_handlers(memory.at(sregs.idt.base));
 }
 
 Machine::address_t Machine::entry_address() const noexcept {

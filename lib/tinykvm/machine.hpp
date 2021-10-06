@@ -34,9 +34,11 @@ struct Machine
 	void timed_vmcall(address_t, float timeout, Args&&...);
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
+	/* Retrieve return values from a smpcall */
+	std::vector<long> gather_return_values() const;
 
 	template <typename... Args>
-	void timed_smpcall(size_t cpu_id, uint64_t stack, address_t addr, float timeout, Args&&...);
+	void timed_smpcall(size_t cpus, uint64_t stack, uint64_t stack_size, address_t addr, float tmo, Args&&...);
 
 	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
@@ -114,6 +116,7 @@ struct Machine
 	void print(const char*, size_t);
 	void print_registers() { vcpu.print_registers(); }
 	void print_pagetables() const;
+	void print_exception_handlers() const;
 
 	void install_memory(uint32_t idx, const VirtualMem&, bool ro);
 	void delete_memory(uint32_t idx);

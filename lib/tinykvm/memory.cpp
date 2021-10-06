@@ -112,6 +112,17 @@ char* vMemory::at(uint64_t addr, size_t asize)
 	}
 	memory_exception("Memory::at() invalid region", addr, asize);
 }
+const char* vMemory::at(uint64_t addr, size_t asize) const
+{
+	if (within(addr, asize))
+		return &ptr[addr - physbase];
+	for (auto& bank : banks) {
+		if (bank.within(addr, asize)) {
+			return bank.at(addr);
+		}
+	}
+	memory_exception("Memory::at() invalid region", addr, asize);
+}
 uint64_t* vMemory::page_at(uint64_t addr) const
 {
 	if (within(addr, PAGE_SIZE))

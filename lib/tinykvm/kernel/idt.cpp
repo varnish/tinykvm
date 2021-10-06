@@ -5,6 +5,9 @@
 #include <cstdio>
 #include <cstring>
 #include <linux/kvm.h>
+struct kvm_sregs;
+
+namespace tinykvm {
 
 // 64-bit IDT entry
 struct IDTentry {
@@ -50,7 +53,7 @@ static void set_entry(
 	idt_entry.offset_3  = addr.top32;
 	idt_entry.selector  = segment_sel;
 	idt_entry.type_attr = attributes;
-	idt_entry.ist       = 0;
+	idt_entry.ist       = 1;
 	idt_entry.zero2     = 0;
 }
 
@@ -119,15 +122,16 @@ void setup_amd64_exceptions(uint64_t addr, void* area, void* except_area)
 }
 
 TINYKVM_COLD()
-void print_exception_handlers(void* area)
+void print_exception_handlers(const void* area)
 {
 	auto* idt = (IDT*) area;
 	for (unsigned i = 0; i < idt->entry.size(); i++) {
 		const auto& entry = idt->entry[i];
-		addr_helper addr;
-		addr.lo16 = entry.offset_1;
-		addr.hi16 = entry.offset_2;
-		addr.top32 = entry.offset_3;
+		const addr_helper addr {
+			.lo16 = entry.offset_1,
+			.hi16 = entry.offset_2,
+			.top32 = entry.offset_3
+		};
 		printf("IDT %u: func=0x%lX sel=0x%X p=%d dpl=%d type=0x%X ist=%u\n",
 			i, addr.whole, entry.selector, entry.type_attr >> 7,
 			(entry.type_attr >> 5) & 0x3, entry.type_attr & 0xF, entry.ist);
@@ -181,4 +185,6 @@ const char* amd64_exception_name(uint8_t intr) {
 }
 bool amd64_exception_code(uint8_t intr) {
 	return exceptions.at(intr).has_code;
+}
+
 }

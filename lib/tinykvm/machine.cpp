@@ -196,11 +196,19 @@ long Machine::return_value() const
 	auto regs = registers();
 	return regs.rdi;
 }
+std::vector<long> Machine::gather_return_values() const
+{
+	std::vector<long> results;
+	results.reserve(m_cpus.size());
+	for (const auto& cpu : m_cpus) {
+		results.push_back(cpu.registers().rdi);
+	}
+	return results;
+}
 
 void Machine::print(const char* buffer, size_t len)
 {
-	if (m_printer != nullptr)
-		m_printer(buffer, len);
+	m_printer(buffer, len);
 }
 
 void Machine::run(float timeout)

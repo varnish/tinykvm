@@ -103,13 +103,18 @@ void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 }
 
 template <typename... Args> inline
-void Machine::timed_smpcall(size_t num_cpus, uint64_t stack, uint64_t addr, float timeout, Args&&... args)
+void Machine::timed_smpcall(size_t num_cpus,
+	uint64_t stack_base, uint64_t stack_size,
+	uint64_t addr, float timeout, Args&&... args)
 {
-	auto regs = this->setup_call(addr, stack, std::forward<Args> (args)...);
 	this->prepare_cpus(num_cpus);
-	for (size_t cpu = 0; cpu < num_cpus; cpu++) {
-		m_cpus.at(cpu).assign_registers(regs);
-		m_cpus.at(cpu).run(timeout);
+	for (size_t c = 0; c < num_cpus; c++) {
+		auto regs = this->setup_call(addr,
+			stack_base + (c+1) * stack_size, std::forward<Args> (args)...);
+		m_cpus.at(c).assign_registers(regs);
+		/*printf("Running CPU %d at 0x%lX on stack 0x%lX\n",
+			m_cpus.at(c).cpu_id, addr, regs.rsp);*/
+		m_cpus.at(c).run(timeout);
 	}
 }
 

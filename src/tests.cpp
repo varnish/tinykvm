@@ -145,6 +145,14 @@ void test_master_vm(tinykvm::Machine& vm)
 	} catch (const tinykvm::MachineTimeoutException& me) {
 		KASSERT(me.seconds() == 1.0);
 	}
+
+	//vm.print_exception_handlers();
+	auto tr_addr = vm.address_of("test_read");
+	vm.timed_smpcall(4, 0x200000, 0x10000, tr_addr, 2.0f);
+	auto results = vm.gather_return_values();
+	for (const auto res : results) {
+		KASSERT(res == 200);
+	}
 }
 
 void test_forking(tinykvm::Machine& master_vm)
