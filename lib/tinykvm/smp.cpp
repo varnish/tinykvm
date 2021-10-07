@@ -7,8 +7,11 @@ namespace tinykvm {
 Machine::MPvCPU::MPvCPU(int c, Machine& m, const struct kvm_sregs& sregs)
 	: thpool(1)
 {
-	auto f = thpool.enqueue([this, c, &m, sregs] {
+	/* We store the CPU ID in GSBASE register */
+	auto f = thpool.enqueue([this, c, &m, sregs = sregs] () mutable {
 		this->cpu.smp_init(c, m);
+		sregs.gs.base = c;
+		sregs.gs.selector = c;
 		this->cpu.set_special_registers(sregs);
 	});
 }
@@ -40,6 +43,13 @@ void Machine::prepare_cpus(size_t num_cpus)
 	}
 	if (this->m_cpucount < num_cpus) {
 		machine_exception("SMP vCPU count mismatch", num_cpus);
+	}
+}
+
+void Machine::smp_wait() const
+{
+	for (size_t c = 0; c < m_cpucount; c++) {
+		m_cpus[c].thpool.wait_until_nothing_in_flight();
 	}
 }
 

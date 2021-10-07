@@ -40,7 +40,7 @@ struct Machine
 
 	template <typename... Args>
 	void timed_smpcall(size_t cpus, uint64_t stack, uint64_t stack_size, address_t addr, float tmo, Args&&...);
-	void smp_wait();
+	void smp_wait() const;
 
 	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
@@ -102,6 +102,7 @@ struct Machine
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
+	address_t mmap_allocate(size_t bytes);
 	static constexpr uint64_t BRK_MAX = 0x100000;
 
 	uint64_t address_of(const char*) const;

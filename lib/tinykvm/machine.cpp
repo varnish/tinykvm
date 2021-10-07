@@ -204,6 +204,14 @@ long Machine::return_value() const
 	return regs.rdi;
 }
 
+Machine::address_t Machine::mmap_allocate(size_t bytes)
+{
+	address_t result = this->m_mm;
+	this->m_mm += bytes & ~0xFFFL;
+	return result;
+}
+
+
 void Machine::print(const char* buffer, size_t len)
 {
 	m_printer(buffer, len);
