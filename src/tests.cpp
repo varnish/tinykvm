@@ -147,21 +147,28 @@ void test_master_vm(tinykvm::Machine& vm)
 		KASSERT(me.seconds() == 1.0);
 	}
 
-	printf("Testing multi-processing\n");
+	printf("--- Testing multi-processing ---\n");
 	//vm.print_exception_handlers();
 	auto tr_addr = vm.address_of("test_read");
+	auto tret_addr = vm.address_of("test_return");
 	vm.timed_smpcall(2, 0x200000, 0x10000, tr_addr, 2.0f);
 	auto results = vm.gather_return_values();
 	for (const auto res : results) {
 		KASSERT(res == 200);
 	}
-
-	auto tret_addr = vm.address_of("test_return");
+	/* Run SMP vCPUs a 100 times */
+	for (int i = 0; i < 100; i++) {
+		vm.timed_smpcall(2, 0x200000, 0x10000, tret_addr, 2.0f);
+	}
+	/* Run test_read (200) */
+	vm.timed_smpcall(2, 0x200000, 0x10000, tr_addr, 2.0f);
+	/* Run test_return (666) */
 	vm.timed_smpcall(2, 0x200000, 0x10000, tret_addr, 2.0f);
 	results = vm.gather_return_values();
 	for (const auto res : results) {
 		KASSERT(res == 666);
 	}
+	printf("*** Multi-processing OK\n");
 }
 
 void test_forking(tinykvm::Machine& master_vm)
