@@ -3,6 +3,7 @@
 #include "kernel/amd64.hpp"
 #include "kernel/vdso.hpp"
 #include "threads.hpp"
+#include "util/threadpool.h"
 #include <cassert>
 #include <cstring>
 #include <fcntl.h>
@@ -85,6 +86,12 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 __attribute__ ((cold))
 Machine::~Machine()
 {
+	/* Manually free MP vCPUs one by one */
+	for (size_t c = 0; c < m_cpucount; c++) {
+		m_cpus[c].~MPvCPU();
+	}
+	std::free(m_cpus);
+
 	vcpu.deinit();
 	delete cached_sregs;
 	close(this->fd);
@@ -195,15 +202,6 @@ long Machine::return_value() const
 	/* TODO: Return vcpu.kvm_run->s.regs.regs.rdi */
 	auto regs = registers();
 	return regs.rdi;
-}
-std::vector<long> Machine::gather_return_values() const
-{
-	std::vector<long> results;
-	results.reserve(m_cpus.size());
-	for (const auto& cpu : m_cpus) {
-		results.push_back(cpu.registers().rdi);
-	}
-	return results;
 }
 
 void Machine::print(const char* buffer, size_t len)

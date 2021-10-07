@@ -229,25 +229,6 @@ void Machine::vCPU::deinit()
 	}
 }
 
-void Machine::prepare_cpus(size_t num_cpus)
-{
-	while (m_cpus.size() < num_cpus) {
-		m_cpus.emplace_back();
-		/* Starts at 1..2..3..4.. */
-		const int cpu_id = m_cpus.size();
-		m_cpus.back().smp_init(cpu_id, *this);
-	}
-	/* Inherit the special registers of the main vCPU */
-	struct kvm_sregs sregs;
-	vcpu.get_special_registers(sregs);
-
-	for (size_t c = 0; c < num_cpus; c++) {
-		vCPU& cpu = m_cpus.at(c);
-		cpu.set_special_registers(sregs);
-	}
-	printf("%zu SMP vCPUs initialized\n", num_cpus);
-}
-
 tinykvm_x86regs Machine::vCPU::registers() const
 {
 	struct tinykvm_x86regs regs;

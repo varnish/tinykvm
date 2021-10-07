@@ -3,6 +3,7 @@
 #include "forward.hpp"
 #include "memory.hpp"
 #include "memory_bank.hpp"
+#include "util/threadpool.h"
 #include <array>
 #include <functional>
 #include <memory>
@@ -39,6 +40,7 @@ struct Machine
 
 	template <typename... Args>
 	void timed_smpcall(size_t cpus, uint64_t stack, uint64_t stack_size, address_t addr, float tmo, Args&&...);
+	void smp_wait();
 
 	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
@@ -148,6 +150,9 @@ private:
 
 		void print_registers();
 		void handle_exception(uint8_t intr);
+		inline void decrement_smp_count() {
+			__sync_fetch_and_sub(&machine->m_smp_active, 1);
+		}
 
 		int fd = 0;
 		int cpu_id = 0;
@@ -172,6 +177,7 @@ private:
 	int   fd = 0;
 	bool  m_prepped = false;
 	bool  m_forked = false;
+	short m_smp_active = 0;
 	void* m_userdata = nullptr;
 
 	std::string_view m_binary;
@@ -187,7 +193,17 @@ private:
 	mutable std::unique_ptr<MultiThreading> m_mt;
 	struct kvm_sregs* cached_sregs = nullptr;
 
-	std::vector<vCPU> m_cpus;
+	struct MPvCPU {
+		auto message(std::function<void(vCPU&)>);
+		void blocking_message(std::function<void(vCPU&)>);
+
+		MPvCPU(int, Machine&, const struct kvm_sregs&);
+		~MPvCPU();
+		vCPU cpu;
+		ThreadPool thpool;
+	};
+	MPvCPU* m_cpus = nullptr;
+	size_t m_cpucount = 0;
 
 	/* How to print exceptions, register dumps etc. */
 	printer_func m_printer = m_default_printer;

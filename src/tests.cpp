@@ -135,6 +135,7 @@ void test_master_vm(tinykvm::Machine& vm)
 		KASSERT(me.data() == 6);
 	}
 	vm.vmcall("test_syscall");
+	KASSERT(vm.return_value() == 555);
 	vm.vmcall("test_read");
 	KASSERT(vm.return_value() == 200);
 	vm.vmcall("test_malloc");
@@ -146,12 +147,20 @@ void test_master_vm(tinykvm::Machine& vm)
 		KASSERT(me.seconds() == 1.0);
 	}
 
+	printf("Testing multi-processing\n");
 	//vm.print_exception_handlers();
 	auto tr_addr = vm.address_of("test_read");
-	vm.timed_smpcall(4, 0x200000, 0x10000, tr_addr, 2.0f);
+	vm.timed_smpcall(2, 0x200000, 0x10000, tr_addr, 2.0f);
 	auto results = vm.gather_return_values();
 	for (const auto res : results) {
 		KASSERT(res == 200);
+	}
+
+	auto tret_addr = vm.address_of("test_return");
+	vm.timed_smpcall(2, 0x200000, 0x10000, tret_addr, 2.0f);
+	results = vm.gather_return_values();
+	for (const auto res : results) {
+		KASSERT(res == 666);
 	}
 }
 
