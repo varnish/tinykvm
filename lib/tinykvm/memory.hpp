@@ -3,6 +3,7 @@
 #include "memory_bank.hpp"
 #include "virtual_mem.hpp"
 #include <cstddef>
+#include <mutex>
 #include <string_view>
 
 namespace tinykvm {
@@ -22,6 +23,8 @@ struct vMemory {
 	bool   owned = true;
 	/* Dynamic page memory */
 	MemoryBanks banks; // fault-in memory banks
+	/* SMP mutex */
+	std::mutex mtx_smp;
 
 	/* Unsafe */
 	bool within(uint64_t addr, size_t asize) const noexcept {

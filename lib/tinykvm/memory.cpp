@@ -202,6 +202,7 @@ MemoryBank::Page vMemory::new_page(uint64_t vaddr)
 
 char* vMemory::get_writable_page(uint64_t addr, bool zeroes)
 {
+	std::lock_guard<std::mutex> lock (this->mtx_smp);
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
 	char* ret = writable_page_at(*this, addr, zeroes);
 	//printf("-> Translation of 0x%lX: 0x%lX\n",

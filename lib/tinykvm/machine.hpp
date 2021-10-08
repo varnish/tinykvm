@@ -107,6 +107,7 @@ struct Machine
 
 	uint64_t address_of(const char*) const;
 
+	bool smp_active() const noexcept { return m_smp_active != 0; }
 	bool has_threads() const noexcept { return m_mt != nullptr; }
 	const struct MultiThreading& threads() const;
 	struct MultiThreading& threads();
