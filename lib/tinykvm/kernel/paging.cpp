@@ -91,6 +91,8 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	/* GDT, IDT and TSS */
 	/* XXX: Why writable? */
 	lowpage[1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (1 << 12);
+	lowpage[6] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (6 << 12);
+	lowpage[7] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (7 << 12);
 
 	/* Kernel code: Exceptions, system calls */
 	const uint64_t except_page = INTR_ASM_ADDR >> 12;
@@ -98,7 +100,8 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 
 	/* Exception (IST) stack */
 	const uint64_t ist_page = IST_ADDR >> 12;
-	lowpage[ist_page] = PDE64_PRESENT | PDE64_RW | PDE64_NX | IST_ADDR;
+	lowpage[ist_page+0] = PDE64_PRESENT | PDE64_RW | PDE64_NX | IST_ADDR;
+	lowpage[ist_page+1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | IST_ADDR;
 
 	/* Usercode page: Entry, exit */
 	const uint64_t user_page = USER_ASM_ADDR >> 12;
@@ -190,8 +193,9 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | 0x4000;
 
 	/* Kernel area ~64KB */
+	const size_t kernel_begin_idx = PT_ADDR >> 12;
 	const size_t kernel_end_idx = free_page >> 12;
-	for (unsigned i = 5; i < kernel_end_idx; i++) {
+	for (unsigned i = kernel_begin_idx; i < kernel_end_idx; i++) {
 		lowpage[i] = PDE64_PRESENT | PDE64_NX;
 	}
 

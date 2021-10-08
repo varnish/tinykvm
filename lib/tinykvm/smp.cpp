@@ -1,4 +1,5 @@
 #include "machine.hpp"
+#include "kernel/memory_layout.hpp"
 #include <cassert>
 #include <linux/kvm.h>
 
@@ -12,6 +13,7 @@ Machine::MPvCPU::MPvCPU(int c, Machine& m, const struct kvm_sregs& sregs)
 		this->cpu.smp_init(c, m);
 		sregs.gs.base = c;
 		sregs.gs.selector = c;
+		sregs.tr.base = TSS_SMP_ADDR + (c - 1) * 104; /* AMD64_TSS */
 		this->cpu.set_special_registers(sregs);
 	});
 }

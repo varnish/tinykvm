@@ -1,6 +1,6 @@
 [BITS 64]
 
-org 0x4000
+org 0x5000
 dw .vm64_entry
 dw .vm64_rexit
 

@@ -270,6 +270,7 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 			IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
 		setup_amd64_segments(GDT_ADDR, memory.at(GDT_ADDR));
 		setup_amd64_tss(TSS_ADDR, memory.at(TSS_ADDR), memory.at(GDT_ADDR));
+		setup_amd64_tss_smp(memory.at(TSS_SMP_ADDR));
 		/* Userspace entry/exit code */
 		setup_vm64_usercode(memory.at(USER_ASM_ADDR));
 
@@ -286,6 +287,7 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 
 		/* Zero a new page for IST stack */
 		memory.get_writable_page(IST_ADDR, true);
+		memory.get_writable_page(IST2_ADDR, true);
 
 		/* Inherit the special registers of the master machine */
 		struct kvm_sregs sregs = *other->cached_sregs;
@@ -558,7 +560,7 @@ long Machine::vCPU::run_once()
 #endif
 				/* Page fault handling */
 				/* We should be in kernel mode, otherwise it's fishy! */
-				if (UNLIKELY(regs.rip > 0x3000)) {
+				if (UNLIKELY(regs.rip >= INTR_ASM_ADDR+0x1000)) {
 					machine_exception("Security violation", intr);
 				}
 
