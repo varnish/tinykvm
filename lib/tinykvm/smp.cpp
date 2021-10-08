@@ -25,6 +25,20 @@ void Machine::MPvCPU::blocking_message(std::function<void(vCPU&)> func)
 	res.get();
 }
 
+void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs& regs, float timeout)
+{
+	thpool.enqueue([this, regs, timeout] {
+		try {
+			cpu.assign_registers(regs);
+			cpu.run(timeout);
+			cpu.decrement_smp_count();
+		} catch (...) {
+			cpu.decrement_smp_count();
+			throw;
+		}
+	});
+}
+
 void Machine::prepare_cpus(size_t num_cpus)
 {
 	if (m_cpus == nullptr) {

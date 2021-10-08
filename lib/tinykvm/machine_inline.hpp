@@ -102,14 +102,6 @@ void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 	vcpu.run(timeout);
 }
 
-inline auto
-Machine::MPvCPU::message(std::function<void(vCPU&)> func)
-{
-	return thpool.enqueue([this, func] {
-		func(this->cpu);
-	});
-}
-
 template <typename... Args> inline
 void Machine::timed_smpcall(size_t num_cpus,
 	uint64_t stack_base, uint64_t stack_size,
@@ -122,12 +114,7 @@ void Machine::timed_smpcall(size_t num_cpus,
 		/* XXX: Spin-barrier here to avoid copying in registers? */
 		auto regs = this->setup_call(addr,
 			stack_base + (c+1) * stack_size, std::forward<Args> (args)...);
-		m_cpus[c].message(
-			[regs, timeout] (auto& cpu) {
-				cpu.assign_registers(regs);
-				cpu.run(timeout);
-				cpu.decrement_smp_count();
-			});
+		m_cpus[c].async_exec(regs, timeout);
 	}
 }
 

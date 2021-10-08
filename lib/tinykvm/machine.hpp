@@ -108,6 +108,7 @@ struct Machine
 	uint64_t address_of(const char*) const;
 
 	bool smp_active() const noexcept { return m_smp_active != 0; }
+	int  smp_active_count() const noexcept { return m_smp_active; }
 	bool has_threads() const noexcept { return m_mt != nullptr; }
 	const struct MultiThreading& threads() const;
 	struct MultiThreading& threads();
@@ -179,7 +180,7 @@ private:
 	int   fd = 0;
 	bool  m_prepped = false;
 	bool  m_forked = false;
-	short m_smp_active = 0;
+	int   m_smp_active = 0;
 	void* m_userdata = nullptr;
 
 	std::string_view m_binary;
@@ -196,8 +197,8 @@ private:
 	struct kvm_sregs* cached_sregs = nullptr;
 
 	struct MPvCPU {
-		auto message(std::function<void(vCPU&)>);
 		void blocking_message(std::function<void(vCPU&)>);
+		void async_exec(const struct tinykvm_x86regs&, float);
 
 		MPvCPU(int, Machine&, const struct kvm_sregs&);
 		~MPvCPU();
