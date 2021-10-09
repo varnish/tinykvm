@@ -31,10 +31,18 @@ void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs& regs, float timeo
 {
 	thpool.enqueue([this, regs, timeout] {
 		try {
+			/*printf("Working from vCPU %d, RIP=0x%llX  RSP=0x%llX  ARG=0x%llX\n",
+				cpu.cpu_id, regs.rip, regs.rsp, regs.rsi);*/
 			cpu.assign_registers(regs);
 			cpu.run(timeout);
 			cpu.decrement_smp_count();
-		} catch (...) {
+		} catch (const tinykvm::MemoryException& e) {
+			printf("SMP memory exception: %s (addr=0x%lX, size=0x%lX)\n",
+				e.what(), e.addr(), e.size());
+			cpu.decrement_smp_count();
+			throw;
+		} catch (const std::exception& e) {
+			printf("SMP exception: %s\n", e.what());
 			cpu.decrement_smp_count();
 			throw;
 		}

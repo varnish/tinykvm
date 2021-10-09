@@ -113,7 +113,9 @@ void Machine::timed_smpcall(size_t num_cpus,
 	for (size_t c = 0; c < num_cpus; c++) {
 		/* XXX: Spin-barrier here to avoid copying in registers? */
 		auto regs = this->setup_call(addr,
-			stack_base + (c+1) * stack_size, std::forward<Args> (args)...);
+			stack_base + (c+1) * stack_size,
+			(int)m_cpus[c].cpu.cpu_id,
+			std::forward<Args> (args)...);
 		m_cpus[c].async_exec(regs, timeout);
 	}
 }
