@@ -204,6 +204,7 @@ private:
 		~MPvCPU();
 		vCPU cpu;
 		ThreadPool thpool;
+		float timeout = 0.0f;
 	};
 	MPvCPU* m_cpus = nullptr;
 	size_t m_cpucount = 0;
