@@ -85,6 +85,7 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 		master_sregs.efer =
 			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
 		setup_amd64_segment_regs(master_sregs, GDT_ADDR);
+		master_sregs.gs.base = usercode_header().vm64_cpuid;
 		setup_amd64_tss_regs(master_sregs, TSS_ADDR);
 		setup_amd64_exception_regs(master_sregs, IDT_ADDR);
 

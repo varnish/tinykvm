@@ -1,7 +1,9 @@
 #include "machine.hpp"
 #include "kernel/memory_layout.hpp"
+#include "kernel/usercode.hpp"
 #include <cassert>
 #include <linux/kvm.h>
+#include <sys/ioctl.h>
 
 namespace tinykvm {
 
@@ -11,9 +13,8 @@ Machine::MPvCPU::MPvCPU(int c, Machine& m, const struct kvm_sregs& sregs)
 	/* We store the CPU ID in GSBASE register */
 	auto f = thpool.enqueue([this, c, &m, sregs = sregs] () mutable {
 		this->cpu.smp_init(c, m);
-		sregs.gs.base = c;
-		sregs.gs.selector = c;
 		sregs.tr.base = TSS_SMP_ADDR + (c - 1) * 104; /* AMD64_TSS */
+		sregs.gs.base = usercode_header().vm64_cpuid + 4 * c;
 		this->cpu.set_special_registers(sregs);
 	});
 }
