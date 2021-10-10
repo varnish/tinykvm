@@ -128,7 +128,7 @@ struct Machine
 	std::string_view binary() const noexcept { return m_binary; }
 
 	template <typename... Args> constexpr
-	tinykvm_x86regs setup_call(uint64_t addr, uint64_t rsp, Args&&... args);
+	void setup_call(tinykvm_x86regs&, uint64_t addr, uint64_t rsp, Args&&... args);
 	void prepare_copy_on_write();
 	bool is_forked() const noexcept { return m_forked; }
 	static void init();
@@ -198,12 +198,13 @@ private:
 
 	struct MPvCPU {
 		void blocking_message(std::function<void(vCPU&)>);
-		void async_exec(const struct tinykvm_x86regs&, float);
+		void async_exec(const struct tinykvm_x86regs*, float);
 
 		MPvCPU(int, Machine&, const struct kvm_sregs&);
 		~MPvCPU();
 		vCPU cpu;
 		ThreadPool thpool;
+		const struct tinykvm_x86regs* regs = nullptr;
 		float timeout = 0.0f;
 	};
 	MPvCPU* m_cpus = nullptr;

@@ -28,34 +28,32 @@ void Machine::MPvCPU::blocking_message(std::function<void(vCPU&)> func)
 	res.get();
 }
 
-void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs& regs, float timeout)
+void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs* regs, float timeout)
 {
 	/* To get the best performance we do:
-		1. Compact the first message into a stack struct pointer,
-		to force the lambda capture small size optimization. The
-		message contains a reference to the 144-byte register struct.
-		2. Set regs async, but keep the future.
-		3. Start the vCPU with timeout in vCPU (for SSO).
-		4. Get the future to ensure the stack objects don't expire.
+		1. Allocate regs on heap.
+		2. Set regs and timeout in MP vCPU.
+		3. Assign and delete regs at vCPU thread.
+		4. Start the vCPU with timeout in vCPU (for SSO).
 
-		This should theoretically maximize performance.
+		This means it is *NOT* possible to schedule more than
+		one execution at the same time due to regs race.
 	*/
-	struct FirstCall {
-		const struct tinykvm_x86regs& regs;
-		vCPU& cpu;
-	};
-	FirstCall firstcall { .regs = regs, .cpu = this->cpu };
-	auto fut = thpool.enqueue([f = &firstcall] {
-		f->cpu.assign_registers(f->regs);
-	});
-
+	this->regs = regs;
 	this->timeout = timeout;
 	thpool.enqueue([this] {
 		try {
+			/* XXX: This really necessary? Keep it? */
+			auto* regs = this->regs;
+			this->regs = nullptr;
 			/*printf("Working from vCPU %d, RIP=0x%llX  RSP=0x%llX  ARG=0x%llX\n",
-				cpu.cpu_id, regs.rip, regs.rsp, regs.rsi);*/
+				cpu.cpu_id, regs->rip, regs->rsp, regs->rsi);*/
+			cpu.assign_registers(*regs);
+			delete regs;
+
 			cpu.run(this->timeout);
 			cpu.decrement_smp_count();
+
 		} catch (const tinykvm::MemoryException& e) {
 			printf("SMP memory exception: %s (addr=0x%lX, size=0x%lX)\n",
 				e.what(), e.addr(), e.size());
@@ -67,9 +65,6 @@ void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs& regs, float timeo
 			throw;
 		}
 	});
-
-	/* Wait for the regs to get assigned. */
-	fut.get();
 }
 
 void Machine::prepare_cpus(size_t num_cpus)
