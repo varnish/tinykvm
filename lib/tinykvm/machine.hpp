@@ -39,7 +39,16 @@ struct Machine
 	std::vector<long> gather_return_values() const;
 
 	template <typename... Args>
-	void timed_smpcall(size_t cpus, uint64_t stack, uint64_t stack_size, address_t addr, float tmo, Args&&...);
+	void timed_smpcall(size_t cpus,
+		address_t stack, uint32_t stack_size,
+		address_t addr, float tmo, Args&&...);
+	void timed_smpcall_array(size_t cpus,
+		address_t stack, uint32_t stack_size,
+		address_t addr, float tmo,
+		address_t array, uint32_t array_item_size);
+	void timed_smpcall_clone(size_t num_cpus,
+		address_t stack_base, uint32_t stack_size,
+		float timeout, const tinykvm_x86regs& regs);
 	void smp_wait() const;
 
 	bool is_forkable() const noexcept { return m_prepped; }
@@ -129,6 +138,7 @@ struct Machine
 
 	template <typename... Args> constexpr
 	void setup_call(tinykvm_x86regs&, uint64_t addr, uint64_t rsp, Args&&... args);
+	void setup_clone(tinykvm_x86regs&, address_t stack);
 	void prepare_copy_on_write();
 	bool is_forked() const noexcept { return m_forked; }
 	static void init();

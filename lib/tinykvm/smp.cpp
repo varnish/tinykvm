@@ -88,6 +88,42 @@ void Machine::prepare_cpus(size_t num_cpus)
 	}
 }
 
+void Machine::timed_smpcall_array(size_t num_cpus,
+	address_t stack_base, uint32_t stack_size,
+	address_t addr, float timeout,
+	address_t array, uint32_t array_isize)
+{
+	assert(num_cpus != 0);
+	this->prepare_cpus(num_cpus);
+	__sync_fetch_and_add(&m_smp_active, num_cpus);
+
+	for (size_t c = 0; c < num_cpus; c++) {
+		auto regs = new tinykvm_x86regs;
+		this->setup_call(*regs, addr,
+			stack_base + (c+1) * stack_size,
+			array + (c+1) * array_isize,
+			array_isize);
+		m_cpus[c].async_exec(regs, timeout);
+	}
+}
+
+void Machine::timed_smpcall_clone(size_t num_cpus,
+	address_t stack_base, uint32_t stack_size,
+	float timeout, const tinykvm_x86regs& regs)
+{
+	assert(num_cpus != 0);
+	this->prepare_cpus(num_cpus);
+	__sync_fetch_and_add(&m_smp_active, num_cpus);
+
+	for (size_t c = 0; c < num_cpus; c++) {
+		auto new_regs = new tinykvm_x86regs {regs};
+		this->setup_clone(*new_regs,
+			stack_base + (c+1) * stack_size);
+
+		m_cpus[c].async_exec(new_regs, timeout);
+	}
+}
+
 void Machine::smp_wait() const
 {
 	for (size_t c = 0; c < m_cpucount; c++) {

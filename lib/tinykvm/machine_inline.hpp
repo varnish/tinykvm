@@ -78,6 +78,16 @@ void Machine::setup_call(tinykvm_x86regs& regs, uint64_t addr, uint64_t rsp, Arg
 	stack_push<uint64_t> (regs.rsp, exit_address());
 }
 
+inline void Machine::setup_clone(tinykvm_x86regs& regs, address_t stack)
+{
+	/* Set IOPL=3 to allow I/O instructions, enable IF */
+	regs.rflags = 2 | (3 << 12) | 0x200;
+	regs.r15 = regs.rip;
+	regs.rip = this->entry_address();
+	regs.rbp = 0;
+	regs.rsp = stack;
+}
+
 template <typename... Args> inline constexpr
 void Machine::vmcall(uint64_t addr, Args&&... args)
 {
@@ -105,18 +115,17 @@ void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 
 template <typename... Args> inline
 void Machine::timed_smpcall(size_t num_cpus,
-	uint64_t stack_base, uint64_t stack_size,
-	uint64_t addr, float timeout, Args&&... args)
+	address_t stack_base, uint32_t stack_size,
+	address_t addr, float timeout, Args&&... args)
 {
+	assert(num_cpus != 0);
 	this->prepare_cpus(num_cpus);
 	__sync_fetch_and_add(&m_smp_active, num_cpus);
 
 	for (size_t c = 0; c < num_cpus; c++) {
-		/* XXX: Spin-barrier here to avoid copying in registers? */
 		auto regs = new tinykvm_x86regs;
 		this->setup_call(*regs, addr,
 			stack_base + (c+1) * stack_size,
-			(int)m_cpus[c].cpu.cpu_id,
 			std::forward<Args> (args)...);
 		m_cpus[c].async_exec(regs, timeout);
 	}
