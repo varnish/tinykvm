@@ -57,6 +57,7 @@ int main(int argc, char** argv)
 	if (getenv("DEBUG"))
 	{
 		auto* vm = &master_vm;
+		tinykvm::tinykvm_x86regs regs;
 
 		if (getenv("VMCALL")) {
 			master_vm.run();
@@ -64,10 +65,10 @@ int main(int argc, char** argv)
 		if (getenv("FORK")) {
 			master_vm.prepare_copy_on_write();
 			vm = new tinykvm::Machine {master_vm, options};
-			auto regs = vm->setup_call(vm->address_of("test_return"), rsp);
+			vm->setup_call(regs, vm->address_of("test_return"), rsp);
 			vm->set_registers(regs);
 		} else {
-			auto regs = master_vm.setup_call(master_vm.address_of("test_return"), rsp);
+			master_vm.setup_call(regs, master_vm.address_of("test_return"), rsp);
 			master_vm.set_registers(regs);
 		}
 
