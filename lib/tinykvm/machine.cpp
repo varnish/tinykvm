@@ -86,12 +86,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 __attribute__ ((cold))
 Machine::~Machine()
 {
-	/* Manually free MP vCPUs one by one */
-	for (size_t c = 0; c < m_cpucount; c++) {
-		m_cpus[c].~MPvCPU();
-	}
-	std::free(m_cpus);
-
+	m_cpus.clear();
 	vcpu.deinit();
 	delete cached_sregs;
 	close(this->fd);

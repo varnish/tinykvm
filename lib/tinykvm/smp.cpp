@@ -69,22 +69,17 @@ void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs* regs, float timeo
 
 void Machine::prepare_cpus(size_t num_cpus)
 {
-	if (m_cpus == nullptr) {
-		auto* array = (MPvCPU*) std::malloc(sizeof(MPvCPU) * num_cpus);
+	if (m_cpus.size() < num_cpus) {
 		/* Inherit the special registers of the main vCPU */
 		struct kvm_sregs sregs;
 		vcpu.get_special_registers(sregs);
 
-		for (size_t c = 0; c < num_cpus; c++) {
+		while (m_cpus.size() < num_cpus) {
 			/* NB: The cpu ids start at 1..2..3.. */
-			new (&array[c]) MPvCPU(1 + c, *this, sregs);
+			const int c = 1 + m_cpus.size();
+			m_cpus.emplace_back(c, *this, sregs);
 		}
-		this->m_cpus = array;
-		this->m_cpucount = num_cpus;
-		//printf("%zu SMP vCPUs initialized\n", this->m_cpucount);
-	}
-	if (this->m_cpucount < num_cpus) {
-		machine_exception("SMP vCPU count mismatch", num_cpus);
+		//printf("%zu SMP vCPUs initialized\n", this->m_cpus.size());
 	}
 }
 
@@ -97,7 +92,7 @@ void Machine::timed_smpcall_array(size_t num_cpus,
 	this->prepare_cpus(num_cpus);
 	__sync_fetch_and_add(&m_smp_active, num_cpus);
 
-	for (size_t c = 0; c < num_cpus; c++) {
+	for (size_t c = 0; c < m_cpus.size(); c++) {
 		auto regs = new tinykvm_x86regs;
 		this->setup_call(*regs, addr,
 			stack_base + (c+1) * stack_size,
@@ -115,7 +110,7 @@ void Machine::timed_smpcall_clone(size_t num_cpus,
 	this->prepare_cpus(num_cpus);
 	__sync_fetch_and_add(&m_smp_active, num_cpus);
 
-	for (size_t c = 0; c < num_cpus; c++) {
+	for (size_t c = 0; c < m_cpus.size(); c++) {
 		auto new_regs = new tinykvm_x86regs {regs};
 		this->setup_clone(*new_regs,
 			stack_base + (c+1) * stack_size);
@@ -124,18 +119,18 @@ void Machine::timed_smpcall_clone(size_t num_cpus,
 	}
 }
 
-void Machine::smp_wait() const
+void Machine::smp_wait()
 {
-	for (size_t c = 0; c < m_cpucount; c++) {
+	for (size_t c = 0; c < m_cpus.size(); c++) {
 		m_cpus[c].thpool.wait_until_nothing_in_flight();
 	}
 }
 
-std::vector<long> Machine::gather_return_values() const
+std::vector<long> Machine::gather_return_values()
 {
 	std::vector<long> results;
-	results.resize(this->m_cpucount);
-	for (size_t c = 0; c < m_cpucount; c++) {
+	results.resize(this->m_cpus.size());
+	for (size_t c = 0; c < m_cpus.size(); c++) {
 		m_cpus[c].blocking_message([&] (auto& cpu) {
 			//printf("CPU %zu result: 0x%llu\n", c, cpu.registers().rdi);
 			results[c] = cpu.registers().rdi;

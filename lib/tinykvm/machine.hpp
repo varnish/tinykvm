@@ -5,6 +5,7 @@
 #include "memory_bank.hpp"
 #include "util/threadpool.h"
 #include <array>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -35,8 +36,6 @@ struct Machine
 	void timed_vmcall(address_t, float timeout, Args&&...);
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
-	/* Retrieve return values from a smpcall */
-	std::vector<long> gather_return_values() const;
 
 	template <typename... Args>
 	void timed_smpcall(size_t cpus,
@@ -49,7 +48,6 @@ struct Machine
 	void timed_smpcall_clone(size_t num_cpus,
 		address_t stack_base, uint32_t stack_size,
 		float timeout, const tinykvm_x86regs& regs);
-	void smp_wait() const;
 
 	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
@@ -118,6 +116,10 @@ struct Machine
 
 	bool smp_active() const noexcept { return m_smp_active != 0; }
 	int  smp_active_count() const noexcept { return m_smp_active; }
+	void smp_wait();
+	/* Retrieve return values from a smpcall */
+	std::vector<long> gather_return_values();
+
 	bool has_threads() const noexcept { return m_mt != nullptr; }
 	const struct MultiThreading& threads() const;
 	struct MultiThreading& threads();
@@ -217,8 +219,7 @@ private:
 		const struct tinykvm_x86regs* regs = nullptr;
 		float timeout = 0.0f;
 	};
-	MPvCPU* m_cpus = nullptr;
-	size_t m_cpucount = 0;
+	std::deque<MPvCPU> m_cpus;
 
 	/* How to print exceptions, register dumps etc. */
 	printer_func m_printer = m_default_printer;
