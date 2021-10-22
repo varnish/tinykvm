@@ -165,9 +165,7 @@ private:
 
 		void print_registers();
 		void handle_exception(uint8_t intr);
-		inline void decrement_smp_count() {
-			__sync_fetch_and_sub(&machine->m_smp_active, 1);
-		}
+		void decrement_smp_count();
 
 		int fd = 0;
 		int cpu_id = 0;
@@ -208,18 +206,24 @@ private:
 	mutable std::unique_ptr<MultiThreading> m_mt;
 	struct kvm_sregs* cached_sregs = nullptr;
 
+	struct MPvCPU_data {
+		vCPU* vcpu;
+		uint32_t ticks;
+		struct tinykvm_x86regs regs;
+	};
 	struct MPvCPU {
 		void blocking_message(std::function<void(vCPU&)>);
-		void async_exec(const struct tinykvm_x86regs*, uint32_t tix);
+		void async_exec(struct MPvCPU_data&);
 
 		MPvCPU(int, Machine&, const struct kvm_sregs&);
 		~MPvCPU();
 		vCPU cpu;
 		ThreadPool thpool;
-		const struct tinykvm_x86regs* regs = nullptr;
-		uint32_t ticks = 0;
 	};
 	std::deque<MPvCPU> m_cpus;
+	std::vector<const struct MPvCPU_data*> m_smp_data;
+	std::mutex m_smp_data_mtx;
+	MPvCPU_data* smp_allocate_vcpu_data(size_t);
 
 	/* How to print exceptions, register dumps etc. */
 	printer_func m_printer = m_default_printer;

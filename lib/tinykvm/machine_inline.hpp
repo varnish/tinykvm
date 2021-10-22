@@ -128,14 +128,19 @@ void Machine::timed_smpcall(size_t num_cpus,
 {
 	assert(num_cpus != 0);
 	this->prepare_cpus(num_cpus);
+	auto* data = smp_allocate_vcpu_data(num_cpus);
+
+	/* XXX: This counter can be wrong when exceptions
+	   happen during setup_call and async_exec. */
 	__sync_fetch_and_add(&m_smp_active, num_cpus);
 
 	for (size_t c = 0; c < num_cpus; c++) {
-		auto regs = new tinykvm_x86regs;
-		this->setup_call(*regs, addr,
+		data[c].vcpu = &m_cpus[c].cpu;
+		data[c].ticks = to_ticks(timeout);
+		this->setup_call(data[c].regs, addr,
 			stack_base + (c+1) * stack_size,
 			std::forward<Args> (args)...);
-		m_cpus[c].async_exec(regs, to_ticks(timeout));
+		m_cpus[c].async_exec(data[c]);
 	}
 }
 

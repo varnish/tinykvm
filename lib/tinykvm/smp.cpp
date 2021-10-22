@@ -28,7 +28,7 @@ void Machine::MPvCPU::blocking_message(std::function<void(vCPU&)> func)
 	res.get();
 }
 
-void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs* regs, uint32_t ticks)
+void Machine::MPvCPU::async_exec(MPvCPU_data& data)
 {
 	/* To get the best performance we do:
 		1. Allocate regs on heap.
@@ -39,34 +39,38 @@ void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs* regs, uint32_t ti
 		This means it is *NOT* possible to schedule more than
 		one execution at the same time due to regs race.
 	*/
-	this->regs = regs;
-	this->ticks = ticks;
-	thpool.enqueue([this] {
+	thpool.enqueue([&data] {
+		auto& vcpu = *data.vcpu;
 		try {
-			/* XXX: This really necessary? Keep it? */
-			auto* regs = this->regs;
-			this->regs = nullptr;
 			/*printf("Working from vCPU %d, RIP=0x%llX  RSP=0x%llX  ARG=0x%llX\n",
 				cpu.cpu_id, regs->rip, regs->rsp, regs->rsi);*/
-			cpu.assign_registers(*regs);
-			delete regs;
+			vcpu.assign_registers(data.regs);
 
-			cpu.run(this->ticks);
-			cpu.decrement_smp_count();
+			vcpu.run(data.ticks);
+			vcpu.decrement_smp_count();
 
 		} catch (const tinykvm::MemoryException& e) {
 			printf("SMP memory exception: %s (addr=0x%lX, size=0x%lX)\n",
 				e.what(), e.addr(), e.size());
-			cpu.decrement_smp_count();
+			vcpu.decrement_smp_count();
 			throw;
 		} catch (const std::exception& e) {
 			printf("SMP exception: %s\n", e.what());
-			cpu.decrement_smp_count();
+			vcpu.decrement_smp_count();
 			throw;
 		}
 	});
 }
 
+Machine::MPvCPU_data* Machine::smp_allocate_vcpu_data(size_t num_cpus)
+{
+	auto* data = new MPvCPU_data[num_cpus];
+
+	std::lock_guard<std::mutex> lock(m_smp_data_mtx);
+	m_smp_data.push_back(data);
+
+	return data;
+}
 void Machine::prepare_cpus(size_t num_cpus)
 {
 	if (m_cpus.size() < num_cpus) {
@@ -82,6 +86,21 @@ void Machine::prepare_cpus(size_t num_cpus)
 		//printf("%zu SMP vCPUs initialized\n", this->m_cpus.size());
 	}
 }
+void Machine::vCPU::decrement_smp_count()
+{
+	const int v = __sync_fetch_and_sub(&machine->m_smp_active, 1);
+	/* Check if we are the lucky one to clear out the SMP registers. */
+	if (UNLIKELY(v == 1))
+	{
+		/* Create temporary vector and swap in contents. */
+		machine->m_smp_data_mtx.lock();
+		auto tmp = std::move(machine->m_smp_data);
+		machine->m_smp_data_mtx.unlock();
+		/* Delete registers one by one, then let it destruct. */
+		for (auto* regs : tmp)
+			delete[] regs;
+	}
+}
 
 void Machine::timed_smpcall_array(size_t num_cpus,
 	address_t stack_base, uint32_t stack_size,
@@ -90,15 +109,18 @@ void Machine::timed_smpcall_array(size_t num_cpus,
 {
 	assert(num_cpus != 0);
 	this->prepare_cpus(num_cpus);
+	auto* data = smp_allocate_vcpu_data(num_cpus);
+
 	__sync_fetch_and_add(&m_smp_active, num_cpus);
 
 	for (size_t c = 0; c < m_cpus.size(); c++) {
-		auto regs = new tinykvm_x86regs;
-		this->setup_call(*regs, addr,
+		data[c].vcpu = &m_cpus[c].cpu;
+		data[c].ticks = to_ticks(timeout);
+		this->setup_call(data[c].regs, addr,
 			stack_base + (c+1) * stack_size,
 			array + (c+1) * array_isize,
 			array_isize);
-		m_cpus[c].async_exec(regs, to_ticks(timeout));
+		m_cpus[c].async_exec(data[c]);
 	}
 }
 
@@ -108,14 +130,18 @@ void Machine::timed_smpcall_clone(size_t num_cpus,
 {
 	assert(num_cpus != 0);
 	this->prepare_cpus(num_cpus);
+	auto* data = smp_allocate_vcpu_data(num_cpus);
+
 	__sync_fetch_and_add(&m_smp_active, num_cpus);
 
 	for (size_t c = 0; c < m_cpus.size(); c++) {
-		auto new_regs = new tinykvm_x86regs {regs};
-		this->setup_clone(*new_regs,
+		data[c].vcpu = &m_cpus[c].cpu;
+		data[c].ticks = to_ticks(timeout);
+		data[c].regs = regs;
+		this->setup_clone(data[c].regs,
 			stack_base + (c+1) * stack_size);
 
-		m_cpus[c].async_exec(new_regs, to_ticks(timeout));
+		m_cpus[c].async_exec(data[c]);
 	}
 }
 
