@@ -159,7 +159,7 @@ private:
 		void get_special_registers(struct kvm_sregs&) const;
 		void set_special_registers(const struct kvm_sregs&);
 
-		void run(float timeout);
+		void run(uint32_t tix);
 		long run_once();
 		std::string_view io_data() const;
 
@@ -210,14 +210,14 @@ private:
 
 	struct MPvCPU {
 		void blocking_message(std::function<void(vCPU&)>);
-		void async_exec(const struct tinykvm_x86regs*, float);
+		void async_exec(const struct tinykvm_x86regs*, uint32_t tix);
 
 		MPvCPU(int, Machine&, const struct kvm_sregs&);
 		~MPvCPU();
 		vCPU cpu;
 		ThreadPool thpool;
 		const struct tinykvm_x86regs* regs = nullptr;
-		float timeout = 0.0f;
+		uint32_t ticks = 0;
 	};
 	std::deque<MPvCPU> m_cpus;
 

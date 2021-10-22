@@ -44,13 +44,6 @@ void initialize_vcpu_stuff(int kvm_fd)
 	}
 }
 
-/* Timer ticks for execution timeouts */
-static float ticks_to_seconds(uint32_t ticks) { return ticks / 62500000.0; }
-static uint32_t to_ticks(float seconds) {
-	const float val = seconds * 62500000.0;
-	return (val < (float)UINT32_MAX) ? (uint32_t)val : UINT32_MAX;
-}
-
 void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options)
 {
 	this->cpu_id = id;
@@ -483,14 +476,14 @@ void Machine::vCPU::handle_exception(uint8_t intr)
 	} catch (...) {}
 }
 
-void Machine::vCPU::run(float timeout)
+void Machine::vCPU::run(uint32_t ticks)
 {
-	if (timeout != 0.f)
+	if (ticks != 0)
 	{
 		auto timed_lapic = master_lapic;
 		auto& lapic = *(local_apic *)&timed_lapic;
 		lapic.lvt_timer.mask   = 0x0;
-		lapic.timer_icr.initial_count = to_ticks(timeout);
+		lapic.timer_icr.initial_count = ticks;
 		lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
 
 		if (ioctl(this->fd, KVM_SET_LAPIC, &lapic)) {

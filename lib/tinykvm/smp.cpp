@@ -28,7 +28,7 @@ void Machine::MPvCPU::blocking_message(std::function<void(vCPU&)> func)
 	res.get();
 }
 
-void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs* regs, float timeout)
+void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs* regs, uint32_t ticks)
 {
 	/* To get the best performance we do:
 		1. Allocate regs on heap.
@@ -40,7 +40,7 @@ void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs* regs, float timeo
 		one execution at the same time due to regs race.
 	*/
 	this->regs = regs;
-	this->timeout = timeout;
+	this->ticks = ticks;
 	thpool.enqueue([this] {
 		try {
 			/* XXX: This really necessary? Keep it? */
@@ -51,7 +51,7 @@ void Machine::MPvCPU::async_exec(const struct tinykvm_x86regs* regs, float timeo
 			cpu.assign_registers(*regs);
 			delete regs;
 
-			cpu.run(this->timeout);
+			cpu.run(this->ticks);
 			cpu.decrement_smp_count();
 
 		} catch (const tinykvm::MemoryException& e) {
@@ -98,7 +98,7 @@ void Machine::timed_smpcall_array(size_t num_cpus,
 			stack_base + (c+1) * stack_size,
 			array + (c+1) * array_isize,
 			array_isize);
-		m_cpus[c].async_exec(regs, timeout);
+		m_cpus[c].async_exec(regs, to_ticks(timeout));
 	}
 }
 
@@ -115,7 +115,7 @@ void Machine::timed_smpcall_clone(size_t num_cpus,
 		this->setup_clone(*new_regs,
 			stack_base + (c+1) * stack_size);
 
-		m_cpus[c].async_exec(new_regs, timeout);
+		m_cpus[c].async_exec(new_regs, to_ticks(timeout));
 	}
 }
 

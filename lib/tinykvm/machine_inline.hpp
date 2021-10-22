@@ -1,3 +1,11 @@
+/* APIC timer counter calculations for execution timeouts */
+constexpr inline float ticks_to_seconds(uint32_t ticks) {
+	return ticks / 62500000.0;
+}
+constexpr inline uint32_t to_ticks(float seconds) {
+	const float val = seconds * 62500000.0;
+	return (val < (float)UINT32_MAX) ? (uint32_t)val : UINT32_MAX;
+}
 
 inline void Machine::stop(bool s)
 {
@@ -110,7 +118,7 @@ void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 	tinykvm_x86regs regs;
 	this->setup_call(regs, addr, this->stack_address(), std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
-	vcpu.run(timeout);
+	vcpu.run(to_ticks(timeout));
 }
 
 template <typename... Args> inline
@@ -127,7 +135,7 @@ void Machine::timed_smpcall(size_t num_cpus,
 		this->setup_call(*regs, addr,
 			stack_base + (c+1) * stack_size,
 			std::forward<Args> (args)...);
-		m_cpus[c].async_exec(regs, timeout);
+		m_cpus[c].async_exec(regs, to_ticks(timeout));
 	}
 }
 
