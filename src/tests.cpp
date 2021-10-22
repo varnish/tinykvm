@@ -141,11 +141,21 @@ void test_master_vm(tinykvm::Machine& vm)
 	KASSERT(vm.return_value() == 200);
 	vm.vmcall("test_malloc");
 	KASSERT(vm.return_value() != 0);
+
+	printf("--- Testing endless loop ---\n");
+	/* To test endless loops we rely on the Machine to
+	   throw an exact exception, namely tinykvm::MachineTimeoutException.
+	   To make sure this happens we throw another exception right
+	   after the timed_vmcall, which throws a runtime_error instead.
+	   The program will fail with an uncaught exception if the timeout
+	   doesn't happen naturally after 1 second. */
 	try {
 		const auto addr = vm.address_of("test_loop");
 		vm.timed_vmcall(addr, 1.0);
+		throw std::runtime_error("Timeout exception failed");
 	} catch (const tinykvm::MachineTimeoutException& me) {
 		KASSERT(me.seconds() == 1.0);
+		printf("*** Timeout OK\n");
 	}
 
 	printf("--- Testing multi-processing ---\n");
@@ -208,6 +218,14 @@ void test_forking(tinykvm::Machine& master_vm)
 		KASSERT(vm.return_value() == 200);
 		vm.vmcall("test_malloc");
 		KASSERT(vm.return_value() != 0);
+		static int run_once = 0;
+		if (run_once++ == 0) try {
+			const auto addr = vm.address_of("test_loop");
+			vm.timed_vmcall(addr, 1.0);
+			throw std::runtime_error("Timeout exception failed");
+		} catch (const tinykvm::MachineTimeoutException& me) {
+			KASSERT(me.seconds() == 1.0);
+		}
 	}
 
 	/* Reset and call into VM */
@@ -237,6 +255,15 @@ void test_forking(tinykvm::Machine& master_vm)
 		KASSERT(vm.return_value() == 200);
 		vm.vmcall("test_malloc");
 		KASSERT(vm.return_value() != 0);
+		/* Timeouts take a second, but should result in exception. */
+		static int run_once = 0;
+		if (run_once++ == 0) try {
+			const auto addr = vm.address_of("test_loop");
+			vm.timed_vmcall(addr, 1.0);
+			throw std::runtime_error("Timeout exception failed");
+		} catch (const tinykvm::MachineTimeoutException& me) {
+			KASSERT(me.seconds() == 1.0);
+		}
 	}
 }
 
