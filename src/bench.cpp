@@ -183,6 +183,7 @@ int main(int argc, char** argv)
 	asm("" : : : "memory");
 	uint64_t forktime = 0;
 	uint64_t calltime = 0;
+	uint64_t timed_calltime = 0;
 
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
@@ -198,12 +199,17 @@ int main(int argc, char** argv)
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
 		asm("" : : : "memory");
-		auto ft2 = time_now();
+		auto ft0 = time_now();
 		asm("" : : : "memory");
 		cvm.vmcall(vmcall_address);
 		asm("" : : : "memory");
-		auto ft3 = time_now();
-		calltime += nanodiff(ft2, ft3);
+		auto ft1 = time_now();
+		asm("" : : : "memory");
+		cvm.timed_vmcall(vmcall_address, 1.0f);
+		asm("" : : : "memory");
+		auto ft2 = time_now();
+		calltime += nanodiff(ft0, ft1);
+		timed_calltime += nanodiff(ft1, ft2);
 	}
 
 	asm("" : : : "memory");
@@ -213,7 +219,6 @@ int main(int argc, char** argv)
 	#define NUM_VMEXITS      200000
 	uint64_t bench_vmexit_address = cvm.address_of("bench_vmexits");
 	uint64_t bench_vmexit_time = 0;
-	for (unsigned i = 0; i < 1; i++)
 	{
 		asm("" : : : "memory");
 		auto ft0 = time_now();
@@ -221,7 +226,7 @@ int main(int argc, char** argv)
 		cvm.vmcall(bench_vmexit_address, NUM_VMEXITS);
 		asm("" : : : "memory");
 		auto ft1 = time_now();
-		bench_vmexit_time += nanodiff(ft0, ft1);
+		bench_vmexit_time = nanodiff(ft0, ft1);
 	}
 
 
@@ -239,7 +244,7 @@ int main(int argc, char** argv)
 
 	/* Reset benchmark */
 	uint64_t frtime = 0;
-	uint64_t frtotal = 0;
+	uint64_t frcall = 0;
 
 	for (unsigned i = 0; i < NUM_RESETS; i++)
 	{
@@ -253,16 +258,18 @@ int main(int argc, char** argv)
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		frtime += nanodiff(frt0, frt1);
-		frtotal += nanodiff(frt0, frt2);
+		frcall += nanodiff(frt1, frt2);
 	}
 	frtime /= NUM_RESETS;
-	frtotal /= NUM_RESETS;
+	frcall /= NUM_RESETS;
 
 	auto nanos_per_gf = forktime / NUM_GUESTS;
 	auto nanos_per_fc = nanodiff(ft0, ft3) / NUM_GUESTS;
 	printf("VM fork: %ldns (%ld micros)\n", nanos_per_gf, nanos_per_gf / 1000);
 	printf("vmcall: %ldns (%ld micros)\n",
 		calltime / NUM_GUESTS, calltime / NUM_GUESTS / 1000);
+	printf("timed_vmcall: %ldns (%ld micros)\n",
+		timed_calltime / NUM_GUESTS, timed_calltime / NUM_GUESTS / 1000);
 	printf("vmcall + destructor: %ldns (%ld micros)\n",
 		nanos_per_fc - nanos_per_gf, (nanos_per_fc - nanos_per_gf) / 1000);
 	printf("VM fork totals: %ldns (%ld micros)\n", nanos_per_fc, nanos_per_fc / 1000);
@@ -271,7 +278,7 @@ int main(int argc, char** argv)
 	printf("VM vmexit time: %ldns (%ld micros)\n", nanos_per_vmexit, nanos_per_vmexit / 1000);
 
 	printf("Fast reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
-	printf("Fast vmcall: %ldns (%ld micros)\n", frtotal, frtotal / 1000);
+	printf("Fast vmcall: %ldns (%ld micros)\n", frcall, frcall / 1000);
 
 	benchmark_alternate_tenant_resets(master_vm);
 	benchmark_two_tenants_two_vms(master_vm);
@@ -305,7 +312,7 @@ void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm)
 
 	/* Reset benchmark */
 	uint64_t frtime = 0;
-	uint64_t frtotal = 0;
+	uint64_t frcall = 0;
 	uint64_t counter = 0;
 
 	for (unsigned i = 0; i < NUM_RESETS; i++)
@@ -321,13 +328,13 @@ void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm)
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		frtime += nanodiff(frt0, frt1);
-		frtotal += nanodiff(frt0, frt2);
+		frcall += nanodiff(frt1, frt2);
 	}
 	frtime /= NUM_RESETS;
-	frtotal /= NUM_RESETS;
+	frcall /= NUM_RESETS;
 
 	printf("Alternating reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
-	printf("Alternating vmcall: %ldns (%ld micros)\n", frtotal, frtotal / 1000);
+	printf("Alternating vmcall: %ldns (%ld micros)\n", frcall, frcall / 1000);
 }
 
 void benchmark_two_tenants_two_vms(tinykvm::Machine& master_vm)
@@ -354,7 +361,7 @@ void benchmark_two_tenants_two_vms(tinykvm::Machine& master_vm)
 
 	/* Reset benchmark */
 	uint64_t frtime = 0;
-	uint64_t frtotal = 0;
+	uint64_t frcall = 0;
 	uint64_t counter = 0;
 
 	for (unsigned i = 0; i < NUM_RESETS; i++)
@@ -370,13 +377,13 @@ void benchmark_two_tenants_two_vms(tinykvm::Machine& master_vm)
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		frtime += nanodiff(frt0, frt1);
-		frtotal += nanodiff(frt0, frt2);
+		frcall += nanodiff(frt1, frt2);
 	}
 	frtime /= NUM_RESETS;
-	frtotal /= NUM_RESETS;
+	frcall /= NUM_RESETS;
 
 	printf("Alternating 2xVMs reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
-	printf("Alternating 2xVMs vmcall: %ldns (%ld micros)\n", frtotal, frtotal / 1000);
+	printf("Alternating 2xVMs vmcall: %ldns (%ld micros)\n", frcall, frcall / 1000);
 }
 
 timespec time_now()
