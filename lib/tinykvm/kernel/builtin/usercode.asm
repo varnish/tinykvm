@@ -7,10 +7,10 @@ dd .vm64_cpuid
 
 ALIGN 0x10
 .vm64_entry:
-	mov r14, rcx
+	mov r13, rcx
 	mov rax, 0x1F777
 	syscall
-	mov rcx, r14
+	mov rcx, r13
 	jmp r15
 .vm64_rexit:
 	mov rdi, rax

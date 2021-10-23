@@ -2,6 +2,7 @@
 struct kvm_run;
 struct kvm_regs;
 struct kvm_sregs;
+struct kvm_lapic_state;
 #include <linux/types.h>
 
 namespace tinykvm {

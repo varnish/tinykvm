@@ -65,10 +65,10 @@ int main(int argc, char** argv)
 		if (getenv("FORK")) {
 			master_vm.prepare_copy_on_write();
 			vm = new tinykvm::Machine {master_vm, options};
-			vm->setup_call(regs, vm->address_of("test_return"), rsp);
+			vm->setup_call(regs, vm->address_of("test_return"), 0, rsp);
 			vm->set_registers(regs);
 		} else {
-			master_vm.setup_call(regs, master_vm.address_of("test_return"), rsp);
+			master_vm.setup_call(regs, master_vm.address_of("test_return"), 0, rsp);
 			master_vm.set_registers(regs);
 		}
 
@@ -258,11 +258,13 @@ void test_forking(tinykvm::Machine& master_vm)
 		/* Timeouts take a second, but should result in exception. */
 		static int run_once = 0;
 		if (run_once++ == 0) try {
+			printf("Testing forked execution timeout\n");
 			const auto addr = vm.address_of("test_loop");
 			vm.timed_vmcall(addr, 1.0);
 			throw std::runtime_error("Timeout exception failed");
 		} catch (const tinykvm::MachineTimeoutException& me) {
 			KASSERT(me.seconds() == 1.0);
+			printf("Forked execution timeout OK\n");
 		}
 	}
 }

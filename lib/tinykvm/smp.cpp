@@ -115,8 +115,8 @@ void Machine::timed_smpcall_array(size_t num_cpus,
 
 	for (size_t c = 0; c < m_cpus.size(); c++) {
 		data[c].vcpu = &m_cpus[c].cpu;
-		data[c].ticks = to_ticks(timeout);
-		this->setup_call(data[c].regs, addr,
+		data[c].ticks = 0;
+		this->setup_call(data[c].regs, addr, to_ticks(timeout),
 			stack_base + (c+1) * stack_size,
 			array + (c+1) * array_isize,
 			array_isize);

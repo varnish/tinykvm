@@ -33,8 +33,8 @@ ALIGN 0x10
 .vm64_syscall:
 	cmp eax, 158 ;; PRCTL
 	je .vm64_prctl
-	cmp eax, 0x1F777 ;; CR3 RESET
-	je .vm64_reset_cr3
+	cmp eax, 0x1F777 ;; ENTRY SYSCALL
+	je .vm64_entrycall
 	out 0, eax
 	o64 sysret
 
@@ -44,7 +44,7 @@ ALIGN 0x10
 	push rdx
 	cmp rdi, 0x1002 ;; PRCTL
 	jne .vm64_prctl_trap
-	mov rcx, 0xC0000100  ;; FSBASE
+	mov ecx, 0xC0000100  ;; FSBASE
 	mov eax, esi ;; low-32 FS base
 	shr rsi, 32
 	mov edx, esi ;; high-32 FS base
@@ -65,12 +65,28 @@ ALIGN 0x10
 	ret
 
 .vm64_dso:
-	mov rax, .vm64_gettimeofday
+	mov eax, .vm64_gettimeofday
 	ret
 
-.vm64_reset_cr3:
+.vm64_entrycall:
+	;; Reset pagetables
 	mov rax, cr3
 	mov cr3, rax
+
+	cmp r14d, 0
+	jz skip_no_ticks
+
+	push rcx ;; rcx is the syscall return address
+
+	;; Execution timeout (LVT timer ticks)
+	mov ecx, 0xfee00000
+	;; program XAPIC TIMER.INITCNT with exec timeout
+	mov DWORD [ecx + 0x380], r14d
+	;; EOI
+	mov DWORD [ecx + 0x0B0], 0x0
+
+	pop rcx
+skip_no_ticks:
 	o64 sysret
 
 .vm64_page_fault:

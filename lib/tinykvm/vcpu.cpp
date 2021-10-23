@@ -7,7 +7,6 @@
 #include <sys/mman.h>
 #include "page_streaming.hpp"
 #include "kernel/amd64.hpp"
-//#include "kernel/lapic.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/gdt.hpp"
 #include "kernel/lapic.hpp"
@@ -103,6 +102,7 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 		lapic.lvt_lint0.delivery_mode = AMD64_APIC_MODE_EXTINT;
 		lapic.lvt_lint1.delivery_mode = AMD64_APIC_MODE_NMI;
 		lapic.lvt_timer.vector = 32;
+		lapic.lvt_timer.mask   = 0;
 		/**
 			0x0  - divide by 2
 			0x1  - divide by 4
@@ -134,7 +134,7 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 	msrs.entries[2].index = AMD64_MSR_APICBASE;
 	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
 	msrs.entries[1].data  = interrupt_header().vm64_syscall;
-	msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_X2APIC_ENABLE;
+	msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_XAPIC_ENABLE;
 
 	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < 3) {
 		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR/X2APIC");
@@ -142,7 +142,6 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 
 	auto timed_lapic = master_lapic;
 	auto& lapic = *(local_apic *)&timed_lapic;
-	lapic.lvt_timer.mask   = (options.timeout == 0) ? 0x1 : 0x0;
 	lapic.timer_icr.initial_count = to_ticks(options.timeout);
 	lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
 
@@ -202,13 +201,7 @@ void Machine::vCPU::smp_init(int id, Machine& machine)
 		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR/X2APIC");
 	}
 
-	auto timed_lapic = master_lapic;
-	auto& lapic = *(local_apic *)&timed_lapic;
-	lapic.lvt_timer.mask = 0x1;
-	lapic.timer_icr.initial_count = 0;
-	lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
-
-	if (ioctl(this->fd, KVM_SET_LAPIC, &timed_lapic)) {
+	if (ioctl(this->fd, KVM_SET_LAPIC, &master_lapic)) {
 		machine_exception("KVM_SET_LAPIC: failed to set initial LAPIC");
 	}
 }
@@ -480,10 +473,11 @@ void Machine::vCPU::run(uint32_t ticks)
 {
 	if (ticks != 0)
 	{
+		this->timer_ticks = ticks;
+		/* XXX: This is 1KB. */
 		auto timed_lapic = master_lapic;
 		auto& lapic = *(local_apic *)&timed_lapic;
-		lapic.lvt_timer.mask   = 0x0;
-		lapic.timer_icr.initial_count = ticks;
+		lapic.timer_icr.initial_count = this->timer_ticks;
 		lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
 
 		if (ioctl(this->fd, KVM_SET_LAPIC, &lapic)) {
@@ -563,14 +557,9 @@ long Machine::vCPU::run_once()
 			}
 			else if (intr == 33)
 			{
-				struct kvm_lapic_state kvmlapic;
-				if (ioctl(this->fd, KVM_GET_LAPIC, &kvmlapic)) {
-					machine_exception("KVM_GET_LAPIC: failed to get LAPIC (timeout)");
-				}
-				/* A global timeout */
-				auto& lapic = *(local_apic *)&kvmlapic;
+				/* A timeout exception */
 				timeout_exception(amd64_exception_name(intr),
-					lapic.timer_icr.initial_count);
+					this->timer_ticks);
 			}
 			else if (intr == 1) /* Debug trap */
 			{
