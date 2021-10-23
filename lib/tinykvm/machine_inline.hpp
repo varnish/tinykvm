@@ -44,8 +44,8 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 	Args&&... args)
 {
 	regs = {};
-	/* Set IOPL=3 to allow I/O instructions, enable IF */
-	regs.rflags = 2 | (3 << 12) | 0x200;
+	/* Set IOPL=3 to allow I/O instructions */
+	regs.rflags = 2 | (3 << 12);
 	regs.r15 = addr;
 	regs.r14 = ticks;
 	regs.rip = this->entry_address();

@@ -87,6 +87,7 @@ ALIGN 0x10
 
 	pop rcx
 skip_no_ticks:
+	sti
 	o64 sysret
 
 .vm64_page_fault:
