@@ -76,18 +76,16 @@ ALIGN 0x10
 	cmp r14d, 0
 	jz skip_no_ticks
 
-	push rcx ;; rcx is the syscall return address
-
 	;; Execution timeout (LVT timer ticks)
-	mov ecx, 0xfee00000
+	mov eax, 0xfee00000
 	;; program XAPIC TIMER.INITCNT with exec timeout
-	mov DWORD [ecx + 0x380], r14d
+	mov DWORD [eax + 0x380], r14d
 	;; EOI
-	mov DWORD [ecx + 0x0B0], 0x0
+	mov DWORD [eax + 0x0B0], 0x0
+	;; Enable usermode interrupts
+	or r11, 0x200
 
-	pop rcx
 skip_no_ticks:
-	sti
 	o64 sysret
 
 .vm64_page_fault:
