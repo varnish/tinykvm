@@ -214,7 +214,7 @@ void Machine::print(const char* buffer, size_t len)
 
 void Machine::run(float timeout)
 {
-	return vcpu.run(timeout);
+	return vcpu.run(to_ticks(timeout));
 }
 
 __attribute__((cold, noreturn))
