@@ -88,10 +88,12 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd1_addr;
 	pdpt[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd2_addr;
 
+#ifdef TINYKVM_FAST_EXECUTION_TIMEOUT
 	pdpt[3] = PDE64_PRESENT | PDE64_RW | pd503_addr;
 	for (size_t i = 0; i < 511; i++) {
 		pd503[i] = PDE64_PRESENT | PDE64_RW | PDE64_NX | PDE64_PS | 0xfee00000;
 	}
+#endif
 
 	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
 

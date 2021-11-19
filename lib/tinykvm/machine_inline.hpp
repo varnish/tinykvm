@@ -119,12 +119,20 @@ void Machine::vmcall(const char* function, Args&&... args)
 template <typename... Args> inline constexpr
 void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 {
+#ifdef TINYKVM_FAST_EXECUTION_TIMEOUT
 	vcpu.timer_ticks = to_ticks(timeout);
+#else
+	vcpu.timer_ticks = 0;
+#endif
 	tinykvm_x86regs regs;
 	this->setup_call(regs, addr, vcpu.timer_ticks,
 		this->stack_address(), std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
+#ifdef TINYKVM_FAST_EXECUTION_TIMEOUT
 	vcpu.run(0); /* Ticks are in r14. */
+#else
+	vcpu.run(to_ticks(timeout));
+#endif
 }
 
 template <typename... Args> inline
@@ -142,8 +150,13 @@ void Machine::timed_smpcall(size_t num_cpus,
 
 	for (size_t c = 0; c < num_cpus; c++) {
 		data[c].vcpu = &m_cpus[c].cpu;
+#ifdef TINYKVM_FAST_EXECUTION_TIMEOUT
 		data[c].ticks = 0;
 		this->setup_call(data[c].regs, addr, to_ticks(timeout),
+#else
+		data[c].ticks = to_ticks(timeout);
+		this->setup_call(data[c].regs, addr, 0,
+#endif
 			stack_base + (c+1) * stack_size,
 			std::forward<Args> (args)...);
 		m_cpus[c].async_exec(data[c]);

@@ -82,10 +82,10 @@ ALIGN 0x10
 	mov DWORD [eax + 0x380], r14d
 	;; EOI
 	mov DWORD [eax + 0x0B0], 0x0
-	;; Enable usermode interrupts
-	or r11, 0x200
 
 skip_no_ticks:
+	;; Enable usermode interrupts
+	or r11, 0x200
 	o64 sysret
 
 .vm64_page_fault:
