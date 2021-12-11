@@ -9,7 +9,8 @@ struct Machine;
 struct MemoryBanks;
 
 struct MemoryBank {
-	static constexpr unsigned N_PAGES = 16;
+	// This is 1x 2MB page (smallest x86 hugepage)
+	static constexpr unsigned N_PAGES = 512;
 
 	char*    mem;
 	uint64_t addr;

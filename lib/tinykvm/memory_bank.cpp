@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstring>
 #include <malloc.h>
+#include <sys/mman.h>
 #define PAGE_SIZE   0x1000
 
 namespace tinykvm {
@@ -27,7 +28,13 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 
 char* MemoryBanks::try_alloc(size_t N)
 {
-	return (char *)memalign(PAGE_SIZE, N * PAGE_SIZE);
+	auto* ptr = (char*) mmap(NULL, N * PAGE_SIZE, PROT_READ | PROT_WRITE,
+		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+	if (ptr == MAP_FAILED) {
+		return (char*) mmap(NULL, N * PAGE_SIZE, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+	}
+	return ptr;
 }
 
 MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
@@ -84,7 +91,7 @@ MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint16_t np, uint16_
 {}
 MemoryBank::~MemoryBank()
 {
-	free(this->mem);
+	munmap(this->mem, this->n_pages * PAGE_SIZE);
 }
 
 MemoryBank::Page MemoryBank::get_next_page(uint64_t vaddr)

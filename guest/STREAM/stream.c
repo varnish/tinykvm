@@ -586,5 +586,9 @@ void tuned_STREAM_Triad(STREAM_TYPE scalar)
 
 __attribute__((used))
 extern void my_backend() {
+	for (size_t i = 0; i < 4; i++) {
+		avgtime[i] = maxtime[i] = 0.0;
+		mintime[i] = FLT_MAX;
+	}
 	main();
 }
