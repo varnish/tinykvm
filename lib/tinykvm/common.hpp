@@ -28,6 +28,7 @@ namespace tinykvm
 
 		bool verbose_loader = false;
 		bool linearize_memory = false;
+		bool short_lived = false;
 	};
 
 	class MachineException : public std::exception {

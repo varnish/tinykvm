@@ -100,7 +100,8 @@ int main(int argc, char** argv)
 		tinykvm::MachineOptions options {
 			.max_mem = GUEST_MEMORY,
 			.max_cow_mem = GUEST_COW_MEM,
-			.verbose_loader = false
+			.verbose_loader = false,
+			.short_lived = true,
 		};
 		vms.push_back(new tinykvm::Machine {binary, options});
 		auto& vm = *vms.back();

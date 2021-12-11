@@ -327,6 +327,15 @@ void setup_kvm_system_calls()
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		228, [] (auto& machine) { // clock_gettime
+			auto regs = machine.registers();
+			struct timespec ts;
+			regs.rax = clock_gettime(CLOCK_MONOTONIC, &ts);
+			machine.copy_to_guest(regs.rsi, &ts, sizeof(ts));
+			if (regs.rax < 0) regs.rax = -errno;
+			machine.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		231, [] (auto& machine) {
 			/* SYS exit_group */
 #ifdef VERBOSE_GUEST_EXITS

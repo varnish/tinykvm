@@ -26,11 +26,13 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 	{
 		// Allocate new memory for this VM, own it
 		this->ptr = (char*)mmap(NULL, this->size, PROT_READ | PROT_WRITE,
-			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
 		if (ptr == MAP_FAILED) {
 			memory_exception("Failed to allocate guest memory", 0, this->size);
 		}
-		madvise(ptr, size, MADV_MERGEABLE);
+		if (!options.short_lived) {
+			madvise(ptr, size, MADV_MERGEABLE);
+		}
 		this->owned = true;
 
 		const uint64_t kernel_end = other.machine.kernel_end_address();
@@ -171,12 +173,24 @@ vMemory vMemory::New(Machine& m, const MachineOptions& options,
 	}
 #endif
 
-	auto* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
-		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
-	if (ptr == MAP_FAILED) {
-		memory_exception("Failed to allocate guest memory", 0, size);
+	size &= ~0x200000L;
+	if (size < 0x200000L) {
+		memory_exception("Not enough guest memory", 0, size);
 	}
-	madvise(ptr, size, MADV_MERGEABLE);
+	// Try huge pages first
+	auto* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
+		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+	if (ptr == MAP_FAILED) {
+		// Try again without 2MB pages
+		ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+		if (ptr == MAP_FAILED) {
+			memory_exception("Failed to allocate guest memory", 0, size);
+		}
+	}
+	if (!options.short_lived) {
+		madvise(ptr, size, MADV_MERGEABLE);
+	}
 	return vMemory(m, options, phys, safe, ptr, size);
 }
 
