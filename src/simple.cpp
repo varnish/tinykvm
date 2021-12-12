@@ -114,5 +114,5 @@ int main(int argc, char** argv)
 	vm.setup_call(regs, call_addr, 0, rsp);
 	vm.set_registers(regs);
 	printf("Calling 0x%lX\n", call_addr);
-	vm.run(0x400000);
+	vm.run(2.0f);
 }

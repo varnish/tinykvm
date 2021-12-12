@@ -24,16 +24,10 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 {
 	if (UNLIKELY(options.linearize_memory))
 	{
-		// Allocate new memory for this VM, own it
-		this->ptr = (char*)mmap(NULL, this->size, PROT_READ | PROT_WRITE,
-			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
-		if (ptr == MAP_FAILED) {
-			memory_exception("Failed to allocate guest memory", 0, this->size);
-		}
-		if (!options.short_lived) {
-			madvise(ptr, size, MADV_MERGEABLE);
-		}
+		const auto [res_ptr, res_size] = allocate_mapped_memory(options, this->size);
 		this->owned = true;
+		this->ptr  = res_ptr;
+		this->size = res_size;
 
 		const uint64_t kernel_end = other.machine.kernel_end_address();
 		const uint64_t mmap_end   = other.machine.mmap();
@@ -159,25 +153,14 @@ std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 	memory_exception("vMemory::view failed", addr, asize);
 }
 
-vMemory vMemory::New(Machine& m, const MachineOptions& options,
-	uint64_t phys, uint64_t safe, size_t size)
+vMemory::AllocationResult vMemory::allocate_mapped_memory(
+	const MachineOptions& options, size_t size)
 {
-#if 0
-	// open a temporary file with owner privs
-	int fd = memfd_create("tinykvm", 0);
-	if (fd < 0) {
-		memory_exception("Failed to open mkstemp file", 0, 0);
-	}
-	if (ftruncate(fd, size) < 0) {
-		memory_exception("Failed to truncate memfd (Out of memory?)", 0, size);
-	}
-#endif
-
 	size &= ~0x200000L;
 	if (size < 0x200000L) {
 		memory_exception("Not enough guest memory", 0, size);
 	}
-	// Try huge pages first
+	// Try 2MB pages first
 	auto* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
 		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
 	if (ptr == MAP_FAILED) {
@@ -188,10 +171,24 @@ vMemory vMemory::New(Machine& m, const MachineOptions& options,
 			memory_exception("Failed to allocate guest memory", 0, size);
 		}
 	}
+	int advice = 0x0;
 	if (!options.short_lived) {
-		madvise(ptr, size, MADV_MERGEABLE);
+		advice |= MADV_MERGEABLE;
 	}
-	return vMemory(m, options, phys, safe, ptr, size);
+	if (options.transparent_hugepages) {
+		advice |= MADV_HUGEPAGE;
+	}
+	if (advice != 0x0) {
+		madvise(ptr, size, advice);
+	}
+	return AllocationResult{ptr, size};
+}
+
+vMemory vMemory::New(Machine& m, const MachineOptions& options,
+	uint64_t phys, uint64_t safe, size_t size)
+{
+	const auto [res_ptr, res_size] = allocate_mapped_memory(options, size);
+	return vMemory(m, options, phys, safe, res_ptr, res_size);
 }
 
 MemRange MemRange::New(

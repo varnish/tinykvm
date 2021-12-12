@@ -59,6 +59,9 @@ struct vMemory {
 	/* Loan memory from another machine */
 	vMemory(Machine&, const MachineOptions&, const vMemory& other);
 	~vMemory();
+private:
+	using AllocationResult = std::tuple<char*, size_t>;
+	static AllocationResult allocate_mapped_memory(const MachineOptions&, size_t size);
 };
 
 struct MemRange {
