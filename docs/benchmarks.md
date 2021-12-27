@@ -1,0 +1,43 @@
+---
+
+
+---
+
+<h3 id="benchmarking-edge-computing">Benchmarking edge computing</h3>
+<p><em>WebAssembly may lack performance for high-performance edge computing</em></p>
+<p>If you are just using lambdas, then this is probably not relevant for you. In many ways WebAssembly is good enough for what problems it solves. However, for high-performance edge computing it cannot be a candidate for the reasons laid out below.</p>
+<h4 id="benchmarks">Benchmarks</h4>
+<p>Memory bandwidth is not ideal on emulated ISAs. Otherwise, it’s largely the same on bare metal and inside a hardware-accelerated virtualization guest.</p>
+<p><img src="https://cdn-images-1.medium.com/max/1600/1*fY1nUJJmFrYNRXvxWX3BZQ.png" alt=""></p>
+<p>Why is native slower as well? Well, for proper virtualization it’s natural to back it with “hugepages” (which is really just 2MB pages). Also, if you use 2MB pages in the guest you also gain a little bit too, which is why I am better than firecracker by a little bit. It makes sense, though, because firecracker is a (really good) Linux emulator, and Linux will be using 4K pages. Bigger pages mean less cache churn, which gives you a return in performance.</p>
+<p>So, can we prove that this is the case?</p>
+<p><img src="https://cdn-images-1.medium.com/max/1600/1*AGzdye_Fea6FqGT6wUbEPg.png" alt=""></p>
+<p>We start to match the performance pretty well if we back the STREAM benchmark with an auto-vectorizable range of 2MB pages. You will have to fiddle with restrict and watch the vectorizer output carefully to see that it is not worried about aliasing. I’m still working on explaining why the copy is not faster, however it is a fairly synthetic benchmark and I’m not sure if it’s worth my time to explain tiny differences like this.</p>
+<p>Now, memory copying is not the whole picture, so let’s talk about common workloads like hashing, JSON/CSV parsing and such things.</p>
+<p><img src="https://cdn-images-1.medium.com/max/1600/1*cDn5vwN2wzanBDlcgd43Dg.png" alt=""></p>
+<p>High-performance programming is not like normal programming. You have to understand and use all the tools available to you, in the form of strange instructions and studying the Agner Fog instruction tables. It’s not for static websites or Node.JS programs. In return you can do things at incredible speeds as a network endpoint.</p>
+<p>Hashing can greatly benefit from carry-less multiply, as seen above. It is 29x faster than the best you can get natively using lookup tables. We almost cannot see WebAssembly here. We are hashing at over 32GB/s, which is faster than copying memory. It is the same machine in all benchmarks. I <a href="https://github.com/komrad36/CRC">found the implementation here</a>, by komrad32. Amazing stuff!</p>
+<p><img src="https://cdn-images-1.medium.com/max/1600/1*fHvaLGQ0i0XxQE1V82-0aQ.png" alt=""></p>
+<p>At this point I stopped adding WASM benchmarks. This is comparing a SIMD-variant of CSV parsing with csvmonkey which uses SSE4. csvmonkey is SIMD too, but it unfortunately uses the <em>PCMPISTRI</em> instruction. The SSE4 string instructions are notoriously slow, but still faster than naive implementations. I’m not sure if WebAssembly have these instructions, but at least according to the emscripten page:</p>
+<blockquote>
+<p>The SSE4.2 functions that deal with string comparisons and CRC calculations are not available</p>
+</blockquote>
+<p>So, we can expect further slowdown compared to csvmonkey.</p>
+<p>For JSON parsing, the same picture can be observed if you compare simdjson to the best available alternative, RapidJSON (both running natively): A 4x difference. No graph yet, sorry.</p>
+<h4 id="webassembly">WebAssembly</h4>
+<p>WebAssembly clearly lacks performance for the purposes of edge computing, but it has some great upsides. It can run on any platform, so it’s flexible in where you can run it. If you discard the JIT you can even run it on game consoles, and in high-security places. One of the downsides to JIT is the never-ending search for better performance which has a tendency to sneak in complex security holes. You can read more about the caveats on JIT <a href="https://luau-lang.org/performance">here as written by the Roblox/Luau team</a>.</p>
+<p>That’s not to say KVM doesn’t have issues. It does, occasionally, but they are rarely going to affect a program isolation solution where the pagetables are locked and the kernel is minimal.</p>
+<p>WebAssembly runs in the browser. In most browsers, really. And so using it you can now do things that were previously impossible, and deliver it without much fuzz to hundreds of millions of people. If only they would visit your page! Unfortunately, some could use your CPU-time to crypto-mine, but I think it’s reductive to focus on such things.</p>
+<p>WebAssembly has a simplified memory layout that allows for many kinds of cool (and complex) memory sharing schemes. I know that Cloudflare has this big idea of a WASM instance shared across the globe, and thinking about it as one machine.</p>
+<p>So, WebAssembly does not belong with edge computing at all? I think that’s wrong to say. I think that you can use WebAssembly as the foundation for a configuration language for tenants. Calling into the WASM guest program has near-zero cost. It’s the same for calling external API functions from inside WASM, which makes it a great candidate API heavy situations. With a great configuration language on top, the benefits could be well worth the effort.</p>
+<p>So, what kind of things could you do to mitigate WASMs performance issues? I think that implementing proper GPU sharing could be a big deal, as well as outsourcing some computation to hardware-accelerated virtualization running natively, while benefiting from a well-crafted API in a higher level abstraction like WASM. Selecting a good language on top is of high importance, and it would usually boil down to any of the compiled languages. I think putting JS inside WASM is a strange choice because of the live execute-pages unless you have perfect knowledge and can precompute/warm this beforehand. One could put JS inside hardware isolation, I guess. But there are AOT JS solutions. And QuickJS does exist. No, you can’t use npm.</p>
+<h4 id="hardware-virtualization">Hardware virtualization</h4>
+<p>Hardware-accelerated virtualization allows you to run natively on the CPU of the platform you are on. It also allows you to access the latest and greatest features of that architecture, including all the fancy instructions necessary for doing low-latency wizardry.</p>
+<p>So, can you really get this performance in a tiny hardware virtualized guest that just runs programs? Of course. Attach a custom dynamic linker/loader, execution timeouts and some syscall privilege filtering. It all depends on how fancy you want to get with the system APIs. Most run-times only really need a few system calls to be fully functional if the intention is to just do computation or parsing of data.</p>
+<p>Latency is not really an issue. People think of KVM like a heavy-weight with huge latency costs attached to it, and they are of course right. But you can work around these limitations to achieve &lt;10 micros latency when calling into a guest program, even in a multi-tenant environment. If you are clever you can even turn some of those 10 micros into tail latency. The biggest troublemaker is by far Linux itself. Memory map limits and hugepage SIGBUS signals are just such disappointing mechanisms.</p>
+<p>Beware of AVX-512 if you are in a multi-tenant system because it will lower the core clocks for everyone else! That said, it’s a very interesting and well made instruction set extension which undoubtedly will become very important in edge computing near term.</p>
+<h4 id="conclusion">Conclusion</h4>
+<p>This mini-article is a reminder that native trumps everything, and it does it so well and so hard that you cannot talk about high-performance edge computing without running natively on the CPU — or risk getting laughed out of the room. Having written emulators myself, I know the struggles to be even just 10x slower than native very well.</p>
+<p>That doesn’t mean you can’t use the cool features of a higher-level machine abstraction like WASM to build something amazing. But, I also think you can do the same with a native program running in isolation.</p>
+<p>-gonzo</p>
+
