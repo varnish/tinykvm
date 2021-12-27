@@ -1,8 +1,3 @@
----
-
-
----
-
 <h3 id="benchmarking-edge-computing">Benchmarking edge computing</h3>
 <p><em>WebAssembly may lack performance for high-performance edge computing</em></p>
 <p>If you are just using lambdas, then this is probably not relevant for you. In many ways WebAssembly is good enough for what problems it solves. However, for high-performance edge computing it cannot be a candidate for the reasons laid out below.</p>
