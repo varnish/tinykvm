@@ -13,8 +13,9 @@
 
 inline timespec time_now();
 inline long nanodiff(timespec start_time, timespec end_time);
-static void benchmark_alternate_tenant_resets(tinykvm::Machine&);
-static void benchmark_two_tenants_two_vms(tinykvm::Machine&);
+static void benchmark_alternate_tenant_resets(tinykvm::Machine&, size_t);
+static void benchmark_multiple_vms(tinykvm::Machine&, size_t, size_t);
+static void benchmark_multiple_pooled_vms(tinykvm::Machine&, size_t, size_t);
 
 int main(int argc, char** argv)
 {
@@ -281,19 +282,43 @@ int main(int argc, char** argv)
 	printf("Fast reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
 	printf("Fast vmcall: %ldns (%ld micros)\n", frcall, frcall / 1000);
 
-	benchmark_alternate_tenant_resets(master_vm);
-	benchmark_two_tenants_two_vms(master_vm);
+	// This benchmark mixes different VMs on the same thread,
+	// which is supported, but has a serious penalty on Linux.
+	benchmark_alternate_tenant_resets(master_vm, 5000);
+
+	// Benchmark calling many forked VMs on same thread
+	// Seems to be fine, which I guess means that the penalty
+	// has to do with costs attached to main memory switching.
+	benchmark_multiple_vms(master_vm, 2, 5000);
+	benchmark_multiple_vms(master_vm, 4, 5000);
+	benchmark_multiple_vms(master_vm, 8, 5000);
+	benchmark_multiple_vms(master_vm, 16, 5000);
+	benchmark_multiple_vms(master_vm, 24, 5000);
+	benchmark_multiple_vms(master_vm, 32, 5000);
+	benchmark_multiple_vms(master_vm, 48, 5000);
+	benchmark_multiple_vms(master_vm, 64, 5000);
+	benchmark_multiple_vms(master_vm, 96, 5000);
+	benchmark_multiple_vms(master_vm, 128, 5000);
+
+	benchmark_multiple_pooled_vms(master_vm, 2, 15000);
+	benchmark_multiple_pooled_vms(master_vm, 4, 15000);
+	benchmark_multiple_pooled_vms(master_vm, 8, 15000);
+	benchmark_multiple_pooled_vms(master_vm, 16, 15000);
+	benchmark_multiple_pooled_vms(master_vm, 32, 15000);
+	benchmark_multiple_pooled_vms(master_vm, 48, 15000);
+	benchmark_multiple_pooled_vms(master_vm, 64, 15000);
 }
 
-void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm)
+void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm, const size_t RESETS)
 {
 	const uint64_t vmcall_address = master_vm.address_of("bench");
 
+	// Make a full copy of the main VM into other_vm
 	tinykvm::Machine other_vm { master_vm,
 	{
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = 0,
-		.linearize_memory = true
+		.linearize_memory = true,
 	} };
 	other_vm.prepare_copy_on_write();
 
@@ -302,6 +327,7 @@ void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm)
 		.max_cow_mem = GUEST_COW_MEM,
 	};
 
+	// Forked VM that can be reset to any other VM
 	tinykvm::Machine fvm {master_vm, options};
 
 	/* Warmup for resets */
@@ -316,7 +342,7 @@ void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm)
 	uint64_t frcall = 0;
 	uint64_t counter = 0;
 
-	for (unsigned i = 0; i < NUM_RESETS; i++)
+	for (unsigned i = 0; i < RESETS; i++)
 	{
 		auto frt0 = time_now();
 		asm("" : : : "memory");
@@ -331,45 +357,37 @@ void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm)
 		frtime += nanodiff(frt0, frt1);
 		frcall += nanodiff(frt1, frt2);
 	}
-	frtime /= NUM_RESETS;
-	frcall /= NUM_RESETS;
+	frtime /= RESETS;
+	frcall /= RESETS;
 
 	printf("Alternating reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
 	printf("Alternating vmcall: %ldns (%ld micros)\n", frcall, frcall / 1000);
 }
 
-void benchmark_two_tenants_two_vms(tinykvm::Machine& master_vm)
+void benchmark_multiple_vms(tinykvm::Machine& master_vm, size_t NUM, size_t RESETS)
 {
 	const uint64_t vmcall_address = master_vm.address_of("bench");
-
-	tinykvm::Machine other_vm { master_vm,
-	{
-		.max_mem = GUEST_MEMORY,
-		.max_cow_mem = 0,
-		.linearize_memory = true
-	} };
-	other_vm.prepare_copy_on_write();
 
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_COW_MEM,
 	};
 
-	tinykvm::Machine fvm[2] {
-		tinykvm::Machine {master_vm, options},
-		tinykvm::Machine {master_vm, options},
-	};
+	tinykvm::Machine* fvm =
+		(tinykvm::Machine *)aligned_alloc(16, NUM * sizeof(tinykvm::Machine));
+	for (size_t i = 0; i < NUM; i++)
+		new (&fvm[i]) tinykvm::Machine {master_vm, options};
 
 	/* Reset benchmark */
 	uint64_t frtime = 0;
 	uint64_t frcall = 0;
 	uint64_t counter = 0;
 
-	for (unsigned i = 0; i < NUM_RESETS; i++)
+	for (unsigned i = 0; i < RESETS; i++)
 	{
 		auto frt0 = time_now();
 		asm("" : : : "memory");
-		counter = (counter + 1) % 2;
+		counter = (counter + 1) % NUM;
 		fvm[counter].reset_to(master_vm, options);
 		asm("" : : : "memory");
 		auto frt1 = time_now();
@@ -380,11 +398,92 @@ void benchmark_two_tenants_two_vms(tinykvm::Machine& master_vm)
 		frtime += nanodiff(frt0, frt1);
 		frcall += nanodiff(frt1, frt2);
 	}
-	frtime /= NUM_RESETS;
-	frcall /= NUM_RESETS;
+	frtime /= RESETS;
+	frcall /= RESETS;
 
-	printf("Alternating 2xVMs reset: %ldns (%ld micros)\n", frtime, frtime / 1000);
-	printf("Alternating 2xVMs vmcall: %ldns (%ld micros)\n", frcall, frcall / 1000);
+	std::free(fvm);
+
+	printf("Multiple %zuxVMs reset: %ldns (%ld micros)\n", NUM, frtime, frtime / 1000);
+	printf("Multiple %zuxVMs vmcall: %ldns (%ld micros)\n", NUM, frcall, frcall / 1000);
+}
+
+#include <tinykvm/util/threadpool.h>
+extern "C" int gettid();
+
+void benchmark_multiple_pooled_vms(tinykvm::Machine& master_vm, size_t NUM, size_t RESETS)
+{
+	tinykvm::ThreadPool pool { NUM };
+	std::unordered_map<int, tinykvm::Machine> machines;
+	std::mutex machine_mtx;
+
+	struct {
+		std::unordered_map<int, tinykvm::Machine>* machines;
+		std::mutex* mtx;
+		tinykvm::Machine* master_vm;
+		uint64_t addr;
+	} data {&machines, &machine_mtx, &master_vm, master_vm.address_of("bench")};
+
+	// A single pool task that can be run on any thread
+	auto task =
+	[&data] () -> std::tuple<timespec, timespec, timespec>
+	{
+		int tid = gettid();
+		thread_local tinykvm::Machine* fvm = nullptr;
+
+		constexpr tinykvm::MachineOptions options {
+			.max_mem = GUEST_MEMORY,
+			.max_cow_mem = GUEST_COW_MEM,
+		};
+
+		if (fvm == nullptr) {
+			data.mtx->lock();
+			auto it = data.machines->find(tid);
+			if (it == data.machines->end()) {
+				auto it = data.machines->emplace(std::piecewise_construct,
+					std::forward_as_tuple(tid),
+					std::forward_as_tuple(*data.master_vm, options));
+				fvm = &it.first->second;
+			} else {
+				fvm = &it->second;
+			}
+			data.mtx->unlock();
+		}
+
+		asm("" : : : "memory");
+		auto frt0 = time_now();
+		asm("" : : : "memory");
+		fvm->reset_to(*data.master_vm, options);
+		asm("" : : : "memory");
+		auto frt1 = time_now();
+		asm("" : : : "memory");
+		fvm->timed_vmcall(data.addr, 1.0f);
+		asm("" : : : "memory");
+		auto frt2 = time_now();
+		return {frt0, frt1, frt2};
+	};
+
+	// Perform pool benchmark
+	std::vector<std::future<std::tuple<timespec, timespec, timespec>>> results;
+	results.reserve(RESETS);
+
+	for (unsigned i = 0; i < RESETS; i++)
+	{
+		results.emplace_back(pool.enqueue(task));
+	}
+
+	// Gather results
+	uint64_t frtime = 0;
+	uint64_t frcall = 0;
+	for (auto& fut : results) {
+		auto [frt0, frt1, frt2] = fut.get();
+		frtime += nanodiff(frt0, frt1);
+		frcall += nanodiff(frt1, frt2);
+	}
+	frtime /= results.size();
+	frcall /= results.size();
+
+	printf("Pooled %zuxVMs reset: %ldns (%ld micros)\n", NUM, frtime, frtime / 1000);
+	printf("Pooled %zuxVMs vmcall: %ldns (%ld micros)\n", NUM, frcall, frcall / 1000);
 }
 
 timespec time_now()
