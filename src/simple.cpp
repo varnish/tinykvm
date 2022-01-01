@@ -12,8 +12,8 @@ static uint64_t verify_exists(tinykvm::Machine& vm, const char* name)
 {
 	uint64_t addr = vm.address_of(name);
 	if (addr == 0x0) {
-		fprintf(stderr, "Error: '%s' is missing\n", name);
-		exit(1);
+//		fprintf(stderr, "Error: '%s' is missing\n", name);
+//		exit(1);
 	}
 	return addr;
 }
@@ -52,7 +52,8 @@ int main(int argc, char** argv)
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_WORK_MEM,
-		.verbose_loader = false
+		.verbose_loader = false,
+		.hugepages = true
 	};
 	tinykvm::Machine master_vm {binary, options};
 	master_vm.setup_linux(
@@ -104,9 +105,11 @@ int main(int argc, char** argv)
 
 	/* Normal execution of _start -> main() */
 	master_vm.run();
-	master_vm.prepare_copy_on_write();
+
+	if (call_addr == 0x0) return 0;
 
 	/* Fork master VM */
+	master_vm.prepare_copy_on_write();
 	tinykvm::Machine vm{master_vm, options};
 
 	/* Make a VM function call */
