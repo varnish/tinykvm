@@ -29,7 +29,8 @@ namespace tinykvm
 		bool verbose_loader = false;
 		bool linearize_memory = false;
 		bool short_lived = false;
-		bool transparent_hugepages = true;
+		bool hugepages = false;
+		bool transparent_hugepages = false;
 	};
 
 	class MachineException : public std::exception {

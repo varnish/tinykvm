@@ -156,13 +156,21 @@ std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 vMemory::AllocationResult vMemory::allocate_mapped_memory(
 	const MachineOptions& options, size_t size)
 {
-	size &= ~0x200000L;
-	if (size < 0x200000L) {
-		memory_exception("Not enough guest memory", 0, size);
+	char* ptr = (char*) MAP_FAILED;
+	if (options.hugepages) {
+		size &= ~0x200000L;
+		if (size < 0x200000L) {
+			memory_exception("Not enough guest memory", 0, size);
+		}
+		// Try 2MB pages first
+		ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+	} else {
+		// Only 4KB pages
+		if (size < 0x1000L) {
+			memory_exception("Not enough guest memory", 0, size);
+		}
 	}
-	// Try 2MB pages first
-	auto* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
-		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
 	if (ptr == MAP_FAILED) {
 		// Try again without 2MB pages
 		ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
