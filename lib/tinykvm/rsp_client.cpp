@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <unistd.h>
+#include <cstdarg>
 #include <cstring>
 #include <stdexcept>
 

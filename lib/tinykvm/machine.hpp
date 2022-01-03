@@ -62,7 +62,7 @@ struct Machine
 	   Throws an exception if there was a protection violation.
 	   Returns the number of buffers filled, or an exception if not enough. */
 	struct Buffer { const char* ptr; size_t len; };
-	size_t gather_buffers_from_range(size_t cnt, Buffer[cnt], address_t addr, size_t len);
+	size_t gather_buffers_from_range(size_t cnt, Buffer[], address_t addr, size_t len);
 	/* Efficiently copy between machines */
 	void copy_from_machine(address_t dst, Machine& src, address_t sa, size_t size);
 

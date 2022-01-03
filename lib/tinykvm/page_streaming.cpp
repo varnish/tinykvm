@@ -1,7 +1,6 @@
 #include "page_streaming.hpp"
 
 #include <x86intrin.h>
-#pragma GCC target "arch=core-avx2"
 
 namespace tinykvm {
 
@@ -56,7 +55,6 @@ void page_memzero(uint64_t* dest)
 }
 #endif
 
-__attribute__((target("avx")))
 void avx2_page_duplicate(uint64_t* dest, const uint64_t* source)
 {
 	for (size_t i = 0; i < 16; i++) {
@@ -81,7 +79,6 @@ void avx2_page_duplicate(uint64_t* dest, const uint64_t* source)
 		source += 4 * 8;
 	}
 }
-__attribute__((target("avx")))
 void avx2_page_dupliteit(uint64_t* dest, const uint64_t* source)
 {
 	for (size_t i = 0; i < 16; i++) {

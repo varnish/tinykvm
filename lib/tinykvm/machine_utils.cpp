@@ -74,7 +74,7 @@ void Machine::unsafe_copy_from_guest(void* vdst, address_t addr, size_t len)
 }
 
 size_t Machine::gather_buffers_from_range(
-	size_t cnt, Buffer buffers[cnt], address_t addr, size_t len)
+	size_t cnt, Buffer buffers[], address_t addr, size_t len)
 {
 	size_t index = 0;
 	Buffer* last = nullptr;
