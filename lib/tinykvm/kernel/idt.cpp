@@ -101,11 +101,10 @@ void print_exception_handlers(const void* area)
 	auto* idt = (IDT*) area;
 	for (unsigned i = 0; i < idt->entry.size(); i++) {
 		const auto& entry = idt->entry[i];
-		const addr_helper addr {
-			.lo16 = entry.offset_1,
-			.hi16 = entry.offset_2,
-			.top32 = entry.offset_3
-		};
+		addr_helper addr;
+		addr.lo16 = entry.offset_1;
+		addr.hi16 = entry.offset_2;
+		addr.top32 = entry.offset_3;
 		printf("IDT %u: func=0x%lX sel=0x%X p=%d dpl=%d type=0x%X ist=%u\n",
 			i, addr.whole, entry.selector, entry.type_attr >> 7,
 			(entry.type_attr >> 5) & 0x3, entry.type_attr & 0xF, entry.ist);
