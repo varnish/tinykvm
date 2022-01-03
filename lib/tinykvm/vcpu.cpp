@@ -277,6 +277,7 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 		memory.get_writable_page(IST2_ADDR, true);
 
 		/* Inherit the special registers of the master machine */
+		assert(other->cached_sregs);
 		struct kvm_sregs sregs = *other->cached_sregs;
 
 		/* Page table entry will be cloned at the start */

@@ -17,6 +17,7 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	  m_arena_next { m_arena_begin },
 	  m_idx_begin { 2 },
 	  m_idx { m_idx_begin },
+	  m_using_hugepages { options.hugepages },
 	  m_max_pages { options.max_cow_mem / PAGE_SIZE }
 {
 	/* Reserve the maximum number of banks possible.
@@ -28,8 +29,11 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 
 char* MemoryBanks::try_alloc(size_t N)
 {
-	auto* ptr = (char*) mmap(NULL, N * PAGE_SIZE, PROT_READ | PROT_WRITE,
-		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+	char* ptr = (char*)MAP_FAILED;
+	if (this->m_using_hugepages) {
+		ptr = (char*) mmap(NULL, N * PAGE_SIZE, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+	}
 	if (ptr == MAP_FAILED) {
 		return (char*) mmap(NULL, N * PAGE_SIZE, PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);

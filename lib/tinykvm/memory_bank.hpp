@@ -65,6 +65,7 @@ private:
 	const uint16_t m_idx_begin;
 	uint16_t m_idx;
 	uint16_t m_search = 0;
+	const bool m_using_hugepages = false;
 	uint32_t m_num_pages = 0;
 	/* Max number of pages in all the banks */
 	uint32_t m_max_pages;
