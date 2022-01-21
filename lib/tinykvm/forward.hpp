@@ -16,4 +16,5 @@ struct tinykvm_x86regs {
 	__u64 rip, rflags;
 };
 
+struct RSPClient;
 }
