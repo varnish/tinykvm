@@ -5,6 +5,7 @@
 #include "memory_bank.hpp"
 #include "util/threadpool.h"
 #include <array>
+#include <cassert>
 #include <deque>
 #include <functional>
 #include <memory>
