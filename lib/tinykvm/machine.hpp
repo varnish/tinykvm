@@ -204,7 +204,9 @@ private:
 	uint64_t m_start_address;
 	uint64_t m_kernel_end;
 
-	uint64_t m_mm = 0;
+	uint64_t m_mm = 0; // mmap address
+	size_t   m_size = 0; // mmap size
+
 	mutable std::unique_ptr<MultiThreading> m_mt;
 	struct kvm_sregs* cached_sregs = nullptr;
 

@@ -201,7 +201,14 @@ long Machine::return_value() const
 
 Machine::address_t Machine::mmap_allocate(size_t bytes)
 {
+	#ifdef KVM_VERBOSE_MEMORY
+		printf("machine: mmap allocating: %zu total:%zu max_memory:%zu\n", bytes, this->m_size+bytes, this->memory.size);
+	#endif
+	if (this->m_size + bytes > this->memory.size) {
+		throw MachineException("Requested memory mapping exceeds max_memory\n");
+	}
 	address_t result = this->m_mm;
+	this->m_size += bytes;
 	this->m_mm += bytes & ~0xFFFL;
 	return result;
 }
