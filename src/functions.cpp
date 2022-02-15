@@ -91,15 +91,16 @@ void setup_kvm_system_calls()
 			auto regs = machine.registers();
 			//regs.rax = ~(uint64_t) 0; /* MAP_FAILED */
 			regs.rsi &= ~0xFFF;
+			// todo: should we move this to the mmap_allocate? 
 			if (regs.rdi == 0xC000000000LL) {
 				regs.rax = regs.rdi;
 			}
 			else {
-				auto& mm = machine.mmap();
+				auto mm = machine.mmap_allocate(regs.rdi, regs.rsi);
 				regs.rax = mm;
 				// XXX: MAP_ANONYMOUS -->
 				//memset(machine.rw_memory_at(regs.rax, regs.rsi), 0, regs.rsi);
-				mm += regs.rsi;
+				// mm += regs.rsi;
 			}
 			PRINTMMAP("mmap(0x%llX, %llu) = 0x%llX\n",
 				regs.rdi, regs.rsi, regs.rax);

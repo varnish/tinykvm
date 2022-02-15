@@ -199,17 +199,34 @@ long Machine::return_value() const
 	return regs.rdi;
 }
 
-Machine::address_t Machine::mmap_allocate(size_t bytes)
+Machine::address_t Machine::mmap_allocate(uint64_t addr, size_t bytes)
 {
+	address_t gpa = (address_t)addr;
 	#ifdef KVM_VERBOSE_MEMORY
-		printf("machine: mmap allocating: %zu total:%zu max_memory:%zu\n", bytes, this->m_size+bytes, this->memory.size);
+		printf("machine: mmap_allocate: gpa->0x%lX, size->%zu\n", gpa, bytes);
 	#endif
-	if (this->m_size + bytes > this->memory.size) {
+	// lookup the existing map by the requesting guest physical address
+	auto item = this->mm_maps.find(gpa);
+	if (item != this->mm_maps.end()) {
+		printf("machine: map exists for gpa->0x%lX\n", gpa);
+	} else {
+		printf("machine: creating map for gpa->0x%lX\n", gpa);
+		const auto& ret = this->mm_maps.insert(
+			std::pair<Machine::address_t, Machine::mm_map>(
+				gpa, Machine::mm_map{
+					this->m_mm,0}
+			)
+		);
+		item = ret.first;
+	}
+	auto& map = item->second;
+	map.size += bytes;
+	if (map.size > this->memory.size) {
 		throw MachineException("Requested memory mapping exceeds max_memory\n");
 	}
-	address_t result = this->m_mm;
-	this->m_size += bytes;
-	this->m_mm += bytes & ~0xFFFL;
+	address_t result = map.mm;
+	result += bytes & ~0xFFFL;
+	printf("machine: updated map (gpa->0x%lX size->%zu) = 0x%lX\n", gpa, map.size, result);
 	return result;
 }
 

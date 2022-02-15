@@ -585,10 +585,23 @@ long Machine::vCPU::run_once()
 
 	case KVM_EXIT_MMIO: {
 			char buffer[256];
-			PRINTER(machine->m_printer, buffer,
-				"Unknown MMIO write at 0x%llX\n",
-				kvm_run->mmio.phys_addr);
-			machine_exception("Invalid MMIO write");
+
+			// PRINTER(machine->m_printer, buffer,
+			// 	"MMIO %c at 0x%llX\n",
+			// 	kvm_run->mmio.is_write ? "write" : "read",
+			// 	kvm_run->mmio.phys_addr);
+
+			if (kvm_run->mmio.is_write) {
+				uint64_t data = 0;
+        for (int i = 0; i < (int)kvm_run->mmio.len; i++) {
+            data |= kvm_run->mmio.data[i]<<8*i;
+        }
+        printf("MMIO write 0x%lX to 0x%llX\n", data, kvm_run->mmio.phys_addr);
+				machine_exception("Invalid MMIO write");
+			} else {
+				printf("MMIO read at 0x%llX\n", kvm_run->mmio.phys_addr);
+				machine_exception("Invalid MMIO read");
+			}
 		}
 	case KVM_EXIT_INTERNAL_ERROR:
 		machine_exception("KVM internal error");

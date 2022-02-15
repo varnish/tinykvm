@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <vector>
+#include <map>
 
 namespace tinykvm {
 
@@ -110,7 +111,7 @@ struct Machine
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
-	address_t mmap_allocate(size_t bytes);
+	address_t mmap_allocate(uint64_t addr, size_t bytes);
 	static constexpr uint64_t BRK_MAX = 0x100000;
 
 	uint64_t address_of(const char*) const;
@@ -204,6 +205,13 @@ private:
 	uint64_t m_start_address;
 	uint64_t m_kernel_end;
 
+	struct mm_map
+	{
+		uint64_t mm; // virtual address
+		size_t size; // map size
+	};
+
+	std::map<address_t, mm_map> mm_maps = {};
 	uint64_t m_mm = 0; // mmap address
 	size_t   m_size = 0; // mmap size
 
