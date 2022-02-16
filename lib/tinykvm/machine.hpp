@@ -10,7 +10,6 @@
 #include <functional>
 #include <memory>
 #include <vector>
-#include <map>
 
 namespace tinykvm {
 
@@ -111,7 +110,7 @@ struct Machine
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
-	address_t mmap_allocate(uint64_t addr, size_t bytes);
+	address_t mmap_allocate(uint64_t addr, size_t bytes, int prot = 0, int flags = 0);
 	static constexpr uint64_t BRK_MAX = 0x100000;
 
 	uint64_t address_of(const char*) const;
@@ -136,7 +135,7 @@ struct Machine
 	void print_pagetables() const;
 	void print_exception_handlers() const;
 
-	void install_memory(uint32_t idx, const VirtualMem&, bool ro);
+	void install_memory(uint32_t idx, const VirtualMem&);
 	void delete_memory(uint32_t idx);
 	std::string_view binary() const noexcept { return m_binary; }
 
@@ -207,11 +206,16 @@ private:
 
 	struct mm_map
 	{
-		uint64_t mm; // virtual address
+		uint64_t start; // start of the machine virtual address
+		uint64_t end; // end of the machine virtual address
+		uint64_t gva; // guest virtual address
 		size_t size; // map size
+		int prot;
+		int flags;
 	};
 
-	std::map<address_t, mm_map> mm_maps = {};
+	std::vector<mm_map> mm_maps = {};
+	uint32_t   m_slots = 0; //
 	uint64_t m_mm = 0; // mmap address
 	size_t   m_size = 0; // mmap size
 

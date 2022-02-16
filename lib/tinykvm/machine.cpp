@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 extern "C" int close(int);
 //#define KVM_VERBOSE_MEMORY
 
@@ -36,7 +37,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->fd = create_kvm_vm();
 
-	install_memory(0, memory.vmem(), false);
+	install_memory(0, memory.vmem());
 
 	this->elf_loader(options);
 
@@ -70,7 +71,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->fd = create_kvm_vm();
 
 	/* Reuse pre-CoWed pagetable from the master machine */
-	this->install_memory(0, memory.vmem(), true);
+	this->install_memory(0, memory.vmem());
 
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(0, *this, options);
@@ -110,7 +111,7 @@ void Machine::reset_to(Machine& other, const MachineOptions& options)
 		memory.fork_reset(other.memory, options);
 		/* Unfortunately we need to both delete and reinstall main mem */
 		this->delete_memory(0);
-		this->install_memory(0, memory.vmem(), true);
+		this->install_memory(0, memory.vmem());
 	} else {
 		memory.fork_reset(options);
 	}
@@ -139,7 +140,7 @@ uint64_t Machine::stack_push_cstr(__u64& sp, const char* string)
 	return stack_push(sp, string, strlen(string)+1);
 }
 
-void Machine::install_memory(uint32_t idx, const VirtualMem& mem, bool ro)
+void Machine::install_memory(uint32_t idx, const VirtualMem& mem)
 {
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
@@ -199,35 +200,35 @@ long Machine::return_value() const
 	return regs.rdi;
 }
 
-Machine::address_t Machine::mmap_allocate(uint64_t addr, size_t bytes)
+// Guest is requesting to map memory.
+Machine::address_t Machine::mmap_allocate(uint64_t addr, size_t bytes, int prot, int flags)
 {
-	address_t gpa = (address_t)addr;
-	#ifdef KVM_VERBOSE_MEMORY
-		printf("machine: mmap_allocate: gpa->0x%lX, size->%zu\n", gpa, bytes);
-	#endif
-	// lookup the existing map by the requesting guest physical address
-	auto item = this->mm_maps.find(gpa);
-	if (item != this->mm_maps.end()) {
-		printf("machine: map exists for gpa->0x%lX\n", gpa);
-	} else {
-		printf("machine: creating map for gpa->0x%lX\n", gpa);
-		const auto& ret = this->mm_maps.insert(
-			std::pair<Machine::address_t, Machine::mm_map>(
-				gpa, Machine::mm_map{
-					this->m_mm,0}
-			)
-		);
-		item = ret.first;
+	address_t gva = (address_t)addr; // guest virtual address
+#ifdef KVM_VERBOSE_MEMORY
+	printf("machine: mmap_allocate: gva->0x%lX (%lu) size->%zuB/%zuKB/%zuMB prot->%d flags->%d\n",
+		gva, reinterpret_cast<uintptr_t>(gva),bytes,bytes/1024,bytes/1024/1024,prot,flags);
+#endif
+	uint64_t start = this->mmap_start();
+	if (!this->mm_maps.empty()) {
+		// todo: page boundary
+		start = this->mm_maps.back().end;
 	}
-	auto& map = item->second;
-	map.size += bytes;
-	if (map.size > this->memory.size) {
-		throw MachineException("Requested memory mapping exceeds max_memory\n");
+	uint64_t end = start + bytes & ~0xFFFL;
+	auto map = Machine::mm_map{start, end, gva, bytes, prot, flags};
+#ifdef KVM_VERBOSE_MEMORY
+	printf("machine: creating map for gva->0x%lX from 0x%lX to 0x%lX\n",
+		gva, map.start, map.end);
+#endif
+	this->mm_maps.push_back(map);
+
+	// poc: if a fixed address is being requested, we will create a map that aligns
+	// to the machines virtual memory map and return the requested fixed address.
+	if (flags & MAP_FIXED || map.gva == 0xC000000000LL) {
+		// Golang's runtime is wanting to map specific memory regions, including
+		// 0xC000000000. why?
+		return map.gva;
 	}
-	address_t result = map.mm;
-	result += bytes & ~0xFFFL;
-	printf("machine: updated map (gpa->0x%lX size->%zu) = 0x%lX\n", gpa, map.size, result);
-	return result;
+	return map.end;
 }
 
 

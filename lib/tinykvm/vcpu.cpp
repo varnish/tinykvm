@@ -553,6 +553,14 @@ long Machine::vCPU::run_once()
 					machine_exception("Security violation", intr);
 				}
 
+				for (Machine::mm_map map:machine->mm_maps) {
+					printf("map: start->0x%lX end->0x%lX gva->0x%lX\n", map.start, map.end, map.gva);
+					if (addr == map.gva) {
+						printf("!matched map for fixed virtual address!\n");
+						// addr = map.end;
+					}
+				}
+
 				machine->memory.get_writable_page(addr, false);
 				return KVM_EXIT_IO;
 			}
