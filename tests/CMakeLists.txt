@@ -10,6 +10,7 @@ function(add_unit_test NAME)
 	add_executable(${NAME}
 		${ARGN}
 		../src/functions.cpp
+		unit/codebuilder.cpp
 	)
 	target_link_libraries(${NAME} tinykvm Catch2WithMain)
 endfunction()
