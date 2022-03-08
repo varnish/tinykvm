@@ -1,0 +1,29 @@
+name: CMake Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      BUILD_TYPE: ${{ matrix.builtype }}
+
+    strategy:
+      matrix:
+        compiler: [g++-10, clang++-12]
+        buildtype: [Debug, Release]
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Emulator configuration
+      working-directory: ${{github.workspace}}
+      env:
+        CXX: ${{ matrix.compiler }}
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+    - name: Emulator build
+      run: cmake --build ${{github.workspace}}/build
