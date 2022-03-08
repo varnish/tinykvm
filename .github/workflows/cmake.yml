@@ -20,7 +20,7 @@ jobs:
     - uses: actions/checkout@v2
 
     - name: Emulator configuration
-      working-directory: ${{github.workspace}}/emulator
+      working-directory: ${{github.workspace}}
       env:
         CXX: ${{ matrix.compiler }}
       run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
