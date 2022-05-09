@@ -377,6 +377,12 @@ inline bool is_copy_on_write(uint64_t entry) {
 	   and it's not already writable. */
 	return (entry & (PDE64_CLONEABLE | PDE64_RW)) == PDE64_CLONEABLE;
 }
+inline bool is_copy_on_modify(uint64_t entry) {
+	/* Copy this page if it's marked cloneable
+	   and we are going to change this page right now. */
+	return (entry & PDE64_CLONEABLE) == PDE64_CLONEABLE;
+}
+
 static void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
 	/* Allocate new page, pass old vaddr to memory banks */
 	auto page = memory.new_page(entry & PDE64_ADDR_MASK);
@@ -439,7 +445,9 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 					/* Copy flags from 2MB page, except read-write */
 					uint64_t flags = pd[k] & PDE64_PD_SPLIT_MASK;
 					uint64_t branch_flags = flags | PDE64_CLONEABLE;
-					/* Allocate pagetable and fill 4k entries */
+					/* Allocate pagetable page and fill 4k entries.
+					   NOTE: new_page(0x0) makes page not a candidate for
+					   sequentialization for eg. vmcommit() later on. */
 					auto page = memory.new_page(0x0);
 					for (size_t e = 0; e < 512; e++) {
 						page.pmem[e] = pt_base | (e << 12) | branch_flags;
@@ -518,4 +526,4 @@ void memory_exception(const char* msg, uint64_t addr, uint64_t sz)
 	throw MemoryException(msg, addr, sz);
 }
 
-}
+} // tinykvm

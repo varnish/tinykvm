@@ -273,10 +273,18 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 		memory.page_tables = pml4.addr;
 
 		/* Zero a new page for IST stack */
+		// XXX: This is not strictly necessary as we can
+		// hand-write a custom handler that only triggers on actual writes?
+		// The problem is that in order to handle interrupts, we need these
+		// pages to already be there. It would have been much easier with
+		// stackless interrupts, to be honest. Something to think about?
+		// XXX: In theory we can avoid initializing one of these pages
+		// until the guest asks for a certain level of concurrency.
 		memory.get_writable_page(IST_ADDR, true);
 		memory.get_writable_page(IST2_ADDR, true);
 
-		/* Inherit the special registers of the master machine */
+		/* Inherit the special registers of the master machine.
+		   Ensures that special registers can never be corrupted. */
 		assert(other->cached_sregs);
 		struct kvm_sregs sregs = *other->cached_sregs;
 

@@ -11,7 +11,12 @@ namespace tinykvm {
 	static constexpr uint64_t VSYS_ADDR = 0x6000;
 	static constexpr uint64_t TSS_SMP_ADDR = 0x7000;
 	static constexpr uint64_t TSS_SMP2_ADDR = 0x8000;
+	// After the last fixed page, every page after
+	// is a fixed page table directory. Any further
+	// allocations happen using memory banks.
 	static constexpr uint64_t PT_ADDR  = 0x9000;
 
+	// The size of the interrupt stacks on each SMP
+	// vCPU, offset from IST_ADDR.
 	static constexpr uint64_t TSS_SMP_STACK = 104;
 }
