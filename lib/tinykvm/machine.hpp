@@ -64,6 +64,8 @@ struct Machine
 	   Returns the number of buffers filled, or an exception if not enough. */
 	struct Buffer { const char* ptr; size_t len; };
 	size_t gather_buffers_from_range(size_t cnt, Buffer[], address_t addr, size_t len);
+	/* Check if a payload is sequential in guest memory. */
+	std::string_view sequential_view(address_t dst, size_t size);
 	/* Efficiently copy between machines */
 	void copy_from_machine(address_t dst, Machine& src, address_t sa, size_t size);
 

@@ -146,4 +146,31 @@ void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size
 	}
 }
 
+std::string_view Machine::sequential_view(address_t dst, size_t len)
+{
+	const size_t offset = dst & (vMemory::PAGE_SIZE-1);
+	const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
+	auto* page = memory.get_userpage_at(dst & ~(uint64_t) 0xFFF);
+
+	Buffer buf {(const char*) &page[offset], size};
+	dst += size;
+	len -= size;
+
+	while (len != 0)
+	{
+		const size_t offset = dst & (vMemory::PAGE_SIZE-1);
+		const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
+		auto* page = memory.get_userpage_at(dst & ~(uint64_t) 0xFFF);
+
+		auto* ptr = (const char*) &page[offset];
+		if (ptr != buf.ptr + buf.len)
+			return {nullptr, 0};
+
+		buf.len += size;
+		dst += size;
+		len -= size;
+	}
+	return {buf.ptr, buf.len};
+}
+
 } // tinykvm
