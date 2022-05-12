@@ -4,7 +4,6 @@ project(tinykvm)
 # C++17 KVM library
 #
 
-option(KVM_DEBUG        "Enable debugging features" OFF)
 option(KVM_AVX512       "Enable AVX512 instructions" OFF)
 option(KVM_EXPERIMENTAL "Enable experimental features" OFF)
 
@@ -29,7 +28,6 @@ set (SOURCES
 	)
 
 add_library(tinykvm STATIC ${SOURCES})
-set_property(TARGET tinykvm PROPERTY CXX_STANDARD 17)
 target_compile_definitions(tinykvm PUBLIC _GNU_SOURCE=1)
 target_include_directories(tinykvm PUBLIC .)
 target_compile_features(tinykvm PUBLIC cxx_std_17)
@@ -39,8 +37,8 @@ set_source_files_properties(
 	tinykvm/page_streaming.cpp
 	PROPERTIES COMPILE_FLAGS -mavx2)
 
-if (KVM_DEBUG)
-	target_compile_options(tinykvm PUBLIC -O0 -g)
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+	target_compile_options(tinykvm PUBLIC -O0 -ggdb3)
 else()
 	target_compile_options(tinykvm PUBLIC -O2 -g)
 endif()
