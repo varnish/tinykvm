@@ -77,7 +77,7 @@ int main(int argc, char** argv)
 			vm = new tinykvm::Machine {master_vm, options};
 			vm->setup_call(regs, call_addr, 0, rsp);
 			vm->set_registers(regs);
-		} else {
+		} else if (getenv("VMCALL")) {
 			master_vm.setup_call(regs, call_addr, 0, rsp);
 			master_vm.set_registers(regs);
 		}
