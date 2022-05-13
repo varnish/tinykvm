@@ -124,7 +124,7 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 	/* Enable SYSCALL/SYSRET instructions */
 	struct {
 		__u32 nmsrs; /* number of msrs in entries */
-		__u32 pad;
+		__u32 pad = 0;
 
 		struct kvm_msr_entry entries[3];
 	} msrs;
@@ -185,7 +185,7 @@ void Machine::vCPU::smp_init(int id, Machine& machine)
 	/* Enable SYSCALL/SYSRET instructions */
 	struct {
 		__u32 nmsrs; /* number of msrs in entries */
-		__u32 pad;
+		__u32 pad = 0;
 
 		struct kvm_msr_entry entries[3];
 	} msrs;
@@ -541,7 +541,7 @@ long Machine::vCPU::run_once()
 #ifdef VERBOSE_PAGE_FAULTS
 				char buffer[256];
 				#define PV(val, off) \
-					{ uint64_t value; unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
+					{ uint64_t value; machine->unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
 					PRINTER(machine->m_printer, buffer, "Value %s: 0x%lX\n", val, value); }
 				try {
 					PV("Origin SS",  48);
