@@ -53,7 +53,7 @@ int main(int argc, char** argv)
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_WORK_MEM,
 		.verbose_loader = false,
-		.hugepages = true
+		.hugepages = (getenv("HUGE") != nullptr)
 	};
 	tinykvm::Machine master_vm {binary, options};
 	master_vm.setup_linux(
