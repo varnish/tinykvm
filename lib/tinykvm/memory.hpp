@@ -64,17 +64,4 @@ private:
 	static AllocationResult allocate_mapped_memory(const MachineOptions&, size_t size);
 };
 
-struct MemRange {
-	uint64_t physbase;
-	size_t   size;
-	const char* name;
-
-	auto begin() const noexcept { return physbase; }
-	bool within(uint64_t addr, size_t asize = 1) const noexcept {
-		return addr >= physbase && addr + asize <= physbase + this->size;
-	}
-
-	static MemRange New(const char*, uint64_t physical, size_t size);
-};
-
 }

@@ -199,16 +199,6 @@ vMemory vMemory::New(Machine& m, const MachineOptions& options,
 	return vMemory(m, options, phys, safe, res_ptr, res_size);
 }
 
-MemRange MemRange::New(
-	const char* name, uint64_t physbase, size_t size)
-{
-	return MemRange {
-		.physbase = physbase,
-		.size = size,
-		.name = name
-	};
-}
-
 VirtualMem vMemory::vmem() const
 {
 	return VirtualMem::New(physbase, ptr, size);

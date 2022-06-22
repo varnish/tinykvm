@@ -7,6 +7,7 @@
 #include "util/elf.hpp"
 
 namespace tinykvm {
+static const int MAX_LOADABLE_SEGMENTS = 8;
 
 void Machine::elf_loader(const MachineOptions& options)
 {
@@ -56,9 +57,11 @@ void Machine::elf_loader(const MachineOptions& options)
 		switch (hdr->p_type)
 		{
 			case PT_LOAD:
+				seg++;
+				if (seg > MAX_LOADABLE_SEGMENTS)
+					throw std::runtime_error("Too many loadable segments");
 				// loadable program segments
 				this->elf_load_ph(options, hdr);
-				seg++;
 				break;
 			case PT_GNU_STACK:
 				//printf("GNU_STACK: 0x%lX\n", hdr->p_vaddr);
