@@ -17,9 +17,14 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	  m_arena_next { m_arena_begin },
 	  m_idx_begin { 2 },
 	  m_idx { m_idx_begin },
-	  m_using_hugepages { options.hugepages },
-	  m_max_pages { options.max_cow_mem / PAGE_SIZE }
+	  m_using_hugepages { options.hugepages }
 {
+	this->set_max_pages(options.max_cow_mem / PAGE_SIZE);
+}
+void MemoryBanks::set_max_pages(size_t new_max)
+{
+	this->m_max_pages = new_max;
+	//fprintf(stderr, "max_pages: %zu/%zu\n", m_mem.size(), new_max);
 	/* Reserve the maximum number of banks possible.
 	   We have to + 1 to make sure it's rounded up, avoiding
 	   any possible reallocations close to being out of memory.

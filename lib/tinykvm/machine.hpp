@@ -144,7 +144,7 @@ struct Machine
 	template <typename... Args> constexpr
 	void setup_call(tinykvm_x86regs&, uint64_t addr, uint32_t tix, uint64_t rsp, Args&&... args);
 	void setup_clone(tinykvm_x86regs&, address_t stack);
-	void prepare_copy_on_write();
+	void prepare_copy_on_write(size_t max_work_mem = 0);
 	bool is_forked() const noexcept { return m_forked; }
 	static void init();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
@@ -185,6 +185,7 @@ private:
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const Machine* other, const MachineOptions&);
+	void setup_cow_mode(const Machine*); // After prepare_copy_on_write and forking
 	void prepare_cpus(size_t num_cpus);
 	vCPU& smp_cpu(size_t idx);
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);

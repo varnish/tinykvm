@@ -267,42 +267,8 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 	}
 	else if (LIKELY(!options.linearize_memory))
 	{
-		/* Clone master PML4 page */
-		auto pml4 = memory.new_page(0x0);
-		tinykvm::page_duplicate(pml4.pmem, other->memory.page_at(other->memory.page_tables));
-		memory.page_tables = pml4.addr;
+		setup_cow_mode(other);
 
-		/* Zero a new page for IST stack */
-		// XXX: This is not strictly necessary as we can
-		// hand-write a custom handler that only triggers on actual writes?
-		// The problem is that in order to handle interrupts, we need these
-		// pages to already be there. It would have been much easier with
-		// stackless interrupts, to be honest. Something to think about?
-		// XXX: In theory we can avoid initializing one of these pages
-		// until the guest asks for a certain level of concurrency.
-		memory.get_writable_page(IST_ADDR, true);
-		memory.get_writable_page(IST2_ADDR, true);
-
-		/* Inherit the special registers of the master machine.
-		   Ensures that special registers can never be corrupted. */
-		assert(other->cached_sregs);
-		struct kvm_sregs sregs = *other->cached_sregs;
-
-		/* Page table entry will be cloned at the start */
-		sregs.cr3 = memory.page_tables;
-		sregs.cr0 &= ~CR0_WP; // XXX: Fix me!
-
-		vcpu.set_special_registers(sregs);
-		//print_pagetables(this->memory);
-#if 0
-		/* It shouldn't be identity-mapped anymore */
-		assert(translate(IST_ADDR) != IST_ADDR);
-		//printf("Translate 0x%lX => 0x%lX\n", IST_ADDR, translate(IST_ADDR));
-		page_at(memory, IST_ADDR, [] (auto, auto& entry, auto) {
-			assert(entry & (PDE64_PRESENT | PDE64_RW | PDE64_NX));
-			(void) entry;
-		});
-#endif
 	} else { /* Forked linearized VM */
 		/* We have to re-initialize the page tables,
 		   because the source machine has been CoW-prepped.
@@ -642,7 +608,7 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 	return vcpu.run_once();
 }
 
-void Machine::prepare_copy_on_write()
+void Machine::prepare_copy_on_write(size_t max_work_mem)
 {
 	assert(this->m_prepped == false);
 	this->m_prepped = true;
@@ -654,6 +620,69 @@ void Machine::prepare_copy_on_write()
 		this->cached_sregs = new kvm_sregs {};
 	}
 	get_special_registers(*this->cached_sregs);
+
+	/* Make this machine runnable again using itself
+	   as the master VM. */
+	memory.banks.set_max_pages(max_work_mem / PAGE_SIZE);
+	/* Without working memory we will not be able to make
+	   this master VM usable after prepare_copy_on_write. */
+	if (max_work_mem == 0)
+		return;
+	/* This call makes this VM usable after making every page in the
+	   page tables read-only, enabling memory through page faults. */
+	this->setup_cow_mode(this);
+}
+void Machine::setup_cow_mode(const Machine* other)
+{
+	/* Clone master PML4 page. We use the fixed PT_ADDR
+	   directly in order to avoid duplicating the memory banked
+	   page tables that allow the master VM to execute code
+	   separately from its forks, while sharing a master page table. */
+	auto pml4 = memory.new_page(0x0);
+	tinykvm::page_duplicate(pml4.pmem, other->memory.page_at(PT_ADDR));
+	memory.page_tables = pml4.addr;
+
+	/* Zero a new page for IST stack */
+	// XXX: This is not strictly necessary as we can
+	// hand-write a custom handler that only triggers on actual writes?
+	// The problem is that in order to handle interrupts, we need these
+	// pages to already be there. It would have been much easier with
+	// stackless interrupts, to be honest. Something to think about?
+	// XXX: In theory we can avoid initializing one of these pages
+	// until the guest asks for a certain level of concurrency.
+	memory.get_writable_page(IST_ADDR, true);
+	memory.get_writable_page(IST2_ADDR, true);
+
+	/* Inherit the special registers of the master machine.
+	   Ensures that special registers can never be corrupted. */
+	assert(other->cached_sregs);
+	struct kvm_sregs sregs = *other->cached_sregs;
+
+	/* Page table entry will be cloned at the start */
+	sregs.cr3 = memory.page_tables;
+	sregs.cr0 &= ~CR0_WP; // XXX: Fix me!
+
+	vcpu.set_special_registers(sregs);
+	//print_pagetables(this->memory);
+#if 0
+	/* It shouldn't be identity-mapped anymore */
+	assert(translate(IST_ADDR) != IST_ADDR);
+	//printf("Translate 0x%lX => 0x%lX\n", IST_ADDR, translate(IST_ADDR));
+	page_at(memory, IST_ADDR, [] (auto, auto& entry, auto) {
+		assert(entry & (PDE64_PRESENT | PDE64_RW | PDE64_NX));
+		(void) entry;
+	});
+#endif
+
+	/* This blocking message passes the new special registers
+	   to every existing vCPU used in multi-processing. In the
+	   future there may be more stuff we need to pass onto the
+	   vCPUs, but for now we only need updated sregs. */
+	for (auto& cpu : m_cpus) {
+		cpu.blocking_message([sregs] (auto& cpu) {
+			cpu.set_special_registers(sregs);
+		});
+	}
 }
 
 void Machine::print_pagetables() const {

@@ -48,6 +48,7 @@ struct MemoryBanks {
 
 	MemoryBank& get_available_bank();
 	void reset(const MachineOptions&);
+	void set_max_pages(size_t new_max);
 
 	auto begin() { return m_mem.begin(); }
 	auto end()   { return m_mem.end(); }

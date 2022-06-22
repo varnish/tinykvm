@@ -105,8 +105,13 @@ int main(int argc, char** argv)
 	test_master_vm(master_vm);
 	printf("*** Master VM OK\n");
 
-	/* Make the master VM able to mass-produce copies */
-	master_vm.prepare_copy_on_write();
+	/* Make the master VM able to mass-produce copies.
+	   Make room for 16 CoW-pages enabling usage afterwards. */
+	master_vm.prepare_copy_on_write(65536);
+
+	printf("--- Beginning CoW VM master tests ---\n");
+	test_master_vm(master_vm);
+	printf("*** VM CoW master tests OK\n");
 
 	printf("--- Beginning VM fork tests ---\n");
 	for (size_t i = 0; i < 100; i++) {
