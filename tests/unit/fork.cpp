@@ -35,12 +35,14 @@ extern void prints_hello_world() {
 
 	// Run for at most 4 seconds before giving up
 	machine.run(4.0f);
+	REQUIRE(machine.banked_memory_pages() == 0);
 
 	// write syscall not called yet
 	REQUIRE(!output_is_hello_world);
 
-	// Make machine forkable
+	// Make machine forkable (no working memory)
 	machine.prepare_copy_on_write();
+	REQUIRE(machine.banked_memory_pages() == 0);
 	REQUIRE(machine.is_forkable());
 	REQUIRE(!machine.is_forked());
 
@@ -52,12 +54,17 @@ extern void prints_hello_world() {
 		std::string text{data, data + size};
 		output_is_hello_world = (text == "Hello World!");
 	});
+	REQUIRE(fork.banked_memory_pages() > 0);
+	const auto n = fork.banked_memory_pages();
 
 	// write syscall not called yet
 	REQUIRE(!output_is_hello_world);
 
 	auto funcaddr = fork.address_of("prints_hello_world");
 	fork.timed_vmcall(funcaddr, 4.0f);
+	// Calling into the forked VM added a few more banked pages
+	// Around 32kb at the time of writing this.
+	REQUIRE(fork.banked_memory_pages() > n);
 
 	// Now the output should be written out
 	REQUIRE(output_is_hello_world);
@@ -108,6 +115,8 @@ extern void prints_hello_world() {
 	machine.setup_linux({"fork"}, env);
 	machine.run(4.0f);
 
+	REQUIRE(machine.banked_memory_pages() == 0);
+
 	// write syscall not called yet
 	REQUIRE(!output_is_hello_world);
 	machine.set_printer([&] (const char* data, size_t size) {
@@ -117,6 +126,7 @@ extern void prints_hello_world() {
 
 	// Make machine forkable
 	machine.prepare_copy_on_write(65536);
+	REQUIRE(machine.banked_memory_pages() > 0);
 	REQUIRE(machine.is_forkable());
 	REQUIRE(!machine.is_forked());
 
@@ -124,6 +134,7 @@ extern void prints_hello_world() {
 	auto fork = tinykvm::Machine { machine, {
 		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
 	} };
+	REQUIRE(fork.banked_memory_pages() > 0);
 
 	auto funcaddr = machine.address_of("prints_hello_world");
 

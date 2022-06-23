@@ -232,6 +232,23 @@ char* vMemory::get_userpage_at(uint64_t addr) const
 	return readable_page_at(*this, addr, flags);
 }
 
+size_t Machine::banked_memory_pages() const noexcept
+{
+	size_t count = 0;
+	for (const auto& bank : memory.banks) {
+		count += bank.n_used;
+	}
+	return count;
+}
+size_t Machine::banked_memory_capacity_pages() const noexcept
+{
+	size_t count = 0;
+	for (const auto& bank : memory.banks) {
+		count += bank.n_pages;
+	}
+	return count;
+}
+
 __attribute__((cold, noreturn))
 void vMemory::memory_exception(const char* msg, uint64_t addr, uint64_t size)
 {

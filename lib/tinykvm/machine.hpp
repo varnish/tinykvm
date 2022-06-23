@@ -141,9 +141,19 @@ struct Machine
 	void delete_memory(uint32_t idx);
 	std::string_view binary() const noexcept { return m_binary; }
 
+	/* The extra used memory attached to a VM for copy-on-write mechanisms. */
+	size_t banked_memory_pages() const noexcept;
+	size_t banked_memory_bytes() const noexcept { return banked_memory_pages() * vMemory::PAGE_SIZE; }
+	/* The extra memory capacity attached to a VM for copy-on-write mechanisms. */
+	size_t banked_memory_capacity_pages() const noexcept;
+	size_t banked_memory_capacity_bytes() const noexcept { return banked_memory_capacity_pages() * vMemory::PAGE_SIZE; }
+
 	template <typename... Args> constexpr
 	void setup_call(tinykvm_x86regs&, uint64_t addr, uint32_t tix, uint64_t rsp, Args&&... args);
 	void setup_clone(tinykvm_x86regs&, address_t stack);
+	/* Make VM copy-on-write in order to support fast forking.
+	   When @max_work_mem is non-zero, the master VM can still
+	   be used after preparation. */
 	void prepare_copy_on_write(size_t max_work_mem = 0);
 	bool is_forked() const noexcept { return m_forked; }
 	static void init();
