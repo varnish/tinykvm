@@ -53,6 +53,9 @@ struct vMemory {
 	void fork_reset(const MachineOptions&);
 	void fork_reset(vMemory& other, const MachineOptions&);
 	static vMemory New(Machine&, const MachineOptions&, uint64_t phys, uint64_t safe, size_t size);
+	/* Returns true when this VM uses banking only to make page tables writable
+	   again in order to support itself. It has already been made forkable. */
+	bool is_forkable_master() const noexcept;
 
 	/* Create new identity-mapped memory regions */
 	vMemory(Machine&, const MachineOptions&, uint64_t, uint64_t, char*, size_t, bool = true);

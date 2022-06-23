@@ -96,6 +96,10 @@ void vMemory::fork_reset(vMemory& other, const MachineOptions& options)
 	this->size = other.size;
 	banks.reset(options);
 }
+bool vMemory::is_forkable_master() const noexcept
+{
+	return machine.is_forkable();
+}
 
 char* vMemory::at(uint64_t addr, size_t asize)
 {

@@ -145,4 +145,5 @@ extern void prints_hello_world() {
 	// Now the output should be written out
 	machine.timed_vmcall(funcaddr, 4.0f);
 	REQUIRE(output_is_hello_world);
+	//fprintf(stderr, "Banked pages: %zu\n", machine.banked_memory_pages());
 }

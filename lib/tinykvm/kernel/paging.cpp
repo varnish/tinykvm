@@ -383,6 +383,11 @@ inline bool is_copy_on_modify(uint64_t entry) {
 	return (entry & PDE64_CLONEABLE) == PDE64_CLONEABLE;
 }
 
+static void unlock_identity_mapped_entry(uint64_t& entry) {
+	/* Make page directly writable */
+	entry &= ~PDE64_CLONEABLE;
+	entry |= PDE64_RW;
+}
 static void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
 	/* Allocate new page, pass old vaddr to memory banks */
 	auto page = memory.new_page(entry & PDE64_ADDR_MASK);
@@ -462,10 +467,13 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
 					auto* data = memory.page_at(pte_mem);
 					if (is_copy_on_write(pt[e])) {
-						if (write_zeroes)
+						if (memory.is_forkable_master()) {
+							unlock_identity_mapped_entry(pt[e]);
+						} else if (write_zeroes) {
 							zero_and_update_entry(memory, pt[e], data, PDE64_RW);
-						else
+						} else {
 							clone_and_update_entry(memory, pt[e], data, PDE64_RW);
+						}
 						CLPRINT("-> Cloning a PT entry: 0x%lX\n", pt[e]);
 					}
 					CLPRINT("-> Returning data: %p\n", data);
