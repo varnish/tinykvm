@@ -441,7 +441,7 @@ void Machine::vCPU::run(uint32_t ticks)
 long Machine::vCPU::run_once()
 {
 	int result = ioctl(this->fd, KVM_RUN, 0);
-	if (result < 0) {
+	if (UNLIKELY(result < 0)) {
 		if (this->timeout) {
 			timeout_exception("Timeout Exception", this->timer_ticks);
 		} else if (errno == EINTR) {
@@ -481,7 +481,7 @@ long Machine::vCPU::run_once()
 		}
 		else if (kvm_run->io.port >= 0x80 && kvm_run->io.port < 0x100) {
 			auto intr = kvm_run->io.port - 0x80;
-			if (intr == 14)
+			if (intr == 14) // Page fault
 			{
 				auto regs = registers();
 				const uint64_t addr = regs.rdi & ~(uint64_t) 0x8000000000000FFF;

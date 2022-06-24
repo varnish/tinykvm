@@ -6,12 +6,14 @@ dw .vm64_rexit
 dd .vm64_cpuid
 
 ALIGN 0x10
+;; The entry function, jumps to real function
 .vm64_entry:
 	mov r13, rcx
 	mov rax, 0x1F777
 	syscall
 	mov rcx, r13
 	jmp r15
+;; The exit function (pre-written to stack)
 .vm64_rexit:
 	mov rdi, rax
 .vm64_rexit_retry:
