@@ -167,7 +167,7 @@ void test_master_vm(tinykvm::Machine& vm)
 	//vm.print_exception_handlers();
 	auto tr_addr = vm.address_of("test_read");
 	auto tret_addr = vm.address_of("test_return");
-	vm.timed_smpcall(2, 0x200000, 0x10000, tr_addr, 2.0f);
+	vm.timed_smpcall(20, 0x200000, 0x10000, tr_addr, 2.0f);
 	auto results = vm.gather_return_values();
 	for (const auto res : results) {
 		KASSERT(res == 200);
@@ -177,10 +177,10 @@ void test_master_vm(tinykvm::Machine& vm)
 		vm.timed_smpcall(2, 0x200000, 0x10000, tret_addr, 2.0f);
 	}
 	/* Run test_read (200) */
-	vm.timed_smpcall(2, 0x200000, 0x10000, tr_addr, 2.0f);
+	vm.timed_smpcall(8, 0x200000, 0x10000, tr_addr, 2.0f);
 	/* Run test_return (666) */
-	vm.timed_smpcall(2, 0x200000, 0x10000, tret_addr, 2.0f);
-	results = vm.gather_return_values();
+	vm.timed_smpcall(8, 0x200000, 0x10000, tret_addr, 2.0f);
+	results = vm.gather_return_values(8);
 	for (const auto res : results) {
 		KASSERT(res == 666);
 	}

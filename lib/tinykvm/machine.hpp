@@ -3,11 +3,13 @@
 #include "forward.hpp"
 #include "memory.hpp"
 #include "memory_bank.hpp"
+#include "util/cpptime.h"
 #include "util/threadpool.h"
 #include <array>
 #include <cassert>
 #include <deque>
 #include <functional>
+#include <pthread.h>
 #include <memory>
 #include <vector>
 
@@ -121,7 +123,7 @@ struct Machine
 	int  smp_active_count() const noexcept { return m_smp_active; }
 	void smp_wait();
 	/* Retrieve return values from a smpcall */
-	std::vector<long> gather_return_values();
+	std::vector<long> gather_return_values(unsigned cpus = 0);
 
 	bool has_threads() const noexcept { return m_mt != nullptr; }
 	const struct MultiThreading& threads() const;
@@ -183,7 +185,9 @@ private:
 		int fd = 0;
 		int cpu_id = 0;
 		bool stopped = true;
+		bool timeout = false;
 		uint32_t timer_ticks = 0;
+		pthread_t self;
 	private:
 		struct kvm_run *kvm_run = nullptr;
 		Machine* machine = nullptr;
@@ -252,6 +256,8 @@ private:
 
 	static int create_kvm_vm();
 	static int kvm_fd;
+
+	static cpptime::Timer timer_system;
 };
 
 #include "machine_inline.hpp"

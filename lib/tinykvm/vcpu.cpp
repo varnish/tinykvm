@@ -5,6 +5,7 @@
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/signal.h>
 #include "page_streaming.hpp"
 #include "kernel/amd64.hpp"
 #include "kernel/idt.hpp"
@@ -16,11 +17,12 @@
 #include "kernel/usercode.hpp"
 //#define VERBOSE_PAGE_FAULTS
 extern "C" int close(int);
+extern "C" int gettid();
+static void unused_usr_handler(int) {}
 
 namespace tinykvm {
 	static struct kvm_sregs master_sregs;
 	static struct kvm_xcrs master_xregs;
-	static struct kvm_lapic_state master_lapic;
 	static struct {
 		__u32 nent;
 		__u32 padding;
@@ -45,6 +47,8 @@ void initialize_vcpu_stuff(int kvm_fd)
 
 void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options)
 {
+	signal(SIGUSR1, unused_usr_handler);
+
 	this->cpu_id = id;
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
 	this->machine = &machine;
@@ -91,29 +95,6 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 		master_xregs.xcrs[0].value |= 0xE0; // AVX512
 #  endif
 		master_xregs.nr_xcrs = 1;
-
-		if (ioctl(this->fd, KVM_GET_LAPIC, &master_lapic)) {
-			machine_exception("KVM_GET_LAPIC: failed to get initial LAPIC");
-		}
-
-		/* A global timeout */
-		auto& lapic = *(local_apic *)&master_lapic;
-		lapic.svr.apic_enabled = 0x1;
-		lapic.lvt_lint0.delivery_mode = AMD64_APIC_MODE_EXTINT;
-		lapic.lvt_lint1.delivery_mode = AMD64_APIC_MODE_NMI;
-		lapic.lvt_timer.vector = 32;
-		lapic.lvt_timer.mask   = 0;
-		/**
-			0x0  - divide by 2
-			0x1  - divide by 4
-			0x2  - divide by 8
-			0x3  - divide by 16
-			0x4  - divide by 32
-			0x5  - divide by 64
-			0x6  - divide by 128
-			0x7  - divide by 1
-		**/
-		lapic.timer_dcr.divisor = 0x7;
 	}
 
 	/* Extended control registers */
@@ -128,30 +109,23 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 
 		struct kvm_msr_entry entries[3];
 	} msrs;
-	msrs.nmsrs = 3;
+	msrs.nmsrs = 2;
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
-	msrs.entries[2].index = AMD64_MSR_APICBASE;
+//	msrs.entries[2].index = AMD64_MSR_APICBASE;
 	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
 	msrs.entries[1].data  = interrupt_header().vm64_syscall;
-	msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_XAPIC_ENABLE;
+//	msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_XAPIC_ENABLE;
 
-	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < 3) {
+	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < msrs.nmsrs) {
 		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR/X2APIC");
-	}
-
-	auto timed_lapic = master_lapic;
-	auto& lapic = *(local_apic *)&timed_lapic;
-	lapic.timer_icr.initial_count = to_ticks(options.timeout);
-	lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
-
-	if (ioctl(this->fd, KVM_SET_LAPIC, &timed_lapic)) {
-		machine_exception("KVM_SET_LAPIC: failed to set initial LAPIC");
 	}
 }
 
 void Machine::vCPU::smp_init(int id, Machine& machine)
 {
+	signal(SIGUSR1, unused_usr_handler);
+
 	this->cpu_id = id;
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
 	this->machine = &machine;
@@ -187,22 +161,18 @@ void Machine::vCPU::smp_init(int id, Machine& machine)
 		__u32 nmsrs; /* number of msrs in entries */
 		__u32 pad = 0;
 
-		struct kvm_msr_entry entries[3];
+		struct kvm_msr_entry entries[2];
 	} msrs;
-	msrs.nmsrs = 3;
+	msrs.nmsrs = 2;
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
-	msrs.entries[2].index = AMD64_MSR_APICBASE;
+	//msrs.entries[2].index = AMD64_MSR_APICBASE;
 	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
 	msrs.entries[1].data  = interrupt_header().vm64_syscall;
-	msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_X2APIC_ENABLE;
+	//msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_X2APIC_ENABLE;
 
-	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < 3) {
+	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < msrs.nmsrs) {
 		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR/X2APIC");
-	}
-
-	if (ioctl(this->fd, KVM_SET_LAPIC, &master_lapic)) {
-		machine_exception("KVM_SET_LAPIC: failed to set initial LAPIC");
 	}
 }
 
@@ -446,29 +416,40 @@ void Machine::vCPU::handle_exception(uint8_t intr)
 
 void Machine::vCPU::run(uint32_t ticks)
 {
-	if (ticks != 0)
-	{
-		this->timer_ticks = ticks;
-		/* XXX: This is 1KB. */
-		auto timed_lapic = master_lapic;
-		auto& lapic = *(local_apic *)&timed_lapic;
-		lapic.timer_icr.initial_count = this->timer_ticks;
-		lapic.timer_ccr.curr_count = lapic.timer_icr.initial_count;
-
-		if (ioctl(this->fd, KVM_SET_LAPIC, &lapic)) {
-			machine_exception("KVM_SET_LAPIC: failed to set runtime LAPIC");
-		}
+	this->timer_ticks = ticks;
+	size_t timer_id = 0;
+	if (timer_ticks != 0) {
+		this->self = pthread_self();
+		this->timeout = false;
+		timer_id = timer_system.add(
+			std::chrono::milliseconds(ticks),
+			[this] (auto) {
+				this->timeout = true;
+				pthread_kill(this->self, SIGUSR1);
+			}
+		);
 	}
 
 	this->stopped = false;
 	while(run_once());
+
+	if (timer_ticks != 0) {
+		timer_system.remove(timer_id);
+	}
 }
 
 long Machine::vCPU::run_once()
 {
-	if (ioctl(this->fd, KVM_RUN, 0) < 0) {
-		/* NOTE: This is probably EINTR */
-		machine_exception("KVM_RUN failed");
+	int result = ioctl(this->fd, KVM_RUN, 0);
+	if (result < 0) {
+		if (this->timeout) {
+			timeout_exception("Timeout Exception", this->timer_ticks);
+		} else if (errno == EINTR) {
+			/* XXX: EINTR but not a timeout, return to execution? */
+			return KVM_EXIT_UNKNOWN;
+		} else {
+			machine_exception("KVM_RUN failed");
+		}
 	}
 
 	switch (kvm_run->exit_reason) {
@@ -529,12 +510,6 @@ long Machine::vCPU::run_once()
 
 				machine->memory.get_writable_page(addr, false);
 				return KVM_EXIT_IO;
-			}
-			else if (intr == 33)
-			{
-				/* A timeout exception */
-				timeout_exception(amd64_exception_name(intr),
-					this->timer_ticks);
 			}
 			else if (intr == 1) /* Debug trap */
 			{

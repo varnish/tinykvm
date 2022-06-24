@@ -72,20 +72,6 @@ ALIGN 0x10
 	;; Reset pagetables
 	mov rax, cr3
 	mov cr3, rax
-
-	cmp r14d, 0
-	jz skip_no_ticks
-
-	;; Execution timeout (LVT timer ticks)
-	mov eax, 0xfee00000
-	;; program XAPIC TIMER.INITCNT with exec timeout
-	mov DWORD [eax + 0x380], r14d
-	;; EOI
-	mov DWORD [eax + 0x0B0], 0x0
-
-skip_no_ticks:
-	;; Enable usermode interrupts
-	or r11, 0x200
 	o64 sysret
 
 .vm64_page_fault:

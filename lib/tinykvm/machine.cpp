@@ -24,6 +24,7 @@ namespace tinykvm {
 			printf("%.*s", (int)len, buffer);
 		};
 	static int kvm_open();
+	cpptime::Timer Machine::timer_system;
 
 __attribute__ ((cold))
 Machine::Machine(std::string_view binary, const MachineOptions& options)
@@ -214,7 +215,7 @@ void Machine::print(const char* buffer, size_t len)
 
 void Machine::run(float timeout)
 {
-	return vcpu.run(to_ticks(timeout));
+	return vcpu.run(timeout * 1000.0);
 }
 
 __attribute__((cold, noreturn))
@@ -268,9 +269,9 @@ int Machine::create_kvm_vm()
 		machine_exception("Failed to KVM_CREATE_VM");
 	}
 
-	if (ioctl(fd, KVM_CREATE_IRQCHIP, 0) < 0) {
+	/*if (ioctl(fd, KVM_CREATE_IRQCHIP, 0) < 0) {
 		machine_exception("KVM_CREATE_IRQCHIP: failed to create LAPIC");
-	}
+	}*/
 
 	/*if (ioctl(fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
 		throw std::runtime_error("Failed to KVM_SET_TSS_ADDR");

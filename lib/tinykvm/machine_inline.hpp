@@ -1,9 +1,9 @@
 /* APIC timer counter calculations for execution timeouts */
 constexpr inline float ticks_to_seconds(uint32_t ticks) {
-	return ticks / 62500000.0;
+	return ticks / 1000.0;
 }
 constexpr inline uint32_t to_ticks(float seconds) {
-	const float val = seconds * 62500000.0;
+	const float val = seconds * 1000.0;
 	return (val < (float)UINT32_MAX) ? (uint32_t)val : UINT32_MAX;
 }
 

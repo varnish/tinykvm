@@ -49,7 +49,7 @@ namespace tinykvm
 	class MachineTimeoutException: public MachineException {
 	public:
 		using MachineException::MachineException;
-		float seconds() const noexcept { return data() / 62500000.0; }
+		float seconds() const noexcept { return data() / 1000.0; }
 	};
 
 	class MemoryException: public std::exception {

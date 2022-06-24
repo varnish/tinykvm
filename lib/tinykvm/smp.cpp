@@ -10,7 +10,9 @@ namespace tinykvm {
 Machine::MPvCPU::MPvCPU(int c, Machine& m, const struct kvm_sregs& sregs)
 	: thpool(1)
 {
-	/* We store the CPU ID in GSBASE register */
+	/* We store the CPU ID in GSBASE register
+	   XXX: We do not make sure that vCPUs stay on a specific
+	   thread here, which will decimate performance. */
 	auto f = thpool.enqueue([this, c, &m, sregs = sregs] () mutable {
 		this->cpu.smp_init(c, m);
 		sregs.tr.base = TSS_SMP_ADDR + (c - 1) * 104; /* AMD64_TSS */
@@ -157,11 +159,14 @@ void Machine::smp_wait()
 	}
 }
 
-std::vector<long> Machine::gather_return_values()
+std::vector<long> Machine::gather_return_values(unsigned cpus)
 {
+	if (cpus == 0 || cpus > m_cpus.size())
+		cpus = m_cpus.size();
+
 	std::vector<long> results;
-	results.resize(this->m_cpus.size());
-	for (size_t c = 0; c < m_cpus.size(); c++) {
+	results.resize(cpus);
+	for (size_t c = 0; c < cpus; c++) {
 		m_cpus[c].blocking_message([&] (auto& cpu) {
 			//printf("CPU %zu result: 0x%llu\n", c, cpu.registers().rdi);
 			results[c] = cpu.registers().rdi;
