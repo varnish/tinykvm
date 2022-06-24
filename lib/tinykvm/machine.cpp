@@ -259,6 +259,8 @@ __attribute__ ((cold))
 void Machine::init()
 {
 	Machine::kvm_fd = kvm_open();
+
+	timer_system.init();
 }
 
 __attribute__ ((cold))

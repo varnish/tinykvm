@@ -23,7 +23,6 @@ namespace tinykvm
 	struct MachineOptions {
 		uint64_t max_mem;
 		uint32_t max_cow_mem = 0;
-		float timeout = 0.f;
 		std::string_view binary = {};
 
 		bool verbose_loader = false;

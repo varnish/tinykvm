@@ -162,6 +162,10 @@ class Timer
 public:
 	Timer() : m{}, cond{}, worker{}, events{}, time_events{}, free_ids{}
 	{
+	}
+
+	void init()
+	{
 		scoped_m lock(m);
 		done = false;
 		worker = std::thread([this]{ run(); });
@@ -169,6 +173,9 @@ public:
 
 	~Timer()
 	{
+		if (!worker.joinable())
+			return;
+
 		scoped_m lock(m);
 		done = true;
 		lock.unlock();
