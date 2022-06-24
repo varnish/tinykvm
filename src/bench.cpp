@@ -489,7 +489,7 @@ void benchmark_multiple_pooled_vms(tinykvm::Machine& master_vm, size_t NUM, size
 timespec time_now()
 {
 	timespec t;
-	clock_gettime(CLOCK_MONOTONIC, &t);
+	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
 	return t;
 }
 long nanodiff(timespec start_time, timespec end_time)
