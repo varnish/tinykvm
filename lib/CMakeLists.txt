@@ -19,6 +19,7 @@ set (SOURCES
 	tinykvm/rsp_client.cpp
 	tinykvm/threads.cpp
 	tinykvm/vcpu.cpp
+	tinykvm/vcpu_run.cpp
 	tinykvm/kernel/gdt.cpp
 	tinykvm/kernel/idt.cpp
 	tinykvm/kernel/tss.cpp
