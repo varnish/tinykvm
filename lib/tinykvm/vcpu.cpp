@@ -15,8 +15,8 @@
 #include "kernel/paging.hpp"
 #include "kernel/memory_layout.hpp"
 #include "kernel/usercode.hpp"
-extern "C" int close(int);
 extern "C" int gettid();
+extern "C" int close(int);
 static void unused_usr_handler(int) {}
 
 namespace tinykvm {
@@ -44,16 +44,30 @@ void initialize_vcpu_stuff(int kvm_fd)
 	}
 }
 
-void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options)
+void* Machine::create_vcpu_timer()
 {
 	signal(SIGUSR1, unused_usr_handler);
 
+	struct sigevent sigev;
+	sigev.sigev_notify = SIGEV_SIGNAL | SIGEV_THREAD_ID;
+	sigev.sigev_signo = SIGUSR1;
+	sigev._sigev_un._tid = gettid();
+
+	timer_t timer_id;
+	if (timer_create(CLOCK_MONOTONIC, &sigev, &timer_id) < 0)
+		throw MachineException("Unable to create timeout timer");
+	return timer_id;
+}
+
+void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options)
+{
 	this->cpu_id = id;
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
 	this->machine = &machine;
 	if (UNLIKELY(this->fd < 0)) {
 		machine_exception("Failed to KVM_CREATE_VCPU");
 	}
+	this->timer_id = create_vcpu_timer();
 
 	kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
@@ -123,14 +137,13 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 
 void Machine::vCPU::smp_init(int id, Machine& machine)
 {
-	signal(SIGUSR1, unused_usr_handler);
-
 	this->cpu_id = id;
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
 	this->machine = &machine;
 	if (UNLIKELY(this->fd < 0)) {
 		machine_exception("Failed to KVM_CREATE_VCPU");
 	}
+	this->timer_id = create_vcpu_timer();
 
 	kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
@@ -183,6 +196,8 @@ void Machine::vCPU::deinit()
 	if (kvm_run != nullptr) {
 		munmap(kvm_run, vcpu_mmap_size);
 	}
+
+	timer_delete(&this->timer_id);
 }
 
 tinykvm_x86regs Machine::vCPU::registers() const

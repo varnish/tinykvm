@@ -3,7 +3,6 @@
 #include "forward.hpp"
 #include "memory.hpp"
 #include "memory_bank.hpp"
-#include "util/cpptime.h"
 #include "util/threadpool.h"
 #include <array>
 #include <cassert>
@@ -187,7 +186,7 @@ private:
 		bool stopped = true;
 		bool timeout = false;
 		uint32_t timer_ticks = 0;
-		pthread_t self;
+		void*  timer_id = nullptr;
 	private:
 		struct kvm_run *kvm_run = nullptr;
 		Machine* machine = nullptr;
@@ -256,8 +255,7 @@ private:
 
 	static int create_kvm_vm();
 	static int kvm_fd;
-
-	static cpptime::Timer timer_system;
+	static void* create_vcpu_timer();
 };
 
 #include "machine_inline.hpp"

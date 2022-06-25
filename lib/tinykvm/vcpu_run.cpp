@@ -11,30 +11,33 @@
 	printer(buffer, \
 		snprintf(buffer, sizeof(buffer), \
 		fmt, ##__VA_ARGS__));
+extern "C" int gettid();
 
 namespace tinykvm {
 
 void Machine::vCPU::run(uint32_t ticks)
 {
 	this->timer_ticks = ticks;
-	size_t timer_id = 0;
+	timer_t timer_id = 0;
 	if (timer_ticks != 0) {
-		this->self = pthread_self();
-		this->timeout = false;
-		timer_id = timer_system.add(
-			std::chrono::milliseconds(ticks),
-			[this] (auto) {
-				this->timeout = true;
-				pthread_kill(this->self, SIGUSR1);
+		this->timeout = true;
+		const struct itimerspec its {
+			.it_interval = {},
+			.it_value = {
+				.tv_sec = ticks / 1000,
+				.tv_nsec = (ticks % 1000) * 1000000L
 			}
-		);
+		};
+		timer_settime(this->timer_id, 0, &its, nullptr);
 	}
 
 	this->stopped = false;
 	while(run_once());
 
 	if (timer_ticks != 0) {
-		timer_system.remove(timer_id);
+		this->timeout = false;
+		const struct itimerspec its {};
+		timer_settime(this->timer_id, 0, &its, nullptr);
 	}
 }
 

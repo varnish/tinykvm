@@ -24,7 +24,6 @@ namespace tinykvm {
 			printf("%.*s", (int)len, buffer);
 		};
 	static int kvm_open();
-	cpptime::Timer Machine::timer_system;
 
 __attribute__ ((cold))
 Machine::Machine(std::string_view binary, const MachineOptions& options)
@@ -259,8 +258,6 @@ __attribute__ ((cold))
 void Machine::init()
 {
 	Machine::kvm_fd = kvm_open();
-
-	timer_system.init();
 }
 
 __attribute__ ((cold))
