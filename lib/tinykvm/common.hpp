@@ -26,7 +26,6 @@ namespace tinykvm
 		std::string_view binary = {};
 
 		bool verbose_loader = false;
-		bool linearize_memory = false;
 		bool short_lived = false;
 		bool hugepages = false;
 		bool transparent_hugepages = false;

@@ -52,7 +52,7 @@ Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 
 Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_prepped {false},
-	  m_forked  {!options.linearize_memory},
+	  m_forked  {true},
 	  m_binary {options.binary.empty() ? other.m_binary : options.binary},
 	  memory   {*this, options, other.memory},
 	  m_stack_address {other.m_stack_address},
@@ -63,7 +63,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_mt     {nullptr}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
-	assert((other.m_prepped || options.linearize_memory) && "Call Machine::prepare_copy_on_write() first");
+	assert(other.m_prepped && "Call Machine::prepare_copy_on_write() first");
 
 	/* Unfortunately we have to create a new VM because
 	   memory is tied to VMs and not vCPUs. */

@@ -16,6 +16,7 @@ inline long nanodiff(timespec start_time, timespec end_time);
 static void benchmark_alternate_tenant_resets(tinykvm::Machine&, size_t);
 static void benchmark_multiple_vms(tinykvm::Machine&, size_t, size_t);
 static void benchmark_multiple_pooled_vms(tinykvm::Machine&, size_t, size_t);
+static std::vector<uint8_t> binary;
 
 int main(int argc, char** argv)
 {
@@ -23,7 +24,7 @@ int main(int argc, char** argv)
 		fprintf(stderr, "Missing argument: 64-bit ELF binary\n");
 		exit(1);
 	}
-	const auto binary = load_file(argv[1]);
+	binary = load_file(argv[1]);
 	std::vector<tinykvm::Machine*> vms;
 	vms.reserve(NUM_GUESTS);
 
@@ -314,12 +315,15 @@ void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm, const size_t
 	const uint64_t vmcall_address = master_vm.address_of("bench");
 
 	// Make a full copy of the main VM into other_vm
-	tinykvm::Machine other_vm { master_vm,
+	tinykvm::Machine other_vm { binary,
 	{
 		.max_mem = GUEST_MEMORY,
-		.max_cow_mem = 0,
-		.linearize_memory = true,
+		.max_cow_mem = 0
 	} };
+	other_vm.setup_linux(
+		{"kvmtest", "Hello World!\n"},
+		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+	other_vm.run();
 	other_vm.prepare_copy_on_write();
 
 	const tinykvm::MachineOptions options {

@@ -197,7 +197,7 @@ void Machine::vCPU::deinit()
 		munmap(kvm_run, vcpu_mmap_size);
 	}
 
-	timer_delete(&this->timer_id);
+	timer_delete(this->timer_id);
 }
 
 tinykvm_x86regs Machine::vCPU::registers() const
@@ -235,7 +235,7 @@ std::string_view Machine::vCPU::io_data() const
 
 void Machine::setup_long_mode(const Machine* other, const MachineOptions& options)
 {
-	if (other == nullptr)
+	if (other == nullptr) // Main VM
 	{
 		setup_amd64_exceptions(
 			IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
@@ -249,25 +249,9 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 
 		vcpu.set_special_registers(master_sregs);
 	}
-	else if (LIKELY(!options.linearize_memory))
+	else // Forked VM
 	{
 		setup_cow_mode(other);
-
-	} else { /* Forked linearized VM */
-		/* We have to re-initialize the page tables,
-		   because the source machine has been CoW-prepped.
-		   NOTE: Better solution is to replace CLONEABLE flags with W=2 */
-		this->m_kernel_end = setup_amd64_paging(memory, m_binary);
-
-		/* Inherit the special registers of the master machine */
-		struct kvm_sregs sregs;
-		other->vcpu.get_special_registers(sregs);
-
-		/* Restore the original linearized memory */
-		sregs.cr3 = memory.page_tables;
-		sregs.cr0 |= CR0_WP;
-
-		vcpu.set_special_registers(sregs);
 	}
 }
 
