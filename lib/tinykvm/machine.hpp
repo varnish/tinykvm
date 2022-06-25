@@ -157,6 +157,9 @@ struct Machine
 	   be used after preparation. */
 	void prepare_copy_on_write(size_t max_work_mem = 0);
 	bool is_forked() const noexcept { return m_forked; }
+	/* Migrates the VM to the current thread. Allows creating in
+	   one thread, and using it in another. */
+	void migrate_to_this_thread();
 	static void init();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);

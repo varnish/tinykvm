@@ -18,7 +18,6 @@ namespace tinykvm {
 void Machine::vCPU::run(uint32_t ticks)
 {
 	this->timer_ticks = ticks;
-	timer_t timer_id = 0;
 	if (timer_ticks != 0) {
 		this->timeout = true;
 		const struct itimerspec its {
@@ -319,6 +318,12 @@ void Machine::vCPU::handle_exception(uint8_t intr)
 			}
 		}
 	} catch (...) {}
+}
+
+void Machine::migrate_to_this_thread()
+{
+	timer_delete(vcpu.timer_id);
+	vcpu.timer_id = create_vcpu_timer();
 }
 
 } // tinykvm
