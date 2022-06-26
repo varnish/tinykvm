@@ -21,6 +21,9 @@ struct vMemory {
 	char*  ptr;
 	size_t size;
 	bool   owned = true;
+	/* Use memory banks only for page tables, write directly
+	   to main memory. Used with is_forkable_master(). */
+	bool   main_memory_writes = false;
 	/* Dynamic page memory */
 	MemoryBanks banks; // fault-in memory banks
 	/* SMP mutex */

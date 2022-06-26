@@ -15,6 +15,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	uint64_t ph, uint64_t sf, char* p, size_t s, bool own)
 	: machine(m), physbase(ph), safebase(sf),
 	  ptr(p), size(s), owned(own),
+	  main_memory_writes(options.master_direct_memory_writes),
 	  banks(m, options)
 {
 	this->page_tables = PT_ADDR;

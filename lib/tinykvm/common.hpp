@@ -29,6 +29,10 @@ namespace tinykvm
 		bool short_lived = false;
 		bool hugepages = false;
 		bool transparent_hugepages = false;
+		/* When enabled, master VMs will write directly
+		   to their own main memory instead of memory banks,
+		   allowing forks to immediately see changes. */
+		bool master_direct_memory_writes = true;
 	};
 
 	class MachineException : public std::exception {

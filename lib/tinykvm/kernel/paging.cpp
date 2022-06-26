@@ -467,7 +467,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
 					auto* data = memory.page_at(pte_mem);
 					if (is_copy_on_write(pt[e])) {
-						if (memory.is_forkable_master()) {
+						if (memory.is_forkable_master() && memory.main_memory_writes) {
 							unlock_identity_mapped_entry(pt[e]);
 						} else if (write_zeroes) {
 							zero_and_update_entry(memory, pt[e], data, PDE64_RW);
