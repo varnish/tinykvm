@@ -40,14 +40,13 @@ inline void Machine::set_special_registers(const struct kvm_sregs& sregs) {
 
 template <typename... Args> inline constexpr
 void Machine::setup_call(tinykvm_x86regs& regs,
-	uint64_t addr, uint32_t ticks, uint64_t rsp,
+	uint64_t addr, uint64_t rsp,
 	Args&&... args)
 {
 	regs = {};
 	/* Set IOPL=3 to allow I/O instructions */
 	regs.rflags = 2 | (3 << 12);
 	regs.r15 = addr;
-	regs.r14 = ticks;
 	regs.rip = this->entry_address();
 	regs.rsp = rsp;
 	[[maybe_unused]] unsigned iargs = 0;
@@ -91,8 +90,8 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 
 inline void Machine::setup_clone(tinykvm_x86regs& regs, address_t stack)
 {
-	/* Set IOPL=3 to allow I/O instructions, enable IF */
-	regs.rflags = 2 | (3 << 12) | 0x200;
+	/* Set IOPL=3 to allow I/O instructions */
+	regs.rflags = 2 | (3 << 12);
 	regs.r15 = regs.rip;
 	regs.rip = this->entry_address();
 	regs.rbp = 0;
@@ -102,9 +101,8 @@ inline void Machine::setup_clone(tinykvm_x86regs& regs, address_t stack)
 template <typename... Args> inline constexpr
 void Machine::vmcall(uint64_t addr, Args&&... args)
 {
-	vcpu.timer_ticks = 0;
 	tinykvm_x86regs regs;
-	this->setup_call(regs, addr, 0, this->stack_address(), std::forward<Args> (args)...);
+	this->setup_call(regs, addr, this->stack_address(), std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
 	this->run();
 }
@@ -119,20 +117,11 @@ void Machine::vmcall(const char* function, Args&&... args)
 template <typename... Args> inline constexpr
 void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 {
-#ifdef TINYKVM_FAST_EXECUTION_TIMEOUT
-	vcpu.timer_ticks = to_ticks(timeout);
-#else
-	vcpu.timer_ticks = 0;
-#endif
 	tinykvm_x86regs regs;
-	this->setup_call(regs, addr, vcpu.timer_ticks,
+	this->setup_call(regs, addr,
 		this->stack_address(), std::forward<Args> (args)...);
 	vcpu.assign_registers(regs);
-#ifdef TINYKVM_FAST_EXECUTION_TIMEOUT
-	vcpu.run(0); /* Ticks are in r14. */
-#else
-	vcpu.run(to_ticks(timeout));
-#endif
+	this->run(timeout);
 }
 
 template <typename... Args> inline
@@ -150,13 +139,8 @@ void Machine::timed_smpcall(size_t num_cpus,
 
 	for (size_t c = 0; c < num_cpus; c++) {
 		data[c].vcpu = &m_cpus[c].cpu;
-#ifdef TINYKVM_FAST_EXECUTION_TIMEOUT
-		data[c].ticks = 0;
-		this->setup_call(data[c].regs, addr, to_ticks(timeout),
-#else
 		data[c].ticks = to_ticks(timeout);
-		this->setup_call(data[c].regs, addr, 0,
-#endif
+		this->setup_call(data[c].regs, addr,
 			stack_base + (c+1) * stack_size,
 			std::forward<Args> (args)...);
 		m_cpus[c].async_exec(data[c]);

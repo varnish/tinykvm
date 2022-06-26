@@ -150,7 +150,7 @@ struct Machine
 	size_t banked_memory_capacity_bytes() const noexcept { return banked_memory_capacity_pages() * vMemory::PAGE_SIZE; }
 
 	template <typename... Args> constexpr
-	void setup_call(tinykvm_x86regs&, uint64_t addr, uint32_t tix, uint64_t rsp, Args&&... args);
+	void setup_call(tinykvm_x86regs&, uint64_t addr, uint64_t rsp, Args&&... args);
 	void setup_clone(tinykvm_x86regs&, address_t stack);
 	/* Make VM copy-on-write in order to support fast forking.
 	   When @max_work_mem is non-zero, the master VM can still

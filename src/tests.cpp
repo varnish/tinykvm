@@ -65,10 +65,10 @@ int main(int argc, char** argv)
 		if (getenv("FORK")) {
 			master_vm.prepare_copy_on_write();
 			vm = new tinykvm::Machine {master_vm, options};
-			vm->setup_call(regs, vm->address_of("test_return"), 0, rsp);
+			vm->setup_call(regs, vm->address_of("test_return"), rsp);
 			vm->set_registers(regs);
 		} else {
-			master_vm.setup_call(regs, master_vm.address_of("test_return"), 0, rsp);
+			master_vm.setup_call(regs, master_vm.address_of("test_return"), rsp);
 			master_vm.set_registers(regs);
 		}
 
