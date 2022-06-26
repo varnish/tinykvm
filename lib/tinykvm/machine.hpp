@@ -155,7 +155,8 @@ struct Machine
 	/* Make VM copy-on-write in order to support fast forking.
 	   When @max_work_mem is non-zero, the master VM can still
 	   be used after preparation. */
-	void prepare_copy_on_write(size_t max_work_mem = 0);
+	void prepare_copy_on_write(size_t max_work_mem = 0, uint64_t shared_memory_boundary = UINT64_MAX);
+	void set_main_memory_writable(bool v) { memory.main_memory_writes = v; }
 	bool is_forked() const noexcept { return m_forked; }
 	/* Migrates the VM to the current thread. Allows creating in
 	   one thread, and using it in another. */

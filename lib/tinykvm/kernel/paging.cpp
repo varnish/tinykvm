@@ -323,18 +323,18 @@ void foreach_page(const vMemory& mem, foreach_page_t callback)
 	foreach_page(const_cast<vMemory&>(mem), std::move(callback));
 }
 
-void foreach_page_makecow(vMemory& mem)
+void foreach_page_makecow(vMemory& mem, uint64_t shared_memory_boundary)
 {
 	foreach_page(mem,
-		[] (uint64_t addr, uint64_t& entry, size_t /*size*/) {
-			if (addr != 0xffe00000) {
-				const uint64_t flags = (PDE64_PRESENT | PDE64_RW);
-				if ((entry & flags) == flags) {
-					entry &= ~(uint64_t) PDE64_RW;
-					entry |= PDE64_CLONEABLE;
-				}
+	[=] (uint64_t addr, uint64_t& entry, size_t /*size*/) {
+		if (addr < shared_memory_boundary && addr != 0xffe00000) {
+			const uint64_t flags = (PDE64_PRESENT | PDE64_RW);
+			if ((entry & flags) == flags) {
+				entry &= ~(uint64_t) PDE64_RW;
+				entry |= PDE64_CLONEABLE;
 			}
-		});
+		}
+	});
 }
 
 void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback)
