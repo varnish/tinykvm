@@ -92,7 +92,7 @@ Machine::~Machine()
 	close(this->fd);
 }
 
-void Machine::reset_to(Machine& other, const MachineOptions& options)
+void Machine::reset_to(const Machine& other, const MachineOptions& options)
 {
 	assert(m_forked && other.m_prepped &&
 		"This machine must be forked, and the source must be prepped");

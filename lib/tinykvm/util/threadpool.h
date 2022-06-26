@@ -237,6 +237,7 @@ inline void ThreadPool::start_worker(
 {
     assert(lock.owns_lock() && lock.mutex() == &this->queue_mutex);
     assert(worker_number <= this->workers.size());
+	(void)lock;
 
     auto worker_func =
         [this, worker_number]

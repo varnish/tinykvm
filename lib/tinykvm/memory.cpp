@@ -39,7 +39,7 @@ void vMemory::fork_reset(const MachineOptions& options)
 {
 	banks.reset(options);
 }
-void vMemory::fork_reset(vMemory& other, const MachineOptions& options)
+void vMemory::fork_reset(const vMemory& other, const MachineOptions& options)
 {
 	this->physbase = other.physbase;
 	this->safebase = other.safebase;
