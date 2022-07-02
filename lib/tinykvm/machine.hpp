@@ -158,6 +158,7 @@ struct Machine
 	void prepare_copy_on_write(size_t max_work_mem = 0, uint64_t shared_memory_boundary = UINT64_MAX);
 	void set_main_memory_writable(bool v) { memory.main_memory_writes = v; }
 	bool is_forked() const noexcept { return m_forked; }
+	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
 	/* Migrates the VM to the current thread. Allows creating in
 	   one thread, and using it in another. */
 	void migrate_to_this_thread();

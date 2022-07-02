@@ -6,7 +6,7 @@ namespace tinykvm {
 
 void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool zeroes)
 {
-	if (m_forked)
+	if (uses_cow_memory())
 	{
 		auto* src = (const uint8_t *)vsrc;
 		while (len != 0)
@@ -29,7 +29,7 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 
 void Machine::copy_from_guest(void* vdst, address_t addr, size_t len)
 {
-	if (m_forked)
+	if (uses_cow_memory())
 	{
 		auto* dst = (uint8_t *)vdst;
 		while (len != 0)
@@ -52,7 +52,7 @@ void Machine::copy_from_guest(void* vdst, address_t addr, size_t len)
 
 void Machine::unsafe_copy_from_guest(void* vdst, address_t addr, size_t len)
 {
-	if (m_forked)
+	if (uses_cow_memory())
 	{
 		auto* dst = (uint8_t *)vdst;
 		while (len != 0)
@@ -109,8 +109,8 @@ void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size
 	Buffer buffers[nbuffers];
 	const size_t count =
 		src.gather_buffers_from_range(nbuffers, buffers, sa, len);
-	/* Forked version uses CoW pages */
-	if (m_forked)
+	/* NOTE: Forked and some prepared VMs use CoW pages */
+	if (uses_cow_memory())
 	{
 		/* Copy buffers one by one to this Machine */
 		size_t index = 0;
