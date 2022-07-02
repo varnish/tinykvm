@@ -46,11 +46,11 @@ void initialize_vcpu_stuff(int kvm_fd)
 
 void* Machine::create_vcpu_timer()
 {
-	signal(SIGUSR1, unused_usr_handler);
+	signal(SIGUSR2, unused_usr_handler);
 
-	struct sigevent sigev;
+	struct sigevent sigev {};
 	sigev.sigev_notify = SIGEV_SIGNAL | SIGEV_THREAD_ID;
-	sigev.sigev_signo = SIGUSR1;
+	sigev.sigev_signo = SIGUSR2;
 	sigev._sigev_un._tid = gettid();
 
 	timer_t timer_id;

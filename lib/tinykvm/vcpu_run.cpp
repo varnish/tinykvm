@@ -14,29 +14,50 @@
 extern "C" int gettid();
 
 namespace tinykvm {
+	static constexpr bool VERBOSE_TIMER = false;
 
 void Machine::vCPU::run(uint32_t ticks)
 {
 	this->timer_ticks = ticks;
 	if (timer_ticks != 0) {
-		this->timeout = true;
 		const struct itimerspec its {
-			.it_interval = {},
+			.it_interval = {
+				.tv_sec = 1, .tv_nsec = 0
+			},
 			.it_value = {
 				.tv_sec = ticks / 1000,
 				.tv_nsec = (ticks % 1000) * 1000000L
 			}
 		};
 		timer_settime(this->timer_id, 0, &its, nullptr);
+		if constexpr (VERBOSE_TIMER) {
+			printf("Timer %p enabled\n", timer_id);
+		}
 	}
 
-	this->stopped = false;
-	while(run_once());
+	/* When an exception happens during KVM_RUN, we will need to
+	   intercept it, in order to disable the timeout timer.
+	   TODO: Convert timer disable to local destructor. */
+	try {
+		this->stopped = false;
+		while(run_once());
+	} catch (...) {
+		disable_timer();
+		throw;
+	}
 
+	disable_timer();
+}
+void Machine::vCPU::disable_timer()
+{
 	if (timer_ticks != 0) {
-		this->timeout = false;
-		const struct itimerspec its {};
+		this->timer_ticks = 0;
+		struct itimerspec its;
+		__builtin_memset(&its, 0, sizeof(its));
 		timer_settime(this->timer_id, 0, &its, nullptr);
+		if constexpr (VERBOSE_TIMER) {
+			printf("Timer %p disabled\n", timer_id);
+		}
 	}
 }
 
@@ -44,12 +65,16 @@ long Machine::vCPU::run_once()
 {
 	int result = ioctl(this->fd, KVM_RUN, 0);
 	if (UNLIKELY(result < 0)) {
-		if (this->timeout) {
+		if (this->timer_ticks) {
+			if constexpr (VERBOSE_TIMER) {
+				printf("Timer %p triggered\n", timer_id);
+			}
 			timeout_exception("Timeout Exception", this->timer_ticks);
 		} else if (errno == EINTR) {
 			/* XXX: EINTR but not a timeout, return to execution? */
 			return KVM_EXIT_UNKNOWN;
-		} else {
+		}
+		else {
 			machine_exception("KVM_RUN failed");
 		}
 	}

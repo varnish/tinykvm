@@ -179,6 +179,7 @@ private:
 
 		void run(uint32_t tix);
 		long run_once();
+		void disable_timer();
 		std::string_view io_data() const;
 
 		void print_registers();
@@ -188,7 +189,6 @@ private:
 		int fd = 0;
 		int cpu_id = 0;
 		bool stopped = true;
-		bool timeout = false;
 		uint32_t timer_ticks = 0;
 		void*  timer_id = nullptr;
 	private:
