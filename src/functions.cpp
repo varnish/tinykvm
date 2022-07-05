@@ -365,20 +365,25 @@ void setup_kvm_system_calls()
 				uint64_t cur = 0;
 				uint64_t max = 0;
 			} lim;
+			const auto oldptr = regs.rdx;
 
+			SYSPRINT("prlimit64(res=%lld old=0x%llX) = 0\n", regs.rsi, oldptr);
 			switch (regs.rsi) {
-				case 0: // RLIMIT_CPU
-					regs.rax = -ENOSYS;
-					break;
-				case 3: // RLIMIT_STACK
+			case 0: // RLIMIT_CPU
+				regs.rax = -ENOSYS;
+				break;
+			case 3: // RLIMIT_STACK
+				/* TODO: We currently do not accept new limits. */
+				if (oldptr != 0x0) {
 					lim.cur = machine.stack_address() - 0x200000;
 					lim.max = machine.stack_address();
-					machine.copy_to_guest(regs.rdx, &lim, sizeof(lim));
-					regs.rax = 0;
-					break;
-				default:
-					regs.rax = -ENOSYS;
+					machine.copy_to_guest(oldptr, &lim, sizeof(lim));
 				}
+				regs.rax = 0;
+				break;
+			default:
+				regs.rax = -ENOSYS;
+			}
 			machine.set_registers(regs);
 		});
 	// Threads: clone, futex, block/tkill etc.
