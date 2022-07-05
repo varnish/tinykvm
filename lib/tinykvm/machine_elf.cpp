@@ -101,6 +101,7 @@ void Machine::elf_load_ph(const MachineOptions& options, const void* vphdr)
 	if (m_binary.size() <= hdr->p_offset ||
 		hdr->p_offset + len <= hdr->p_offset)
 	{
+		if (len == 0) return; /* Let's just pretend empty segments are OK. */
 		throw std::runtime_error("Bogus ELF program segment offset");
 	}
 	if (m_binary.size() < hdr->p_offset + len) {

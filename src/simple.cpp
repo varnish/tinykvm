@@ -56,10 +56,14 @@ int main(int argc, char** argv)
 		.hugepages = (getenv("HUGE") != nullptr)
 	};
 	tinykvm::Machine master_vm {binary, options};
+	master_vm.set_stack_address(0x800000);
 	master_vm.setup_linux(
-		{"vmod_kvm", "xpizza.com" "0"},
+		{"vmod_kvm", "xpizza.com"
+					 "0"},
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+
 	const auto rsp = master_vm.stack_address();
+	//master_vm.print_pagetables();
 
 	uint64_t call_addr = verify_exists(master_vm, "my_backend");
 

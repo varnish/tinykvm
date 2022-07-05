@@ -327,12 +327,18 @@ void setup_kvm_system_calls()
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		200, [] (auto&) { // tkill
+			/* Normally, we would invoke signal w/altstack here */
+			throw MachineException("TKILL system call received");
+		});
+	Machine::install_syscall_handler(
 		228, [] (auto& machine) { // clock_gettime
 			auto regs = machine.registers();
 			struct timespec ts;
 			regs.rax = clock_gettime(CLOCK_MONOTONIC, &ts);
 			machine.copy_to_guest(regs.rsi, &ts, sizeof(ts));
-			if (regs.rax < 0) regs.rax = -errno;
+			if (regs.rax < 0)
+				regs.rax = -errno;
 			machine.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -354,7 +360,25 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		302, [] (auto& machine) { // prlimit64
 			auto regs = machine.registers();
-			regs.rax = -ENOSYS;
+			struct
+			{
+				uint64_t cur = 0;
+				uint64_t max = 0;
+			} lim;
+
+			switch (regs.rsi) {
+				case 0: // RLIMIT_CPU
+					regs.rax = -ENOSYS;
+					break;
+				case 3: // RLIMIT_STACK
+					lim.cur = machine.stack_address() - 0x200000;
+					lim.max = machine.stack_address();
+					machine.copy_to_guest(regs.rdx, &lim, sizeof(lim));
+					regs.rax = 0;
+					break;
+				default:
+					regs.rax = -ENOSYS;
+				}
 			machine.set_registers(regs);
 		});
 	// Threads: clone, futex, block/tkill etc.
