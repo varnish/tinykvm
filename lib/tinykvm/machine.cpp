@@ -202,7 +202,8 @@ long Machine::return_value() const
 Machine::address_t Machine::mmap_allocate(size_t bytes)
 {
 	address_t result = this->m_mm;
-	this->m_mm += bytes & ~0xFFFL;
+	/* Bytes rounded up to nearest 4k (PAGE_SIZE). */
+	this->m_mm += (bytes + 0xFFFL) & ~0xFFFL;
 	return result;
 }
 
