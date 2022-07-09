@@ -206,7 +206,14 @@ Machine::address_t Machine::mmap_allocate(size_t bytes)
 	this->m_mm += (bytes + 0xFFFL) & ~0xFFFL;
 	return result;
 }
-
+bool Machine::mmap_relax(uint64_t addr, size_t size, size_t new_size)
+{
+	if (this->m_mm == addr + size) {
+		this->m_mm = (addr + new_size + 0xFFF) & ~0xFFFL;
+		return true;
+	}
+	return false;
+}
 
 void Machine::print(const char* buffer, size_t len)
 {
