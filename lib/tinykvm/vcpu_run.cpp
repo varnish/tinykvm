@@ -21,9 +21,16 @@ void Machine::vCPU::run(uint32_t ticks)
 	this->timer_ticks = ticks;
 	if (timer_ticks != 0) {
 		const struct itimerspec its {
+			/* Interrupt every 20ms after timeout. This makes sure
+			   that we will eventually exit all blocking calls and
+			   at the end exit KVM_RUN to timeout the request. If
+			   there is a blocking loop that doesn't exit properly,
+			   the 20ms recurring interruption should not cause too
+			   much wasted CPU-time. */
 			.it_interval = {
-				.tv_sec = 1, .tv_nsec = 0
+				.tv_sec = 0, .tv_nsec = 20'000'000L
 			},
+			/* The execution timeout. */
 			.it_value = {
 				.tv_sec = ticks / 1000,
 				.tv_nsec = (ticks % 1000) * 1000000L
