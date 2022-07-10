@@ -162,9 +162,10 @@ long Machine::vCPU::run_once()
 	case KVM_EXIT_MMIO: {
 			char buffer[256];
 			PRINTER(machine->m_printer, buffer,
-				"Unknown MMIO write at 0x%llX\n",
+				"Write outside of physical memory at 0x%llX\n",
 				kvm_run->mmio.phys_addr);
-			machine_exception("Invalid MMIO write");
+			machine_exception("Memory write outside physical memory (out of memory?)",
+							  kvm_run->mmio.phys_addr);
 		}
 	case KVM_EXIT_INTERNAL_ERROR:
 		machine_exception("KVM internal error");
