@@ -19,4 +19,6 @@ namespace tinykvm {
 	// The size of the interrupt stacks on each SMP
 	// vCPU, offset from IST_ADDR.
 	static constexpr uint64_t TSS_SMP_STACK = 104;
+	// Maximum size of interrupt and exception frame
+	static constexpr uint64_t INTR_STACK_FRAME = 48;
 }

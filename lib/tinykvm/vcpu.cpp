@@ -88,7 +88,8 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 		}
 		master_sregs.cr3 = PT_ADDR;
 		master_sregs.cr4 =
-			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE | CR4_FSGSBASE;
+			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
+			CR4_FSGSBASE | CR4_SMEP;
 		master_sregs.cr0 =
 			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
 		master_sregs.efer =
