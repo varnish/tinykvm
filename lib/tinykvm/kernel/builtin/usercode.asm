@@ -17,8 +17,8 @@ ALIGN 0x10
 .vm64_rexit:
 	mov rdi, rax
 .vm64_rexit_retry:
-	mov ax, 0xFFFF
-	out 0, ax
+	mov eax, 0xFFFF
+	out 0, eax
 	jmp .vm64_rexit_retry
 
 .vm64_cpuid:
