@@ -43,7 +43,7 @@ namespace tinykvm
 	        return m_msg;
 	    }
 		auto data() const noexcept { return m_data; }
-	private:
+	protected:
 		const char* m_msg;
 		uint64_t m_data;
 	};
@@ -54,18 +54,16 @@ namespace tinykvm
 		float seconds() const noexcept { return data() / 1000.0; }
 	};
 
-	class MemoryException: public std::exception {
+	class MemoryException: public MachineException {
 	public:
 	    MemoryException(const char* msg, uint64_t addr, uint64_t sz)
-			: m_msg(msg), m_addr(addr), m_size(sz) {}
+			: MachineException{msg, addr}, m_size(sz) {}
 	    const char* what() const noexcept override {
 	        return m_msg;
 	    }
-		auto addr() const noexcept { return m_addr; }
+		auto addr() const noexcept { return data(); }
 		auto size() const noexcept { return m_size; }
 	private:
-		const char* m_msg;
-		uint64_t m_addr;
 		uint64_t m_size;
 	};
 

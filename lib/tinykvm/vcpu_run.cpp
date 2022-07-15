@@ -16,7 +16,7 @@ extern "C" int gettid();
 namespace tinykvm {
 	static constexpr bool VERBOSE_TIMER = false;
 
-void Machine::vCPU::run(uint32_t ticks)
+void vCPU::run(uint32_t ticks)
 {
 	this->timer_ticks = ticks;
 	if (timer_ticks != 0) {
@@ -55,7 +55,7 @@ void Machine::vCPU::run(uint32_t ticks)
 
 	disable_timer();
 }
-void Machine::vCPU::disable_timer()
+void vCPU::disable_timer()
 {
 	if (timer_ticks != 0) {
 		this->timer_ticks = 0;
@@ -68,7 +68,7 @@ void Machine::vCPU::disable_timer()
 	}
 }
 
-long Machine::vCPU::run_once()
+long vCPU::run_once()
 {
 	int result = ioctl(this->fd, KVM_RUN, 0);
 	if (UNLIKELY(result < 0)) {
@@ -76,28 +76,28 @@ long Machine::vCPU::run_once()
 			if constexpr (VERBOSE_TIMER) {
 				printf("Timer %p triggered\n", timer_id);
 			}
-			timeout_exception("Timeout Exception", this->timer_ticks);
+			Machine::timeout_exception("Timeout Exception", this->timer_ticks);
 		} else if (errno == EINTR) {
 			/* XXX: EINTR but not a timeout, return to execution? */
 			return KVM_EXIT_UNKNOWN;
 		}
 		else {
-			machine_exception("KVM_RUN failed");
+			Machine::machine_exception("KVM_RUN failed");
 		}
 	}
 
 	switch (kvm_run->exit_reason) {
 	case KVM_EXIT_HLT:
-		machine_exception("Halt from kernel space", 5);
+		Machine::machine_exception("Halt from kernel space", 5);
 
 	case KVM_EXIT_DEBUG:
 		return KVM_EXIT_DEBUG;
 
 	case KVM_EXIT_FAIL_ENTRY:
-		machine_exception("Failed to start guest! Misconfigured?", KVM_EXIT_FAIL_ENTRY);
+		Machine::machine_exception("Failed to start guest! Misconfigured?", KVM_EXIT_FAIL_ENTRY);
 
 	case KVM_EXIT_SHUTDOWN:
-		machine_exception("Shutdown! Triple fault?", 32);
+		Machine::machine_exception("Shutdown! Triple fault?", 32);
 
 	case KVM_EXIT_IO:
 		if (kvm_run->io.direction == KVM_EXIT_IO_OUT) {
@@ -105,7 +105,7 @@ long Machine::vCPU::run_once()
 			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
 			const uint32_t intr = *(uint32_t *)data;
 			if (intr != 0xFFFF) {
-				machine->system_call(intr);
+				machine().system_call(*this, intr);
 				if (this->stopped) return 0;
 				return KVM_EXIT_IO;
 			} else {
@@ -122,8 +122,8 @@ long Machine::vCPU::run_once()
 #ifdef VERBOSE_PAGE_FAULTS
 				char buffer[256];
 				#define PV(val, off) \
-					{ uint64_t value; machine->unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
-					PRINTER(machine->m_printer, buffer, "Value %s: 0x%lX\n", val, value); }
+					{ uint64_t value; machine().unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
+					PRINTER(machine().m_printer, buffer, "Value %s: 0x%lX\n", val, value); }
 				try {
 					PV("Origin SS",  48);
 					PV("Origin RSP", 40);
@@ -132,56 +132,56 @@ long Machine::vCPU::run_once()
 					PV("Origin RIP", 16);
 					PV("Error code", 8);
 				} catch (...) {}
-				PRINTER(machine->m_printer, buffer,
+				PRINTER(machine().m_printer, buffer,
 					"*** %s on address 0x%lX (0x%llX)\n",
 					amd64_exception_name(intr), addr, regs.rdi);
 #endif
 				/* Page fault handling */
 				/* We should be in kernel mode, otherwise it's fishy! */
 				if (UNLIKELY(regs.rip >= INTR_ASM_ADDR+0x1000)) {
-					machine_exception("Security violation", intr);
+					Machine::machine_exception("Security violation", intr);
 				}
 
-				machine->memory.get_writable_page(addr, false);
+				machine().memory.get_writable_page(addr, false);
 				return KVM_EXIT_IO;
 			}
 			else if (intr == 1) /* Debug trap */
 			{
-				machine->m_on_breakpoint(*machine);
+				machine().m_on_breakpoint(*this);
 				return KVM_EXIT_IO;
 			}
 			/* CPU Exception */
 			this->handle_exception(intr);
-			machine_exception(amd64_exception_name(intr), intr);
+			Machine::machine_exception(amd64_exception_name(intr), intr);
 		} else {
 			/* Custom Output handler */
 			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
-			machine->m_on_output(*machine, kvm_run->io.port, *(uint32_t *)data);
+			machine().m_on_output(*this, kvm_run->io.port, *(uint32_t *)data);
 		}
 		} else { // IN
 			/* Custom Input handler */
 			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
-			machine->m_on_input(*machine, kvm_run->io.port, *(uint32_t *)data);
+			machine().m_on_input(*this, kvm_run->io.port, *(uint32_t *)data);
 		}
 		if (this->stopped) return 0;
 		return KVM_EXIT_IO;
 
 	case KVM_EXIT_MMIO: {
 			char buffer[256];
-			PRINTER(machine->m_printer, buffer,
+			PRINTER(machine().m_printer, buffer,
 				"Write outside of physical memory at 0x%llX\n",
 				kvm_run->mmio.phys_addr);
-			machine_exception("Memory write outside physical memory (out of memory?)",
-							  kvm_run->mmio.phys_addr);
+			Machine::machine_exception("Memory write outside physical memory (out of memory?)",
+									   kvm_run->mmio.phys_addr);
 		}
 	case KVM_EXIT_INTERNAL_ERROR:
-		machine_exception("KVM internal error");
+		Machine::machine_exception("KVM internal error");
 	}
 	char buffer[256];
-	PRINTER(machine->m_printer, buffer,
+	PRINTER(machine().m_printer, buffer,
 		"Unexpected exit reason %d\n", kvm_run->exit_reason);
-	machine_exception("Unexpected KVM exit reason",
-		kvm_run->exit_reason);
+	Machine::machine_exception("Unexpected KVM exit reason",
+							   kvm_run->exit_reason);
 }
 
 TINYKVM_COLD()
@@ -191,7 +191,7 @@ long Machine::step_one()
 	dbg.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
 
 	if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
-		machine_exception("KVM_RUN failed");
+		Machine::machine_exception("KVM_RUN failed");
 	}
 
 	return vcpu.run_once();
@@ -212,18 +212,18 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 	//	bp[0], bp[1], bp[2], bp[3]);
 
 	if (ioctl(vcpu.fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
-		machine_exception("KVM_RUN failed");
+		Machine::machine_exception("KVM_RUN failed");
 	}
 
 	return vcpu.run_once();
 }
 
 TINYKVM_COLD()
-void Machine::vCPU::print_registers()
+void vCPU::print_registers()
 {
 	struct kvm_sregs sregs;
 	this->get_special_registers(sregs);
-	const auto& printer = machine->m_printer;
+	const auto& printer = machine().m_printer;
 
 	char buffer[1024];
 	PRINTER(printer, buffer,
@@ -261,20 +261,20 @@ void Machine::vCPU::print_registers()
 }
 
 TINYKVM_COLD()
-void Machine::vCPU::handle_exception(uint8_t intr)
+void vCPU::handle_exception(uint8_t intr)
 {
 	auto regs = registers();
 	char buffer[1024];
 	// Page fault
-	const auto& printer = machine->m_printer;
+	const auto& printer = machine().m_printer;
 	if (intr == 14) {
 		struct kvm_sregs sregs;
-		get_special_registers(sregs);
+		this->get_special_registers(sregs);
 		PRINTER(printer, buffer,
 			"*** %s on address 0x%llX\n",
 			amd64_exception_name(intr), sregs.cr2);
 		uint64_t code;
-		machine->unsafe_copy_from_guest(&code, regs.rsp+8,  8);
+		machine().unsafe_copy_from_guest(&code, regs.rsp+8,  8);
 		PRINTER(printer, buffer,
 			"Error code: 0x%lX (%s)\n", code,
 			(code & 0x02) ? "memory write" : "memory read");
@@ -316,10 +316,10 @@ void Machine::vCPU::handle_exception(uint8_t intr)
 		if (intr == 14) off += 8;
 		uint64_t rip, cs = 0x0, rsp, ss;
 		try {
-			machine->unsafe_copy_from_guest(&rip, off+0,  8);
-			machine->unsafe_copy_from_guest(&cs,  off+8,  8);
-			machine->unsafe_copy_from_guest(&rsp, off+24, 8);
-			machine->unsafe_copy_from_guest(&ss,  off+32, 8);
+			machine().unsafe_copy_from_guest(&rip, off+0,  8);
+			machine().unsafe_copy_from_guest(&cs,  off+8,  8);
+			machine().unsafe_copy_from_guest(&rsp, off+24, 8);
+			machine().unsafe_copy_from_guest(&ss,  off+32, 8);
 
 			PRINTER(printer, buffer,
 				"Failing RIP: 0x%lX\n", rip);
@@ -335,7 +335,7 @@ void Machine::vCPU::handle_exception(uint8_t intr)
 		if (has_code && intr == 13) {
 			uint64_t code = 0x0;
 			try {
-				machine->unsafe_copy_from_guest(&code,  regs.rsp, 8);
+				machine().unsafe_copy_from_guest(&code,  regs.rsp, 8);
 			} catch (...) {}
 			if (code != 0x0) {
 				PRINTER(printer, buffer,

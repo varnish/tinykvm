@@ -187,14 +187,14 @@ struct MultiThreading& Machine::threads() {
 void Machine::setup_multithreading()
 {
 	Machine::install_syscall_handler(
-		24, [] (auto& machine) { // sched_yield
+		24, [] (auto& cpu) { // sched_yield
 			THPRINT("sched_yield on tid=%d\n",
-				machine.threads().get_thread().tid);
-			machine.threads().suspend_and_yield();
+				cpu.machine().threads().get_thread().tid);
+			cpu.machine().threads().suspend_and_yield();
 		});
 	Machine::install_syscall_handler(
-		56, [] (auto& machine) { // clone
-			auto regs = machine.registers();
+		56, [] (auto& cpu) { // clone
+			auto regs = cpu.registers();
 			const auto flags = regs.rdi;
 			const auto stack = regs.rsi;
 			const auto ptid  = regs.rdx;
@@ -202,8 +202,8 @@ void Machine::setup_multithreading()
 			const auto tls   = regs.r8;
 			const auto func  = regs.r9; /* NOTE: Only a guess */
 
-			auto& parent = machine.threads().get_thread();
-			auto& thread = machine.threads().create(flags, ctid, ptid, stack, tls);
+			auto& parent = cpu.machine().threads().get_thread();
+			auto& thread = cpu.machine().threads().create(flags, ctid, ptid, stack, tls);
 			THPRINT(">>> clone(func=0x%llX, stack=0x%llX, flags=%llX,"
 					" parent=%d, ctid=0x%llX ptid=0x%llX, tls=0x%llX) = %d\n",
 					func, stack, flags, parent.tid, ctid, ptid, tls, thread.tid);
@@ -212,14 +212,14 @@ void Machine::setup_multithreading()
 			// activate and return 0 for the child
 			regs = thread.activate();
 			regs.rax = 0;
-			machine.set_registers(regs);
+			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler( // exit
-		60, [] (auto& machine) {
-			if (machine.has_threads()) {
-				auto regs = machine.registers();
+		60, [] (auto& cpu) {
+			if (cpu.machine().has_threads()) {
+				auto regs = cpu.registers();
 				const uint32_t status = regs.rdi;
-				auto& thread = machine.threads().get_thread();
+				auto& thread = cpu.machine().threads().get_thread();
 				THPRINT(">>> Exit on tid=%d, exit code = %d\n",
 					thread.tid, (int) status);
 				if (thread.tid != 0) {
@@ -227,36 +227,36 @@ void Machine::setup_multithreading()
 					return;
 				}
 			}
-			machine.stop();
+			cpu.stop();
 		});
 	Machine::install_syscall_handler( // exit_group
 		231, Machine::get_syscall_handler(60));
 	Machine::install_syscall_handler(
-		186, [] (auto& machine) {
+		186, [] (auto& cpu) {
 			/* SYS gettid */
-			auto regs = machine.registers();
-			if (machine.has_threads()) {
-				regs.rax = machine.threads().get_thread().tid;
+			auto regs = cpu.registers();
+			if (cpu.machine().has_threads()) {
+				regs.rax = cpu.machine().threads().get_thread().tid;
 				THPRINT("gettid() = %lld\n", regs.rax);
 			} else {
 				regs.rax = 0; /* Main thread */
 			}
-			machine.set_registers(regs);
+			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		202, [] (Machine& machine) {
+		202, [] (auto& cpu) {
 			/* SYS futex */
-			auto regs = machine.registers();
+			auto regs = cpu.registers();
 			const auto addr = regs.rdi;
 			const auto futex_op = regs.rsi;
 			const uint32_t val = regs.rdx;
 			THPRINT("Futex on: 0x%llX  val=%d\n", regs.rdi, val);
-			auto* fx = machine.rw_memory_at<uint32_t>(addr, 4);
+			auto* fx = cpu.machine().template rw_memory_at<uint32_t>(addr, 4);
 
 			if ((futex_op & 0xF) == FUTEX_WAIT) {
 				THPRINT("FUTEX: Waiting for unlock... uaddr=%u val=%u\n", *fx, val);
 				if (*fx == val) {
-					if (machine.threads().suspend_and_yield()) {
+					if (cpu.machine().threads().suspend_and_yield()) {
 						return;
 					}
 					throw std::runtime_error("DEADLOCK_REACHED");
@@ -264,7 +264,7 @@ void Machine::setup_multithreading()
 				regs.rax = 0;
 			} else if ((futex_op & 0xF) == FUTEX_WAKE) {
 				THPRINT("FUTEX: Waking others on uaddr=0x%lX, val=%u\n", (long) addr, val);
-				if (machine.threads().suspend_and_yield()) {
+				if (cpu.machine().threads().suspend_and_yield()) {
 					return;
 				}
 				regs.rax = 0;
@@ -272,26 +272,26 @@ void Machine::setup_multithreading()
 			else {
 				throw std::runtime_error("Unimplemented futex op");
 			}
-			machine.set_registers(regs);
+			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		218, [] (auto& machine) {
+		218, [] (auto& cpu) {
 			/* SYS set_tid_address */
-			auto regs = machine.registers();
+			auto regs = cpu.registers();
 #ifdef ENABLE_GUEST_VERBOSE
 			THPRINT("Set TID address: clear_child_tid=0x%llX\n", regs.rdi);
 #endif
-			auto& thread = machine.threads().get_thread();
+			auto& thread = cpu.machine().threads().get_thread();
 			/* Sets clear_tid and returns tid */
 			thread.clear_tid = regs.rdi;
 			regs.rax = thread.tid;
-			machine.set_registers(regs);
+			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		234, [] (auto& machine) { // TGKILL
+		234, [] (auto& cpu) { // TGKILL
 			int tid = 0;
-			if (machine.has_threads()) {
-				tid = machine.threads().get_thread().tid;
+			if (cpu.machine().has_threads()) {
+				tid = cpu.machine().threads().get_thread().tid;
 			}
 			fprintf(stderr, "ERROR: tgkill called from tid=%d\n", tid);
 			throw MachineException("tgkill called");

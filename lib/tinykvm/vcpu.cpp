@@ -59,37 +59,37 @@ void* Machine::create_vcpu_timer()
 	return timer_id;
 }
 
-void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options)
+void vCPU::init(int id, Machine& machine)
 {
 	this->cpu_id = id;
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
-	this->machine = &machine;
+	this->m_machine = &machine;
 	if (UNLIKELY(this->fd < 0)) {
-		machine_exception("Failed to KVM_CREATE_VCPU");
+		Machine::machine_exception("Failed to KVM_CREATE_VCPU");
 	}
-	this->timer_id = create_vcpu_timer();
+	this->timer_id = Machine::create_vcpu_timer();
 
 	kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
 	if (UNLIKELY(kvm_run == MAP_FAILED)) {
-		machine_exception("Failed to create KVM run-time mapped memory");
+		Machine::machine_exception("Failed to create KVM run-time mapped memory");
 	}
 
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
-		machine_exception("KVM_SET_CPUID2 failed");
+		Machine::machine_exception("KVM_SET_CPUID2 failed");
 	}
 
 	static bool minit = false;
 	if (!minit) {
 		minit = true;
 		if (ioctl(this->fd, KVM_GET_SREGS, &master_sregs) < 0) {
-			machine_exception("KVM_GET_SREGS failed");
+			Machine::machine_exception("KVM_GET_SREGS failed");
 		}
 		master_sregs.cr3 = PT_ADDR;
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
-			CR4_FSGSBASE | CR4_SMEP;
+			CR4_FSGSBASE;
 		master_sregs.cr0 =
 			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
 		master_sregs.efer =
@@ -100,7 +100,7 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 		setup_amd64_exception_regs(master_sregs, IDT_ADDR);
 
 		if (ioctl(this->fd, KVM_GET_XCRS, &master_xregs) < 0) {
-			machine_exception("KVM_GET_XCRS failed");
+			Machine::machine_exception("KVM_GET_XCRS failed");
 		}
 		/* Enable AVX and AVX512 instructions */
 		master_xregs.xcrs[0].xcr = 0;
@@ -113,7 +113,7 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 
 	/* Extended control registers */
 	if (ioctl(this->fd, KVM_SET_XCRS, &master_xregs) < 0) {
-		machine_exception("KVM_SET_XCRS failed");
+		Machine::machine_exception("KVM_SET_XCRS failed");
 	}
 
 	/* Enable SYSCALL/SYSRET instructions */
@@ -126,47 +126,45 @@ void Machine::vCPU::init(int id, Machine& machine, const MachineOptions& options
 	msrs.nmsrs = 2;
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
-//	msrs.entries[2].index = AMD64_MSR_APICBASE;
 	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
 	msrs.entries[1].data  = interrupt_header().vm64_syscall;
-//	msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_XAPIC_ENABLE;
 
-	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < msrs.nmsrs) {
-		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR/X2APIC");
+	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < (int)msrs.nmsrs) {
+		Machine::machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
 	}
 }
 
-void Machine::vCPU::smp_init(int id, Machine& machine)
+void vCPU::smp_init(int id, Machine& machine)
 {
 	this->cpu_id = id;
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
-	this->machine = &machine;
+	this->m_machine = &machine;
 	if (UNLIKELY(this->fd < 0)) {
-		machine_exception("Failed to KVM_CREATE_VCPU");
+		Machine::machine_exception("Failed to KVM_CREATE_VCPU");
 	}
-	this->timer_id = create_vcpu_timer();
+	this->timer_id = Machine::create_vcpu_timer();
 
 	kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
 	if (UNLIKELY(kvm_run == MAP_FAILED)) {
-		machine_exception("Failed to create KVM run-time mapped memory");
+		Machine::machine_exception("Failed to create KVM run-time mapped memory");
 	}
 
 	const kvm_mp_state state {
 		.mp_state = KVM_MP_STATE_RUNNABLE
 	};
 	if (ioctl(this->fd, KVM_SET_MP_STATE, &state) < 0) {
-		machine_exception("KVM_SET_MP_STATE failed");
+		Machine::machine_exception("KVM_SET_MP_STATE failed");
 	}
 
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
-		machine_exception("KVM_SET_CPUID2 failed");
+		Machine::machine_exception("KVM_SET_CPUID2 failed");
 	}
 
 	/* Extended control registers */
 	if (ioctl(this->fd, KVM_SET_XCRS, &master_xregs) < 0) {
-		machine_exception("KVM_SET_XCRS failed");
+		Machine::machine_exception("KVM_SET_XCRS failed");
 	}
 
 	/* Enable SYSCALL/SYSRET instructions */
@@ -179,17 +177,29 @@ void Machine::vCPU::smp_init(int id, Machine& machine)
 	msrs.nmsrs = 2;
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
-	//msrs.entries[2].index = AMD64_MSR_APICBASE;
 	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
 	msrs.entries[1].data  = interrupt_header().vm64_syscall;
-	//msrs.entries[2].data  = 0xfee00000 | AMD64_MSR_X2APIC_ENABLE;
 
-	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < msrs.nmsrs) {
-		machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR/X2APIC");
+	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < (int)msrs.nmsrs) {
+		Machine::machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
 	}
+
+	struct kvm_sregs sregs;
+	/* XXX: Is this correct? */
+	if (machine.cached_sregs != nullptr)
+		/* Inherit the special registers of the main vCPU */
+		sregs = *machine.cached_sregs;
+	else
+		machine.vcpu.get_special_registers(sregs);
+	sregs.tr.base = TSS_SMP_ADDR + (id - 1) * 104; /* AMD64_TSS */
+	sregs.gs.base = usercode_header().vm64_cpuid + 4 * id;
+	/* XXX: Is this correct? */
+	sregs.cr3 = machine.memory.page_tables;
+	sregs.cr0 &= ~CR0_WP; // XXX: Fix me!
+	this->set_special_registers(sregs);
 }
 
-void Machine::vCPU::deinit()
+void vCPU::deinit()
 {
 	if (this->fd > 0) {
 		close(this->fd);
@@ -201,34 +211,34 @@ void Machine::vCPU::deinit()
 	timer_delete(this->timer_id);
 }
 
-tinykvm_x86regs Machine::vCPU::registers() const
+tinykvm_x86regs vCPU::registers() const
 {
 	struct tinykvm_x86regs regs;
 	if (ioctl(this->fd, KVM_GET_REGS, &regs) < 0) {
-		machine_exception("KVM_SET_REGS failed");
+		Machine::machine_exception("KVM_SET_REGS failed");
 	}
 	return regs;
 }
-void Machine::vCPU::assign_registers(const struct tinykvm_x86regs& regs)
+void vCPU::set_registers(const struct tinykvm_x86regs& regs)
 {
 	if (ioctl(this->fd, KVM_SET_REGS, &regs) < 0) {
-		machine_exception("KVM_SET_REGS failed");
+		Machine::machine_exception("KVM_SET_REGS failed");
 	}
 }
-void Machine::vCPU::get_special_registers(struct kvm_sregs& sregs) const
+void vCPU::get_special_registers(struct kvm_sregs& sregs) const
 {
 	if (ioctl(this->fd, KVM_GET_SREGS, &sregs) < 0) {
-		machine_exception("KVM_GET_SREGS failed");
+		Machine::machine_exception("KVM_GET_SREGS failed");
 	}
 }
-void Machine::vCPU::set_special_registers(const struct kvm_sregs& sregs)
+void vCPU::set_special_registers(const struct kvm_sregs& sregs)
 {
 	if (ioctl(this->fd, KVM_SET_SREGS, &sregs) < 0) {
-		machine_exception("KVM_GET_SREGS failed");
+		Machine::machine_exception("KVM_GET_SREGS failed");
 	}
 }
 
-std::string_view Machine::vCPU::io_data() const
+std::string_view vCPU::io_data() const
 {
 	char *p = (char *) kvm_run;
 	return {&p[kvm_run->io.data_offset], kvm_run->io.size};

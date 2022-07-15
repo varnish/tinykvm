@@ -38,4 +38,5 @@ ALIGN 0x10
 	dd 13
 	dd 14
 	dd 15
+	dd 16
 .vm64_cpuid_end:

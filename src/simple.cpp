@@ -31,10 +31,10 @@ int main(int argc, char** argv)
 	setup_kvm_system_calls();
 
 	tinykvm::Machine::install_unhandled_syscall_handler(
-	[] (tinykvm::Machine& machine, unsigned scall) {
+	[] (tinykvm::vCPU& cpu, unsigned scall) {
 		switch (scall) {
 			case 0x10000:
-				machine.stop();
+				cpu.stop();
 				break;
 			case 0x10001:
 				throw "Unimplemented";
@@ -42,9 +42,9 @@ int main(int argc, char** argv)
 				throw "Unimplemented";
 			default:
 				printf("Unhandled system call: %u\n", scall);
-				auto regs = machine.registers();
+				auto regs = cpu.registers();
 				regs.rax = -ENOSYS;
-				machine.set_registers(regs);
+				cpu.set_registers(regs);
 		}
 	});
 

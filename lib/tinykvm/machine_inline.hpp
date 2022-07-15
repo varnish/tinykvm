@@ -12,23 +12,23 @@ inline void Machine::stop(bool s)
 	vcpu.stopped = s;
 }
 
-inline void Machine::system_call(unsigned idx)
+inline void Machine::system_call(vCPU& cpu, unsigned idx)
 {
 	if (idx < m_syscalls.size()) {
 		const auto handler = m_syscalls[idx];
 		if (handler != nullptr) {
-			handler(*this);
+			handler(cpu);
 			return;
 		}
 	}
-	m_unhandled_syscall(*this, idx);
+	m_unhandled_syscall(cpu, idx);
 }
 
 inline tinykvm_x86regs Machine::registers() const {
 	return vcpu.registers();
 }
 inline void Machine::set_registers(const tinykvm_x86regs& regs) {
-	vcpu.assign_registers(regs);
+	vcpu.set_registers(regs);
 }
 inline void Machine::get_special_registers(struct kvm_sregs& sregs) const {
 	return vcpu.get_special_registers(sregs);
@@ -103,7 +103,7 @@ void Machine::vmcall(uint64_t addr, Args&&... args)
 {
 	tinykvm_x86regs regs;
 	this->setup_call(regs, addr, this->stack_address(), std::forward<Args> (args)...);
-	vcpu.assign_registers(regs);
+	vcpu.set_registers(regs);
 	this->run();
 }
 
@@ -120,7 +120,7 @@ void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 	tinykvm_x86regs regs;
 	this->setup_call(regs, addr,
 		this->stack_address(), std::forward<Args> (args)...);
-	vcpu.assign_registers(regs);
+	vcpu.set_registers(regs);
 	this->run(timeout);
 }
 

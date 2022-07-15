@@ -41,8 +41,8 @@ extern void prints_hello_world() {
 	REQUIRE(!output_is_hello_world);
 
 	// Make machine forkable (no working memory)
-	machine.prepare_copy_on_write();
-	REQUIRE(machine.banked_memory_pages() == 0);
+	machine.prepare_copy_on_write(65536);
+	REQUIRE(machine.banked_memory_pages() == 4);
 	REQUIRE(machine.is_forkable());
 	REQUIRE(!machine.is_forked());
 
@@ -61,6 +61,8 @@ extern void prints_hello_world() {
 	REQUIRE(!output_is_hello_world);
 
 	auto funcaddr = fork.address_of("prints_hello_world");
+	REQUIRE(funcaddr != 0x0);
+
 	fork.timed_vmcall(funcaddr, 4.0f);
 	// Calling into the forked VM added a few more banked pages
 	// Around 32kb at the time of writing this.
@@ -125,7 +127,7 @@ extern void prints_hello_world() {
 	});
 
 	// Make machine forkable
-	machine.prepare_copy_on_write(65536);
+	machine.prepare_copy_on_write(1UL << 20);
 	REQUIRE(machine.banked_memory_pages() > 0);
 	REQUIRE(machine.is_forkable());
 	REQUIRE(!machine.is_forked());
@@ -137,6 +139,7 @@ extern void prints_hello_world() {
 	REQUIRE(fork.banked_memory_pages() > 0);
 
 	auto funcaddr = machine.address_of("prints_hello_world");
+	REQUIRE(funcaddr != 0x0);
 
 	// Handler not called yet
 	fork.timed_vmcall(funcaddr, 4.0f);

@@ -15,10 +15,10 @@ extern "C" int close(int);
 namespace tinykvm {
 	int Machine::kvm_fd = -1;
 	std::array<Machine::syscall_t, TINYKVM_MAX_SYSCALLS> Machine::m_syscalls {nullptr};
-	Machine::numbered_syscall_t Machine::m_unhandled_syscall = [] (Machine&, unsigned) {};
-	Machine::syscall_t Machine::m_on_breakpoint = [] (Machine&) {};
-	Machine::io_callback_t Machine::m_on_input = [] (Machine&, unsigned, unsigned) {};
-	Machine::io_callback_t Machine::m_on_output = [] (Machine&, unsigned, unsigned) {};
+	Machine::numbered_syscall_t Machine::m_unhandled_syscall = [] (vCPU&, unsigned) {};
+	Machine::syscall_t Machine::m_on_breakpoint = [] (vCPU&) {};
+	Machine::io_callback_t Machine::m_on_input = [] (vCPU&, unsigned, unsigned) {};
+	Machine::io_callback_t Machine::m_on_output = [] (vCPU&, unsigned, unsigned) {};
 	Machine::printer_func Machine::m_default_printer =
 		[] (const char* buffer, size_t len) {
 			printf("%.*s", (int)len, buffer);
@@ -40,7 +40,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->elf_loader(options);
 
-	this->vcpu.init(0, *this, options);
+	this->vcpu.init(0, *this);
 	this->setup_long_mode(nullptr, options);
 	struct tinykvm_x86regs regs {};
 	/* Store the registers, so that Machine is ready to go */
@@ -73,7 +73,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->install_memory(0, memory.vmem(), true);
 
 	/* Initialize vCPU and long mode (fast path) */
-	this->vcpu.init(0, *this, options);
+	this->vcpu.init(0, *this);
 	this->setup_long_mode(&other, options);
 
 	/* We have to make a copy here, to make sure the fork knows

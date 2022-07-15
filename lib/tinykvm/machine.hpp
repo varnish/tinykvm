@@ -13,13 +13,47 @@
 #include <vector>
 
 namespace tinykvm {
+struct Machine;
+struct vCPU
+{
+	void init(int id, Machine &);
+	void smp_init(int id, Machine &);
+	void deinit();
+	tinykvm_x86regs registers() const;
+	void set_registers(const struct tinykvm_x86regs &);
+	void get_special_registers(struct kvm_sregs &) const;
+	void set_special_registers(const struct kvm_sregs &);
+
+	void run(uint32_t tix);
+	long run_once();
+	void stop() { stopped = true; }
+	void disable_timer();
+	std::string_view io_data() const;
+
+	void print_registers();
+	void handle_exception(uint8_t intr);
+	void decrement_smp_count();
+
+	auto &machine() { return *m_machine; }
+	const auto &machine() const { return *m_machine; }
+
+	int fd = 0;
+	int cpu_id = 0;
+	bool stopped = true;
+	uint32_t timer_ticks = 0;
+	void *timer_id = nullptr;
+
+private:
+	struct kvm_run *kvm_run = nullptr;
+	Machine *m_machine = nullptr;
+};
 
 struct Machine
 {
 	using address_t = uint64_t;
-	using syscall_t = void(*)(Machine&);
-	using numbered_syscall_t = void(*)(Machine&, unsigned);
-	using io_callback_t = void(*)(Machine&, unsigned, unsigned);
+	using syscall_t = void(*)(vCPU&);
+	using numbered_syscall_t = void(*)(vCPU&, unsigned);
+	using io_callback_t = void(*)(vCPU&, unsigned, unsigned);
 	using printer_func = std::function<void(const char*, size_t)>;
 
 	/* Setup Linux env and run through main */
@@ -90,7 +124,7 @@ struct Machine
 	static void install_syscall_handler(unsigned idx, syscall_t h) { m_syscalls.at(idx) = h; }
 	static void install_unhandled_syscall_handler(numbered_syscall_t h) { m_unhandled_syscall = h; }
 	static auto get_syscall_handler(unsigned idx) { return m_syscalls.at(idx); }
-	void system_call(unsigned);
+	void system_call(vCPU&, unsigned no);
 	static void install_input_handler(io_callback_t h) { m_on_input = h; }
 	static void install_output_handler(io_callback_t h) { m_on_output = h; }
 
@@ -170,34 +204,7 @@ struct Machine
 	~Machine();
 
 private:
-	struct vCPU {
-		void init(int id, Machine&, const MachineOptions&);
-		void smp_init(int id, Machine&);
-		void deinit();
-		tinykvm_x86regs registers() const;
-		void assign_registers(const struct tinykvm_x86regs&);
-		void get_special_registers(struct kvm_sregs&) const;
-		void set_special_registers(const struct kvm_sregs&);
-
-		void run(uint32_t tix);
-		long run_once();
-		void disable_timer();
-		std::string_view io_data() const;
-
-		void print_registers();
-		void handle_exception(uint8_t intr);
-		void decrement_smp_count();
-
-		int fd = 0;
-		int cpu_id = 0;
-		bool stopped = true;
-		uint32_t timer_ticks = 0;
-		void*  timer_id = nullptr;
-	private:
-		struct kvm_run *kvm_run = nullptr;
-		Machine* machine = nullptr;
-	};
-	void setup_registers(tinykvm_x86regs&);
+	void setup_registers(tinykvm_x86regs &);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void elf_loader(const MachineOptions&);
@@ -239,7 +246,7 @@ private:
 		void blocking_message(std::function<void(vCPU&)>);
 		void async_exec(struct MPvCPU_data&);
 
-		MPvCPU(int, Machine&, const struct kvm_sregs&);
+		MPvCPU(int, Machine&);
 		~MPvCPU();
 		vCPU cpu;
 		ThreadPool thpool;
@@ -262,6 +269,7 @@ private:
 	static int create_kvm_vm();
 	static int kvm_fd;
 	static void* create_vcpu_timer();
+	friend struct vCPU;
 };
 
 #include "machine_inline.hpp"

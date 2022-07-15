@@ -1,23 +1,18 @@
 #include "machine.hpp"
-#include "kernel/memory_layout.hpp"
-#include "kernel/usercode.hpp"
 #include <cassert>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 
 namespace tinykvm {
 
-Machine::MPvCPU::MPvCPU(int c, Machine& m, const struct kvm_sregs& sregs)
+Machine::MPvCPU::MPvCPU(int c, Machine& m)
 	: thpool(1)
 {
 	/* We store the CPU ID in GSBASE register
 	   XXX: We do not make sure that vCPUs stay on a specific
 	   thread here, which will decimate performance. */
-	auto f = thpool.enqueue([this, c, &m, sregs = sregs] () mutable {
+	auto f = thpool.enqueue([this, c, &m] {
 		this->cpu.smp_init(c, m);
-		sregs.tr.base = TSS_SMP_ADDR + (c - 1) * 104; /* AMD64_TSS */
-		sregs.gs.base = usercode_header().vm64_cpuid + 4 * c;
-		this->cpu.set_special_registers(sregs);
 	});
 }
 Machine::MPvCPU::~MPvCPU() {}
@@ -46,7 +41,7 @@ void Machine::MPvCPU::async_exec(MPvCPU_data& data)
 		try {
 			/*printf("Working from vCPU %d, RIP=0x%llX  RSP=0x%llX  ARG=0x%llX\n",
 				cpu.cpu_id, regs->rip, regs->rsp, regs->rsi);*/
-			vcpu.assign_registers(data.regs);
+			vcpu.set_registers(data.regs);
 
 			vcpu.run(data.ticks);
 			vcpu.decrement_smp_count();
@@ -76,28 +71,24 @@ Machine::MPvCPU_data* Machine::smp_allocate_vcpu_data(size_t num_cpus)
 void Machine::prepare_cpus(size_t num_cpus)
 {
 	if (m_cpus.size() < num_cpus) {
-		/* Inherit the special registers of the main vCPU */
-		struct kvm_sregs sregs;
-		vcpu.get_special_registers(sregs);
-
 		while (m_cpus.size() < num_cpus) {
 			/* NB: The cpu ids start at 1..2..3.. */
 			const int c = 1 + m_cpus.size();
-			m_cpus.emplace_back(c, *this, sregs);
+			m_cpus.emplace_back(c, *this);
 		}
 		//printf("%zu SMP vCPUs initialized\n", this->m_cpus.size());
 	}
 }
-void Machine::vCPU::decrement_smp_count()
+void vCPU::decrement_smp_count()
 {
-	const int v = __sync_fetch_and_sub(&machine->m_smp_active, 1);
+	const int v = __sync_fetch_and_sub(&machine().m_smp_active, 1);
 	/* Check if we are the lucky one to clear out the SMP registers. */
 	if (UNLIKELY(v == 1))
 	{
 		/* Create temporary vector and swap in contents. */
-		machine->m_smp_data_mtx.lock();
-		auto tmp = std::move(machine->m_smp_data);
-		machine->m_smp_data_mtx.unlock();
+		machine().m_smp_data_mtx.lock();
+		auto tmp = std::move(machine().m_smp_data);
+		machine().m_smp_data_mtx.unlock();
 		/* Delete registers one by one, then let it destruct. */
 		for (auto* regs : tmp)
 			delete[] regs;
