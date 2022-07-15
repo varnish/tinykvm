@@ -87,6 +87,9 @@ void vCPU::init(int id, Machine& machine)
 			Machine::machine_exception("KVM_GET_SREGS failed");
 		}
 		master_sregs.cr3 = PT_ADDR;
+		// NOTE: SMEP is not currently possible to due to the usermode
+		// assembly being used in a kernel context. Some writing occurs?
+		// XXX: TODO: Figure out why SMEP causes problems.
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
 			CR4_FSGSBASE;
