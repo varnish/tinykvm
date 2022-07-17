@@ -37,14 +37,13 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cassert>
-
+extern "C" int nice(int) __THROW;
 
 namespace tinykvm {
 
 class ThreadPool {
 public:
-    explicit ThreadPool(std::size_t threads
-        = (std::max)(2u, std::thread::hardware_concurrency()));
+    explicit ThreadPool(std::size_t threads, int nice, bool low_prio);
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args)
         -> std::future<
@@ -58,6 +57,8 @@ public:
     void wait_until_nothing_in_flight();
     void set_queue_size_limit(std::size_t limit);
     void set_pool_size(std::size_t limit);
+    void set_nice(int nice) { m_nice = nice; }
+    void set_low_prio(bool low_prio) { m_prio_low = low_prio; }
     ~ThreadPool();
 
 private:
@@ -74,6 +75,9 @@ private:
     std::size_t max_queue_size = 100000;
     // stop signal
     bool stop = false;
+
+    bool m_prio_low = false;
+    int  m_nice = 0;
 
     // synchronization
     std::mutex queue_mutex;
@@ -108,9 +112,11 @@ private:
 };
 
 // the constructor just launches some amount of workers
-inline ThreadPool::ThreadPool(std::size_t threads)
-    : pool_size(threads)
-    , in_flight(0)
+inline ThreadPool::ThreadPool(std::size_t threads, int nice, bool low_prio)
+    : pool_size(threads),
+      m_prio_low { low_prio },
+      m_nice { nice },
+      in_flight(0)
 {
     std::unique_lock<std::mutex> lock(this->queue_mutex);
     for (std::size_t i = 0; i != threads; ++i)
@@ -242,6 +248,7 @@ inline void ThreadPool::start_worker(
     auto worker_func =
         [this, worker_number]
         {
+            nice(this->m_nice);
             for(;;)
             {
                 std::function<void()> task;

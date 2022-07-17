@@ -6,7 +6,7 @@
 namespace tinykvm {
 
 Machine::MPvCPU::MPvCPU(int c, Machine& m)
-	: thpool(1)
+	: thpool(1, 0, false)
 {
 	/* We store the CPU ID in GSBASE register
 	   XXX: We do not make sure that vCPUs stay on a specific

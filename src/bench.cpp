@@ -416,7 +416,7 @@ extern "C" int gettid();
 
 void benchmark_multiple_pooled_vms(tinykvm::Machine& master_vm, size_t NUM, size_t RESETS)
 {
-	tinykvm::ThreadPool pool { NUM };
+	tinykvm::ThreadPool pool { NUM, 0, false };
 	std::unordered_map<int, tinykvm::Machine> machines;
 	std::mutex machine_mtx;
 
