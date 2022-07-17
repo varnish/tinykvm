@@ -332,6 +332,12 @@ void setup_kvm_system_calls()
 			throw MachineException("TKILL system call received");
 		});
 	Machine::install_syscall_handler(
+		201, [] (auto& cpu) { // time
+			auto regs = cpu.registers();
+			regs.rax = time(NULL);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		228, [] (auto& cpu) { // clock_gettime
 			auto regs = cpu.registers();
 			struct timespec ts;
