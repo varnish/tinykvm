@@ -135,6 +135,16 @@ void Machine::timed_reentry(uint64_t addr, float timeout, Args&&... args)
 	this->run(timeout);
 }
 
+template <typename... Args> inline constexpr
+void Machine::timed_reentry_stack(uint64_t addr, uint64_t stk, float timeout, Args&&... args)
+{
+	tinykvm_x86regs regs;
+	this->setup_call(regs, addr, stk, std::forward<Args> (args)...);
+	regs.rip = this->reentry_address();
+	vcpu.set_registers(regs);
+	this->run(timeout);
+}
+
 template <typename... Args> inline
 void Machine::timed_smpcall(size_t num_cpus,
 	address_t stack_base, uint32_t stack_size,
