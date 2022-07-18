@@ -378,6 +378,9 @@ void Machine::print_exception_handlers() const
 Machine::address_t Machine::entry_address() const noexcept {
 	return usercode_header().vm64_entry;
 }
+Machine::address_t Machine::reentry_address() const noexcept {
+	return usercode_header().vm64_reentry;
+}
 Machine::address_t Machine::exit_address() const noexcept {
 	return usercode_header().vm64_rexit;
 }

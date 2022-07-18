@@ -63,13 +63,17 @@ struct Machine
 					const std::vector<std::string>& env = {});
 	void run(float timeout_secs = 0.f);
 
-	/* Make a function call into the VM */
+	/* Make a SYSV function call into the VM, with no timeout */
 	template <typename... Args>
 	void vmcall(const char*, Args&&...);
 	template <typename... Args> constexpr
 	void vmcall(address_t, Args&&...);
+	/* SYSV function call with timeout */
 	template <typename... Args> constexpr
 	void timed_vmcall(address_t, float timeout, Args&&...);
+	/* SYSV function call with timeout, no cache flushing */
+	template <typename... Args> constexpr
+	void timed_reentry(address_t, float timeout, Args&&...);
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
 
@@ -142,6 +146,7 @@ struct Machine
 	address_t stack_address() const noexcept { return this->m_stack_address; }
 	address_t heap_address() const noexcept { return this->m_heap_address; }
 	address_t entry_address() const noexcept;
+	address_t reentry_address() const noexcept;
 	address_t exit_address() const noexcept;
 	void set_stack_address(address_t addr) { this->m_stack_address = addr; }
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }

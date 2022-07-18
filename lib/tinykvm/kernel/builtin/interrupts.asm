@@ -35,6 +35,8 @@ ALIGN 0x10
 	je .vm64_prctl
 	cmp eax, 0x1F777 ;; ENTRY SYSCALL
 	je .vm64_entrycall
+	cmp eax, 0x1F707 ;; REENTRY SYSCALL
+	je .vm64_reentrycall
 	out 0, eax
 	o64 sysret
 
@@ -72,6 +74,9 @@ ALIGN 0x10
 	;; Reset pagetables
 	mov rax, cr3
 	mov cr3, rax
+	o64 sysret
+
+.vm64_reentrycall:
 	o64 sysret
 
 .vm64_page_fault:
