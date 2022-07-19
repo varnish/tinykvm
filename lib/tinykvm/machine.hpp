@@ -186,10 +186,10 @@ struct Machine
 
 	/* The extra used memory attached to a VM for copy-on-write mechanisms. */
 	size_t banked_memory_pages() const noexcept;
-	size_t banked_memory_bytes() const noexcept { return banked_memory_pages() * vMemory::PAGE_SIZE; }
+	size_t banked_memory_bytes() const noexcept { return banked_memory_pages() * vMemory::PageSize(); }
 	/* The extra memory capacity attached to a VM for copy-on-write mechanisms. */
 	size_t banked_memory_capacity_pages() const noexcept;
-	size_t banked_memory_capacity_bytes() const noexcept { return banked_memory_capacity_pages() * vMemory::PAGE_SIZE; }
+	size_t banked_memory_capacity_bytes() const noexcept { return banked_memory_capacity_pages() * vMemory::PageSize(); }
 
 	template <typename... Args> constexpr
 	void setup_call(tinykvm_x86regs&, uint64_t addr, uint64_t rsp, Args&&... args);

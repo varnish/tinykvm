@@ -37,7 +37,11 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cassert>
+#ifndef __THROW
+extern "C" int nice(int);
+#else
 extern "C" int nice(int) __THROW;
+#endif
 
 namespace tinykvm {
 

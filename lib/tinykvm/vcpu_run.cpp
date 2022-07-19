@@ -4,8 +4,8 @@
 #include "kernel/memory_layout.hpp"
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
-#include <sys/signal.h>
 #include <time.h>
+#include <signal.h>
 
 #define PRINTER(printer, buffer, fmt, ...) \
 	printer(buffer, \

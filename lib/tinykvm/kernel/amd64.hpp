@@ -1,4 +1,6 @@
+#ifndef PAGE_SIZE
 #define PAGE_SIZE  4096
+#endif
 
 /* CR0 bits */
 #define CR0_PE 1u

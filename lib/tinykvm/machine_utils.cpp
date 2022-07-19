@@ -3,6 +3,9 @@
 #include <cstring>
 
 namespace tinykvm {
+static constexpr uint64_t PageMask() {
+	return vMemory::PageSize() - 1UL;
+}
 
 void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool zeroes)
 {
@@ -11,9 +14,9 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 		auto* src = (const uint8_t *)vsrc;
 		while (len != 0)
 		{
-			const size_t offset = addr & (vMemory::PAGE_SIZE-1);
-			const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
-			auto* page = memory.get_writable_page(addr & ~(uint64_t) 0xFFF, zeroes);
+			const size_t offset = addr & PageMask();
+			const size_t size = std::min(vMemory::PageSize() - offset, len);
+			auto* page = memory.get_writable_page(addr & ~PageMask(), zeroes);
 			std::copy(src, src + size, &page[offset]);
 
 			addr += size;
@@ -34,9 +37,9 @@ void Machine::copy_from_guest(void* vdst, address_t addr, size_t len)
 		auto* dst = (uint8_t *)vdst;
 		while (len != 0)
 		{
-			const size_t offset = addr & (vMemory::PAGE_SIZE-1);
-			const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
-			auto* page = memory.get_userpage_at(addr & ~(uint64_t) 0xFFF);
+			const size_t offset = addr & PageMask();
+			const size_t size = std::min(vMemory::PageSize() - offset, len);
+			auto* page = memory.get_userpage_at(addr & ~PageMask());
 			std::copy(&page[offset], &page[offset + size], dst);
 
 			addr += size;
@@ -57,9 +60,9 @@ void Machine::unsafe_copy_from_guest(void* vdst, address_t addr, size_t len)
 		auto* dst = (uint8_t *)vdst;
 		while (len != 0)
 		{
-			const size_t offset = addr & (vMemory::PAGE_SIZE-1);
-			const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
-			auto* page = memory.get_kernelpage_at(addr & ~(uint64_t) 0xFFF);
+			const size_t offset = addr & PageMask();
+			const size_t size = std::min(vMemory::PageSize() - offset, len);
+			auto* page = memory.get_kernelpage_at(addr & ~PageMask());
 			std::copy(&page[offset], &page[offset + size], dst);
 
 			addr += size;
@@ -80,9 +83,9 @@ size_t Machine::gather_buffers_from_range(
 	Buffer* last = nullptr;
 	while (len != 0 && index < cnt)
 	{
-		const size_t offset = addr & (vMemory::PAGE_SIZE-1);
-		const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
-		auto* page = memory.get_userpage_at(addr & ~(uint64_t) 0xFFF);
+		const size_t offset = addr & PageMask();
+		const size_t size = std::min(vMemory::PageSize() - offset, len);
+		auto* page = memory.get_userpage_at(addr & ~PageMask());
 
 		auto* ptr = (const char*) &page[offset];
 		if (last && ptr == last->ptr + last->len) {
@@ -105,7 +108,7 @@ size_t Machine::gather_buffers_from_range(
 void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size_t len)
 {
 	/* Over-estimate the number of buffers needed */
-	const size_t nbuffers = 2 + (len / vMemory::PAGE_SIZE);
+	const size_t nbuffers = 2 + (len / vMemory::PageSize());
 	Buffer buffers[nbuffers];
 	const size_t count =
 		src.gather_buffers_from_range(nbuffers, buffers, sa, len);
@@ -117,10 +120,10 @@ void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size
 		while (index < count)
 		{
 			auto& buf = buffers[index];
-			const size_t offset = addr & (vMemory::PAGE_SIZE-1);
-			const size_t size = std::min(vMemory::PAGE_SIZE - offset, buf.len);
-			/* NOTE: We could use zeroes if remaining is >= PAGE_SIZE */
-			auto* page = memory.get_writable_page(addr & ~(uint64_t) 0xFFF, false);
+			const size_t offset = addr & PageMask();
+			const size_t size = std::min(vMemory::PageSize() - offset, buf.len);
+			/* NOTE: We could use zeroes if remaining is >= PageSize() */
+			auto* page = memory.get_writable_page(addr & ~PageMask(), false);
 			std::copy(buf.ptr, buf.ptr + size, &page[offset]);
 
 			if (size == buf.len) {
@@ -148,9 +151,9 @@ void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size
 
 std::string_view Machine::sequential_view(address_t dst, size_t len)
 {
-	const size_t offset = dst & (vMemory::PAGE_SIZE-1);
-	const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
-	auto* page = memory.get_userpage_at(dst & ~(uint64_t) 0xFFF);
+	const size_t offset = dst & PageMask();
+	const size_t size = std::min(vMemory::PageSize() - offset, len);
+	auto* page = memory.get_userpage_at(dst & ~PageMask());
 
 	Buffer buf {(const char*) &page[offset], size};
 	dst += size;
@@ -158,9 +161,9 @@ std::string_view Machine::sequential_view(address_t dst, size_t len)
 
 	while (len != 0)
 	{
-		const size_t offset = dst & (vMemory::PAGE_SIZE-1);
-		const size_t size = std::min(vMemory::PAGE_SIZE - offset, len);
-		auto* page = memory.get_userpage_at(dst & ~(uint64_t) 0xFFF);
+		const size_t offset = dst & PageMask();
+		const size_t size = std::min(vMemory::PageSize() - offset, len);
+		auto* page = memory.get_userpage_at(dst & ~PageMask());
 
 		auto* ptr = (const char*) &page[offset];
 		if (ptr != buf.ptr + buf.len)

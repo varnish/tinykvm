@@ -11,7 +11,9 @@ struct Machine;
 struct MemoryBanks;
 
 struct vMemory {
-	static constexpr uint64_t PAGE_SIZE = 4096;
+	static constexpr uint64_t PageSize() {
+		return 4096u;
+	}
 
 	Machine& machine;
 	uint64_t physbase;

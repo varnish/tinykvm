@@ -3,9 +3,9 @@
 #include <cassert>
 #include <cstring>
 #include <linux/kvm.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/signal.h>
 #include "page_streaming.hpp"
 #include "kernel/amd64.hpp"
 #include "kernel/idt.hpp"
@@ -18,6 +18,14 @@
 extern "C" int gettid();
 extern "C" int close(int);
 static void unused_usr_handler(int) {}
+
+struct ksigevent
+{
+	union sigval sigev_value;
+	int sigev_signo;
+	int sigev_notify;
+	int sigev_tid;
+};
 
 namespace tinykvm {
 	static struct kvm_sregs master_sregs;
@@ -48,13 +56,13 @@ void* Machine::create_vcpu_timer()
 {
 	signal(SIGUSR2, unused_usr_handler);
 
-	struct sigevent sigev {};
+	struct ksigevent sigev {};
 	sigev.sigev_notify = SIGEV_SIGNAL | SIGEV_THREAD_ID;
 	sigev.sigev_signo = SIGUSR2;
-	sigev._sigev_un._tid = gettid();
+	sigev.sigev_tid = gettid();
 
 	timer_t timer_id;
-	if (timer_create(CLOCK_MONOTONIC, &sigev, &timer_id) < 0)
+	if (timer_create(CLOCK_MONOTONIC, (struct sigevent *)&sigev, &timer_id) < 0)
 		throw MachineException("Unable to create timeout timer");
 	return timer_id;
 }
