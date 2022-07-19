@@ -125,6 +125,15 @@ void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 }
 
 template <typename... Args> inline constexpr
+void Machine::timed_vmcall_stack(uint64_t addr, uint64_t stk, float timeout, Args&&... args)
+{
+	tinykvm_x86regs regs;
+	this->setup_call(regs, addr, stk, std::forward<Args> (args)...);
+	vcpu.set_registers(regs);
+	this->run(timeout);
+}
+
+template <typename... Args> inline constexpr
 void Machine::timed_reentry(uint64_t addr, float timeout, Args&&... args)
 {
 	tinykvm_x86regs regs;

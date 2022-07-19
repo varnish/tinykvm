@@ -71,6 +71,8 @@ struct Machine
 	/* SYSV function call with timeout */
 	template <typename... Args> constexpr
 	void timed_vmcall(address_t, float timeout, Args&&...);
+	template <typename... Args> constexpr
+	void timed_vmcall_stack(address_t, address_t stk, float timeout, Args&&...);
 	/* SYSV function call with timeout, no cache flushing */
 	template <typename... Args> constexpr
 	void timed_reentry(address_t, float timeout, Args&&...);

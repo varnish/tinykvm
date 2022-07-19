@@ -24,6 +24,7 @@ namespace tinykvm {
 			printf("%.*s", (int)len, buffer);
 		};
 	static int kvm_open();
+	constexpr uint64_t PageMask = vMemory::PageSize()-1;
 
 __attribute__ ((cold))
 Machine::Machine(std::string_view binary, const MachineOptions& options)
@@ -199,17 +200,18 @@ long Machine::return_value() const
 	return regs.rdi;
 }
 
+/* TODO: Serialize access with mutex. */
 Machine::address_t Machine::mmap_allocate(size_t bytes)
 {
 	address_t result = this->m_mm;
 	/* Bytes rounded up to nearest 4k (PAGE_SIZE). */
-	this->m_mm += (bytes + 0xFFFL) & ~0xFFFL;
+	this->m_mm += (bytes + PageMask) & ~PageMask;
 	return result;
 }
 bool Machine::mmap_relax(uint64_t addr, size_t size, size_t new_size)
 {
-	if (this->m_mm == addr + size) {
-		this->m_mm = (addr + new_size + 0xFFF) & ~0xFFFL;
+	if (this->m_mm == addr + size && size <= new_size) {
+		this->m_mm = (addr + new_size + PageMask) & ~PageMask;
 		return true;
 	}
 	return false;
