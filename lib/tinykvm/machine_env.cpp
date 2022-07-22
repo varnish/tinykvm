@@ -21,7 +21,7 @@ static inline
 void push_arg(Machine& m, std::vector<address_t>& vec, address_t& dst, const std::string& str)
 {
 	dst -= str.size()+1;
-	dst &= ~(uint64_t)0x7; // maintain alignment
+	dst &= ~0x7LL; // maintain alignment
 	vec.push_back(dst);
 	m.copy_to_guest(dst, str.data(), str.size()+1);
 }
@@ -35,7 +35,7 @@ static inline
 void push_down(Machine& m, address_t& dst, const void* data, size_t size)
 {
 	dst -= size;
-	dst &= ~(uint64_t)0x7; // maintain alignment
+	dst &= ~0x7LL; // maintain alignment
 	m.copy_to_guest(dst, data, size);
 }
 
@@ -58,7 +58,7 @@ void Machine::setup_argv(__u64& rsp,
 	// Extra aligned SP and copy the arguments over
 	const size_t argsize = argv.size() * sizeof(argv[0]);
 	rsp -= argsize;
-	rsp &= ~0xF; // mandated 16-byte stack alignment
+	rsp &= ~0xFLL; // 16-byte stack alignment
 
 	this->copy_to_guest(rsp, argv.data(), argsize);
 }
@@ -88,7 +88,7 @@ void Machine::setup_linux(__u64& rsp,
 	push_down(*this, dst, canary.data(), canary.size());
 	const auto canary_addr = dst;
 
-	const char platform[] = "AMD64 TinyKVM Guest";
+	const char platform[] = "x86_64";
 	push_down(*this, dst, platform, sizeof(platform));
 	const auto platform_addr = dst;
 
@@ -96,12 +96,10 @@ void Machine::setup_linux(__u64& rsp,
 	const auto* binary_ehdr = elf_offset<Elf64_Ehdr> (m_binary, 0);
 	const auto* binary_phdr = elf_offset<Elf64_Phdr> (m_binary, binary_ehdr->e_phoff);
 	const unsigned phdr_count = binary_ehdr->e_phnum;
-	for (unsigned i = 0; i < phdr_count; i++)
-	{
-		const auto* phd = &binary_phdr[i];
-		push_down(*this, dst, phd, sizeof(Elf64_Phdr));
-	}
+	dst -= phdr_count * sizeof(Elf64_Phdr);
+	dst &= ~0xFLL;
 	const auto phdr_location = dst;
+	this->copy_to_guest(dst, binary_phdr, phdr_count * sizeof(Elf64_Phdr));
 
 	/* Push arguments to main() */
 	std::vector<address_t> argv;
@@ -118,12 +116,12 @@ void Machine::setup_linux(__u64& rsp,
 	argv.push_back(0x0);
 
 	/* Push auxiliary vector */
-	push_aux(argv, {AT_PAGESZ, 0x1000});
-	push_aux(argv, {AT_CLKTCK, getauxval(AT_CLKTCK)});
+	push_aux(argv, {AT_PAGESZ, vMemory::PageSize()});
+	push_aux(argv, {AT_CLKTCK, 100});
 
 	// ELF related
-	push_aux(argv, {AT_PHENT, sizeof(*binary_phdr)});
 	push_aux(argv, {AT_PHDR,  phdr_location});
+	push_aux(argv, {AT_PHENT, sizeof(Elf64_Phdr)});
 	push_aux(argv, {AT_PHNUM, phdr_count});
 
 	// Misc
@@ -158,7 +156,7 @@ void Machine::setup_linux(__u64& rsp,
 	// install the arg vector
 	const size_t argsize = argv.size() * sizeof(argv[0]);
 	dst -= argsize;
-	dst &= ~(uint64_t)0xF; // mandated 16-byte stack alignment
+	dst &= ~0xFLL; // 16-byte stack alignment
 	this->copy_to_guest(dst, argv.data(), argsize);
 	// re-initialize machine stack-pointer
 	rsp = dst;

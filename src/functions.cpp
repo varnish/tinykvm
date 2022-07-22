@@ -19,6 +19,7 @@
 #define SYSPRINT(fmt, ...) /* */
 #endif
 using namespace tinykvm;
+static constexpr uint64_t PageMask = vMemory::PageSize()-1;
 
 void setup_kvm_system_calls()
 {
@@ -89,20 +90,24 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		9, [] (auto& cpu) { // MMAP
 			auto regs = cpu.registers();
-			//regs.rax = ~(uint64_t) 0; /* MAP_FAILED */
-			regs.rsi &= ~0xFFF;
-			if (regs.rdi == 0xC000000000LL) {
-				regs.rax = regs.rdi;
+			if (UNLIKELY(regs.rdi % vMemory::PageSize() != 0 || regs.rsi == 0)) {
+				regs.rax = ~0LL; /* MAP_FAILED */
+			} else {
+				// Round up to nearest power-of-two
+				regs.rsi = (regs.rsi + PageMask) & ~PageMask;
+				if (regs.rdi == 0xC000000000LL) {
+					regs.rax = regs.rdi;
+				}
+				else {
+					auto& mm = cpu.machine().mmap();
+					regs.rax = mm;
+					// XXX: MAP_ANONYMOUS -->
+					//memset(machine.rw_memory_at(regs.rax, regs.rsi), 0, regs.rsi);
+					mm += regs.rsi;
+				}
 			}
-			else {
-				auto& mm = cpu.machine().mmap();
-				regs.rax = mm;
-				// XXX: MAP_ANONYMOUS -->
-				//memset(machine.rw_memory_at(regs.rax, regs.rsi), 0, regs.rsi);
-				mm += regs.rsi;
-			}
-			PRINTMMAP("mmap(0x%llX, %llu) = 0x%llX\n",
-				regs.rdi, regs.rsi, regs.rax);
+			PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
+				regs.rdi, regs.rsi, regs.rdx, regs.rcx, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -136,27 +141,27 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		13, [] (auto& cpu) {
-			/* SYS sigaction */
+			/* SYS rt_sigaction */
 			auto regs = cpu.registers();
 			regs.rax = 0;
-			SYSPRINT("sigaction(signum=%x, act=0x%llX, oldact=0x%llx) = 0x%llX\n",
+			SYSPRINT("rt_sigaction(signum=%x, act=0x%llX, oldact=0x%llx) = 0x%llX\n",
 				(int) regs.rdi, regs.rsi, regs.rdx, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		14, [] (auto& cpu) {
-			/* SYS sigprocmask */
+			/* SYS rt_sigprocmask */
 			auto regs = cpu.registers();
 			regs.rax = 0;
-			SYSPRINT("sigprocmask(how=%x, set=0x%llX, oldset=0x%llx) = 0x%llX\n",
-				(int) regs.rdi, regs.rsi, regs.rdx, regs.rax);
+			SYSPRINT("rt_sigprocmask(how=%x, set=0x%llX, oldset=0x%llx, size=%llu) = 0x%llX\n",
+					 (int)regs.rdi, regs.rsi, regs.rdx, regs.rcx, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		131, [] (auto& cpu) {
 			/* SYS sigaltstack */
 			auto regs = cpu.registers();
-			regs.rax = 0xfffffffffffff001;
+			regs.rax = 0;
 			SYSPRINT("sigaltstack(ss=0x%llX, old_ss=0x%llx) = 0x%llX\n",
 				regs.rdi, regs.rsi, regs.rax);
 			cpu.set_registers(regs);

@@ -154,11 +154,12 @@ struct Machine
 	address_t exit_address() const noexcept;
 	void set_stack_address(address_t addr) { this->m_stack_address = addr; }
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
-	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
+
+	static constexpr uint64_t BRK_MAX = 0x100000;
+	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t mmap_allocate(size_t bytes);
 	bool mmap_relax(uint64_t addr, size_t size, size_t new_size);
-	static constexpr uint64_t BRK_MAX = 0x100000;
 
 	uint64_t address_of(const char*) const;
 

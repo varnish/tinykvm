@@ -7,6 +7,7 @@
 #include "util/elf.hpp"
 
 namespace tinykvm {
+static constexpr bool VERBOSE_LOADER = false;
 static const int MAX_LOADABLE_SEGMENTS = 8;
 
 void Machine::elf_loader(const MachineOptions& options)
@@ -43,6 +44,11 @@ void Machine::elf_loader(const MachineOptions& options)
 	int seg = 0;
 	for (const auto* hdr = phdr; hdr < phdr + program_headers; hdr++)
 	{
+		if constexpr (VERBOSE_LOADER) {
+			printf("Program header: 0x%lX -> 0x%lX\n",
+				hdr->p_vaddr, hdr->p_vaddr + hdr->p_memsz);
+		}
+
 		// Detect overlapping segments
 		for (const auto* ph = phdr; ph < hdr; ph++) {
 			if (hdr->p_type == PT_LOAD && ph->p_type == PT_LOAD)
@@ -73,16 +79,19 @@ void Machine::elf_loader(const MachineOptions& options)
 		}
 
 		uint64_t endm = hdr->p_vaddr + hdr->p_memsz;
-		endm += 4095; endm &= ~0xFFF;
+		endm += vMemory::PageSize()-1; endm &= ~(vMemory::PageSize()-1);
 		if (this->m_heap_address < endm)
 			this->m_heap_address = endm;
 	}
 
-	if (this->m_stack_address < 0x100000) {
-		this->m_stack_address = 0x100000;
-	}
 	/* Make sure mmap starts at a sane offset */
 	this->m_mm = this->mmap_start();
+
+	/* If there is not enough room for stack, move it */
+	static constexpr size_t ALTSTACK_SIZE = 0x200000;
+	if (this->m_stack_address < ALTSTACK_SIZE) {
+		this->m_stack_address = this->mmap_allocate(ALTSTACK_SIZE) + ALTSTACK_SIZE;
+	}
 
 	//this->relocate_section(".rela.plt", ".symtab");
 
