@@ -7,7 +7,6 @@
 #include <cstring>
 #include <malloc.h>
 #include <sys/mman.h>
-#define PAGE_SIZE   0x1000
 
 namespace tinykvm {
 
@@ -19,7 +18,7 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	  m_idx { m_idx_begin },
 	  m_using_hugepages { options.hugepages }
 {
-	this->set_max_pages(options.max_cow_mem / PAGE_SIZE);
+	this->set_max_pages(options.max_cow_mem / vMemory::PageSize());
 }
 void MemoryBanks::set_max_pages(size_t new_max)
 {
@@ -36,11 +35,11 @@ char* MemoryBanks::try_alloc(size_t N)
 {
 	char* ptr = (char*)MAP_FAILED;
 	if (this->m_using_hugepages) {
-		ptr = (char*) mmap(NULL, N * PAGE_SIZE, PROT_READ | PROT_WRITE,
+		ptr = (char*) mmap(NULL, N * vMemory::PageSize(), PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
 	}
 	if (ptr == MAP_FAILED) {
-		return (char*) mmap(NULL, N * PAGE_SIZE, PROT_READ | PROT_WRITE,
+		return (char*) mmap(NULL, N * vMemory::PageSize(), PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
 	}
 	return ptr;
@@ -55,7 +54,7 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 		mem = this->try_alloc(pages);
 	}
 
-	const size_t size = pages * PAGE_SIZE;
+	const size_t size = pages * vMemory::PageSize();
 	if (mem != nullptr) {
 		m_mem.emplace_back(*this, mem, addr, pages, m_idx);
 
@@ -92,7 +91,7 @@ void MemoryBanks::reset(const MachineOptions& options)
 		bank.n_used = 0;
 	}
 	m_search = 0;
-	m_max_pages = options.max_cow_mem / PAGE_SIZE;
+	m_max_pages = options.max_cow_mem / vMemory::PageSize();
 }
 
 MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint16_t np, uint16_t x)
@@ -100,13 +99,13 @@ MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint16_t np, uint16_
 {}
 MemoryBank::~MemoryBank()
 {
-	munmap(this->mem, this->n_pages * PAGE_SIZE);
+	munmap(this->mem, this->n_pages * vMemory::PageSize());
 }
 
 MemoryBank::Page MemoryBank::get_next_page(uint64_t vaddr)
 {
 	assert(n_used < n_pages);
-	uint64_t offset = PAGE_SIZE * n_used;
+	uint64_t offset = vMemory::PageSize() * n_used;
 	page_vaddr.at(n_used) = vaddr;
 	n_used++;
 	return {(uint64_t *)&mem[offset], addr + offset};
