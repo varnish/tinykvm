@@ -108,7 +108,9 @@ struct Machine
 	struct Buffer { const char* ptr; size_t len; };
 	size_t gather_buffers_from_range(size_t cnt, Buffer[], address_t addr, size_t len);
 	/* Check if a payload is sequential in guest memory. */
-	std::string_view sequential_view(address_t dst, size_t size);
+	std::string_view sequential_view(address_t src, size_t size);
+	/* Call function with each segment of memory in given buffer. */
+	void foreach_memory(address_t src, size_t size, std::function<void(const std::string_view)>) const;
 	/* Efficiently copy between machines */
 	void copy_from_machine(address_t dst, Machine& src, address_t sa, size_t size);
 

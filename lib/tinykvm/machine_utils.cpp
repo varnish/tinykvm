@@ -176,4 +176,37 @@ std::string_view Machine::sequential_view(address_t dst, size_t len)
 	return {buf.ptr, buf.len};
 }
 
+void Machine::foreach_memory(address_t src, size_t len,
+	std::function<void(const std::string_view)> callback) const
+{
+	const size_t offset = src & PageMask();
+	const size_t size = std::min(vMemory::PageSize() - offset, len);
+	auto* page = memory.get_userpage_at(src & ~PageMask());
+
+	std::string_view view {(const char*) &page[offset], size};
+	src += size;
+	len -= size;
+
+	while (len != 0)
+	{
+		const size_t offset = src & PageMask();
+		const size_t size = std::min(vMemory::PageSize() - offset, len);
+		auto *page = memory.get_userpage_at(src & ~PageMask());
+
+		auto *ptr = (const char *)&page[offset];
+		/* Either extend view, or pass it to callback. */
+		if (ptr == view.end()) {
+			view = {view.begin(), view.size() + size};
+		} else {
+			callback(view);
+			view = nullptr;
+		}
+
+		src += size;
+		len -= size;
+	}
+	if (view != nullptr)
+		callback(view);
+}
+
 } // tinykvm
