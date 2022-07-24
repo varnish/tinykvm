@@ -47,7 +47,8 @@ namespace tinykvm {
 
 class ThreadPool {
 public:
-    explicit ThreadPool(std::size_t threads, int nice, bool low_prio);
+    explicit ThreadPool(std::size_t threads, int nice, bool low_prio,
+        std::function<void()> = [] {});
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args)
         -> std::future<
@@ -62,6 +63,7 @@ public:
     void set_queue_size_limit(std::size_t limit);
     void set_pool_size(std::size_t limit);
     void set_nice(int nice) { m_nice = nice; }
+    void set_start_func(std::function<void()> func) { m_start_function = func; }
     void set_low_prio(bool low_prio) { m_prio_low = low_prio; }
     ~ThreadPool();
 
@@ -76,12 +78,13 @@ private:
     // the task queue
     std::queue< std::function<void()> > tasks;
     // queue length limit
-    std::size_t max_queue_size = 100000;
+    std::size_t max_queue_size = 100;
     // stop signal
     bool stop = false;
 
     bool m_prio_low = false;
     int  m_nice = 0;
+    std::function<void()> m_start_function = [] {};
 
     // synchronization
     std::mutex queue_mutex;
@@ -116,10 +119,12 @@ private:
 };
 
 // the constructor just launches some amount of workers
-inline ThreadPool::ThreadPool(std::size_t threads, int nice, bool low_prio)
+inline ThreadPool::ThreadPool(std::size_t threads, int nice, bool low_prio,
+    std::function<void()> start_func)
     : pool_size(threads),
       m_prio_low { low_prio },
       m_nice { nice },
+      m_start_function { start_func },
       in_flight(0)
 {
     std::unique_lock<std::mutex> lock(this->queue_mutex);
@@ -252,6 +257,7 @@ inline void ThreadPool::start_worker(
     auto worker_func =
         [this, worker_number]
         {
+            this->m_start_function();
             nice(this->m_nice);
             for(;;)
             {
