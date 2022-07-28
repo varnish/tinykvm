@@ -5,6 +5,7 @@ guest/guest.elf
 guest/musl/musl
 guest/musl/glibc
 guest/glibc/glibc
+guest/glibc/float
 guest/go/go
 
 guest/tests/glibc_test

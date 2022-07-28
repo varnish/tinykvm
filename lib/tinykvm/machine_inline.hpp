@@ -30,6 +30,9 @@ inline tinykvm_x86regs Machine::registers() const {
 inline void Machine::set_registers(const tinykvm_x86regs& regs) {
 	vcpu.set_registers(regs);
 }
+inline tinykvm_fpuregs Machine::fpu_registers() const {
+	return vcpu.fpu_registers();
+}
 inline void Machine::get_special_registers(struct kvm_sregs& sregs) const {
 	return vcpu.get_special_registers(sregs);
 }

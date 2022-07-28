@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <cstring>
 #include <stdexcept>
+#include "kernel/memory_layout.hpp"
 
 /**
 **/
@@ -228,6 +229,9 @@ void RSPClient::process_data()
 	case 'm':
 		handle_readmem();
 		break;
+	case 'p':
+		handle_readreg();
+		break;
 	case 'P':
 		handle_writereg();
 		break;
@@ -307,13 +311,13 @@ void RSPClient::handle_continue()
 		}
 	}
 	try {
-		uint64_t n = m_ilimit;
+		uint64_t n = m_breaklimit;
 		while (!m_machine->stopped()) {
 			auto reason = m_machine->run_with_breakpoints(m_bp);
 			// Hardware breakpoint
 			if (reason == KVM_EXIT_DEBUG)
 				break;
-			// Instruction limit
+			// Break limit (in case of loop)
 			if (n-- == 0)
 				break;
 		}
@@ -475,6 +479,13 @@ void RSPClient::putreg(char*& d, const char* end, const T& reg)
 		*d++ = lut[(reg >> (j*8+0)) & 0xF];
 	}
 }
+void RSPClient::putreg(char*& d, const char* end, const uint8_t* reg, size_t len)
+{
+	for (auto j = 0u; j < len && d < end; j++) {
+		*d++ = lut[(reg[j] >> 4) & 0xF];
+		*d++ = lut[(reg[j] >> 0) & 0xF];
+	}
+}
 
 static __u64&
 reg_at(struct tinykvm_x86regs& regs, size_t idx)
@@ -529,6 +540,71 @@ reg32_at(Machine& m, struct tinykvm_x86regs& regs, size_t idx)
 	throw std::runtime_error("Invalid register index");
 }
 
+void RSPClient::handle_readreg()
+{
+	uint32_t idx = 0;
+	sscanf(buffer.c_str(), "p%x", &idx);
+	if (idx > 58) {
+		send("E01");
+		return;
+	}
+
+	char valdata[32];
+	size_t vallen = 0;
+
+	if (idx >= 18)
+	{
+		const auto fpu = m_machine->fpu_registers();
+		if (idx <= 26) {
+			const auto* fpreg = &fpu.fpr[idx - 18][0];
+			vallen = 16;
+			std::memcpy(valdata, fpreg, vallen);
+		} else if (idx >= 31 && idx < 39) {
+			// STMM0-7
+			const auto* fpreg = &fpu.fpr[idx - 31][0];
+			vallen = 16;
+			std::memcpy(valdata, fpreg, vallen);
+		} else if (idx >= 39 && idx < 55) {
+			// XMM0-15
+			const auto* fpreg = &fpu.xmm[idx - 39][0];
+			vallen = 16;
+			std::memcpy(valdata, fpreg, vallen);
+		} else if (idx == 56 || idx == 57) {
+			vallen = 4;
+			uint32_t value = 0;
+			std::memcpy(valdata, &value, vallen);
+		} else if (idx == 58) {
+			vallen = 8;
+			uint64_t value = 0;
+			std::memcpy(valdata, &value, vallen);
+		} else {
+			const auto* fpreg = &fpu.fcw;
+			vallen = 4;
+			std::memcpy(valdata, &fpreg[idx - 26], vallen);
+		}
+	}
+	else /* GPRs */
+	{
+		const auto regs = m_machine->registers();
+		const auto* regarray = (__u64 *)&regs;
+		vallen = sizeof(__u64);
+		std::memcpy(valdata, &regarray[idx], vallen);
+	}
+
+	char data[65];
+	char* d = data;
+	try {
+		for (unsigned i = 0; i < vallen; i++) {
+			*d++ = lut[(valdata[i] >> 4) & 0xF];
+			*d++ = lut[(valdata[i] >> 0) & 0xF];
+		}
+	} catch (...) {
+		send("E01");
+		return;
+	}
+	*d++ = 0;
+	send(data);
+}
 void RSPClient::handle_writereg()
 {
 	uint64_t value = 0;
@@ -554,18 +630,18 @@ void RSPClient::handle_writereg()
 void RSPClient::report_gprs()
 {
 	auto regs = m_machine->registers();
-	char data[384];
+	char data[1100];
 	const char* end = &data[sizeof(data)];
 	char* d = data;
 	/* GPRs, RIP, RFLAGS, segments */
 	for (size_t i = 0; i < 17; i++) {
 #ifdef HIDE_CPU_EXCEPTIONS
 		/* Machine using the exception/interrupt stack */
-		if ((i == 16) && (regs.rsp >= 0x3000 && regs.rsp < 0x4000))
+		if ((i == 16) && (regs.rsp >= IST_ADDR && regs.rsp < IST_END_ADDR))
 		{
 			char* rip = m_machine->unsafe_memory_at(regs.rsp, 8);
 			putreg(d, end, *(uint64_t *)rip);
-		} else if ((i == 7) && (regs.rsp >= 0x3000 && regs.rsp < 0x4000)) {
+		} else if ((i == 7) && (regs.rsp >= IST_ADDR && regs.rsp < IST_END_ADDR)) {
 			char* rip = m_machine->unsafe_memory_at(regs.rsp+24, 8);
 			putreg(d, end, *(uint64_t *)rip);
 		} else {
@@ -575,9 +651,37 @@ void RSPClient::report_gprs()
 		}
 #endif
 	}
+	/* 7x special/segment registers */
 	for (size_t i = 17; i < 24; i++) {
 		putreg(d, end, (uint32_t) reg32_at(*m_machine, regs, i));
 	}
+
+	// AMD64 SSE: 17 * 8 + 7 * 4 + 8 * 10 + 8 * 4 + 16 * 16 + 4
+	// AMD64 AVX: 17 * 8 + 7 * 4 + 8 * 10 + 8 * 4 + 16 * 32 + 4
+	const auto fpu = m_machine->fpu_registers();
+
+	/* 8x 80-bit FP-registers */
+	for (size_t i = 0; i < 8; i++) {
+		putreg(d, end, &fpu.fpr[i][0], 10);
+	}
+
+	putreg(d, end, (uint32_t)fpu.fcw);  // FCTRL 16
+	putreg(d, end, (uint32_t)fpu.fsw);  // FSTAT 16
+	putreg(d, end, (uint32_t)fpu.ftwx); // FTAG  8
+	putreg(d, end, (uint32_t)0); // FIOFF
+	putreg(d, end, (uint32_t)0); // FISEG
+	putreg(d, end, (uint32_t)0); // FOOFF
+	putreg(d, end, (uint32_t)0); // FOSEG
+	putreg(d, end, (uint32_t)fpu.last_opcode); // FOP 16
+
+	/* 16x 128-bit XMM-registers */
+	for (size_t i = 0; i < 16; i++) {
+		putreg(d, end, &fpu.xmm[i][0], 16);
+	}
+
+	putreg(d, end, (uint32_t)fpu.mxcsr); // MXCSR
+	//putreg(d, end, (uint64_t)0); // ORIG RAX
+
 	*d++ = 0;
 	send(data);
 }

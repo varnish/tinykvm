@@ -226,7 +226,7 @@ tinykvm_x86regs vCPU::registers() const
 {
 	struct tinykvm_x86regs regs;
 	if (ioctl(this->fd, KVM_GET_REGS, &regs) < 0) {
-		Machine::machine_exception("KVM_SET_REGS failed");
+		Machine::machine_exception("KVM_GET_REGS failed");
 	}
 	return regs;
 }
@@ -235,6 +235,14 @@ void vCPU::set_registers(const struct tinykvm_x86regs& regs)
 	if (ioctl(this->fd, KVM_SET_REGS, &regs) < 0) {
 		Machine::machine_exception("KVM_SET_REGS failed");
 	}
+}
+tinykvm_fpuregs vCPU::fpu_registers() const
+{
+	struct tinykvm_fpuregs regs;
+	if (ioctl(this->fd, KVM_GET_FPU, &regs) < 0) {
+		Machine::machine_exception("KVM_GET_FPU failed");
+	}
+	return regs;
 }
 void vCPU::get_special_registers(struct kvm_sregs& sregs) const
 {

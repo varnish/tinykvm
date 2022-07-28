@@ -21,6 +21,7 @@ struct vCPU
 	void deinit();
 	tinykvm_x86regs registers() const;
 	void set_registers(const struct tinykvm_x86regs &);
+	tinykvm_fpuregs fpu_registers() const;
 	void get_special_registers(struct kvm_sregs &) const;
 	void set_special_registers(const struct kvm_sregs &);
 
@@ -34,8 +35,8 @@ struct vCPU
 	void handle_exception(uint8_t intr);
 	void decrement_smp_count();
 
-	auto &machine() { return *m_machine; }
-	const auto &machine() const { return *m_machine; }
+	auto& machine() { return *m_machine; }
+	const auto& machine() const { return *m_machine; }
 
 	int fd = 0;
 	int cpu_id = 0;
@@ -126,6 +127,7 @@ struct Machine
 
 	tinykvm_x86regs registers() const;
 	void set_registers(const tinykvm_x86regs&);
+	tinykvm_fpuregs fpu_registers() const;
 	void get_special_registers(struct kvm_sregs&) const;
 	void set_special_registers(const struct kvm_sregs&);
 	std::pair<__u64, __u64> get_fsgs() const;

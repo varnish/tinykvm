@@ -4,7 +4,6 @@
 #include <string.h>
 static void test_threads();
 extern "C" int gettid();
-extern "C" int rexit();
 
 static int threads_test_suite_ok = 0;
 int main()
@@ -23,12 +22,6 @@ void test()
 	/* Verify that the threads test-suite passed */
 	assert(threads_test_suite_ok == 1);
 }
-
-asm(".global rexit\n"
-	"rexit:\n"
-	"mov %rax, %rdi\n"
-	"mov $60, %rax\n"
-	"syscall");
 
 #include <pthread.h>
 #include <sys/types.h>
