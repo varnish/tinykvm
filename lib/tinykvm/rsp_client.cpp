@@ -335,8 +335,16 @@ void RSPClient::handle_continue()
 }
 void RSPClient::handle_step()
 {
+	auto regs = m_machine->registers();
+	for (const auto bp : m_bp) {
+		if (bp == regs.rip) {
+			send("S05");
+			return;
+		}
+	}
 	try {
 		if (!m_machine->stopped()) {
+			//m_machine->run_with_breakpoints(m_bp);
 			m_machine->step_one();
 		} else {
 			send("S00");
@@ -362,7 +370,9 @@ void RSPClient::handle_breakpoint()
 		m_bp[bp_iterator] = addr;
 		bp_iterator = (bp_iterator + 1) % m_bp.size();
 	} else {
-		m_bp = {0};
+		for (auto& bp : m_bp) {
+			if (bp == addr) bp = 0;
+		}
 	}
 	//printf("Breakpoint 0: 0x%lX   Breakpoint 1: 0x%lX\n", m_bp0, m_bp1);
 	reply_ok();
