@@ -181,6 +181,38 @@ uint64_t Machine::address_of(const char* name) const
 	const auto* sym = resolve_symbol(m_binary, name);
 	return (sym) ? sym->st_value : 0x0;
 }
+std::string Machine::resolve(uint64_t rip) const
+{
+	if (UNLIKELY(m_binary.empty())) return nullptr;
+	const auto* sym_hdr = section_by_name(m_binary, ".symtab");
+	if (UNLIKELY(sym_hdr == nullptr)) return nullptr;
+	const auto* str_hdr = section_by_name(m_binary, ".strtab");
+	if (UNLIKELY(str_hdr == nullptr)) return nullptr;
+
+	const auto* symtab = elf_sym_index(m_binary, sym_hdr, 0);
+	const size_t symtab_ents = sym_hdr->sh_size / sizeof(Elf64_Sym);
+	const char* strtab = elf_offset<char>(m_binary, str_hdr->sh_offset);
+
+	for (size_t i = 0; i < symtab_ents; i++)
+	{
+		/* Only look at functions (for now). Old-style symbols have no FUNC. */
+		if (symtab[i].st_info & STT_FUNC) {
+			/* Direct matches only (for now) */
+			if (rip >= symtab[i].st_value && rip < symtab[i].st_value + symtab[i].st_size)
+			{
+				const uint64_t offset = rip - symtab[i].st_value;
+				char result[2048];
+				int len = snprintf(result, sizeof(result),
+					"%s + 0x%lX", &strtab[symtab[i].st_name], offset);
+				if (len > 0)
+					return std::string(result, len);
+				else
+					return std::string(&strtab[symtab[i].st_name]);
+			}
+		}
+	}
+	return "(unknown)";
+}
 
 void Machine::relocate_section(const char* section_name, const char* sym_section)
 {

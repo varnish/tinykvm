@@ -31,7 +31,7 @@ struct vCPU
 	void disable_timer();
 	std::string_view io_data() const;
 
-	void print_registers();
+	void print_registers() const;
 	void handle_exception(uint8_t intr);
 	void decrement_smp_count();
 
@@ -166,6 +166,7 @@ struct Machine
 	bool mmap_relax(uint64_t addr, size_t size, size_t new_size);
 
 	uint64_t address_of(const char*) const;
+	std::string resolve(uint64_t rip) const;
 
 	bool smp_active() const noexcept { return m_smp_active != 0; }
 	int  smp_active_count() const noexcept { return m_smp_active; }
@@ -183,7 +184,7 @@ struct Machine
 
 	void set_printer(printer_func pf = m_default_printer) { m_printer = std::move(pf); }
 	void print(const char*, size_t);
-	void print_registers() { vcpu.print_registers(); }
+	void print_registers() const { vcpu.print_registers(); }
 	void print_pagetables() const;
 	void print_exception_handlers() const;
 

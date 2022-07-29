@@ -219,7 +219,7 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 }
 
 TINYKVM_COLD()
-void vCPU::print_registers()
+void vCPU::print_registers() const
 {
 	struct kvm_sregs sregs;
 	this->get_special_registers(sregs);
@@ -329,6 +329,11 @@ void vCPU::handle_exception(uint8_t intr)
 				"Failing RSP: 0x%lX\n", rsp);
 			PRINTER(printer, buffer,
 				"Failing SS:  0x%lX\n", ss);
+
+			PRINTER(printer, buffer,
+				"RIP  0x%lX   %s\n",
+				rip, machine().resolve(rip).c_str());
+
 		} catch (...) {}
 
 		/* General Protection Fault */
