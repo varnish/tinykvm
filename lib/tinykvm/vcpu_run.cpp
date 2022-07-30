@@ -117,7 +117,7 @@ long vCPU::run_once()
 			auto intr = kvm_run->io.port - 0x80;
 			if (intr == 14) // Page fault
 			{
-				auto regs = registers();
+				const auto& regs = registers();
 				const uint64_t addr = regs.rdi & ~(uint64_t) 0x8000000000000FFF;
 #ifdef VERBOSE_PAGE_FAULTS
 				char buffer[256];
@@ -231,7 +231,7 @@ void vCPU::print_registers() const
 	PRINTER(printer, buffer,
 		"CR2: 0x%llX  CR4: 0x%llX\n", sregs.cr2, sregs.cr4);
 
-	auto regs = registers();
+	const auto& regs = registers();
 	PRINTER(printer, buffer,
 		"RAX: 0x%llX  RBX: 0x%llX  RCX: 0x%llX\n", regs.rax, regs.rbx, regs.rcx);
 	PRINTER(printer, buffer,
@@ -263,7 +263,7 @@ void vCPU::print_registers() const
 TINYKVM_COLD()
 void vCPU::handle_exception(uint8_t intr)
 {
-	auto regs = registers();
+	const auto& regs = registers();
 	char buffer[1024];
 	// Page fault
 	const auto& printer = machine().m_printer;
