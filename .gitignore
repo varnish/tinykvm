@@ -1,5 +1,6 @@
 **/build_*
 **/build
+.vscode/
 guest/interrupts
 guest/guest.elf
 guest/musl/musl

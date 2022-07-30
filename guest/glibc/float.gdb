@@ -1,4 +1,5 @@
 file float
+layout prev
 layout next
 target remote localhost:2159
 

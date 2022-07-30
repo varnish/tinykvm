@@ -13,7 +13,8 @@
 
 inline timespec time_now();
 inline long nanodiff(timespec start_time, timespec end_time);
-static void benchmark_alternate_tenant_resets(tinykvm::Machine&, size_t);
+static long micro_benchmark(std::function<void()>);
+static void benchmark_alternate_tenant_resets(tinykvm::Machine &, size_t);
 static void benchmark_multiple_vms(tinykvm::Machine&, size_t, size_t);
 static void benchmark_multiple_pooled_vms(tinykvm::Machine&, size_t, size_t);
 static std::vector<uint8_t> binary;
@@ -91,6 +92,16 @@ int main(int argc, char** argv)
 		}
 		/* Normal execution of _start -> main() */
 		master_vm.run();
+
+		auto registers_time = micro_benchmark([&] {
+			volatile auto x = master_vm.registers();
+		});
+		printf("registers() average time: %lu nanos\n", registers_time);
+		auto regs = master_vm.registers();
+		auto set_registers_time = micro_benchmark([&] {
+			master_vm.set_registers(regs);
+		});
+		printf("set_registers() average time: %lu nanos\n", set_registers_time);
 	}
 
 	asm("" : : : "memory");
@@ -499,4 +510,18 @@ timespec time_now()
 long nanodiff(timespec start_time, timespec end_time)
 {
 	return (end_time.tv_sec - start_time.tv_sec) * (long)1e9 + (end_time.tv_nsec - start_time.tv_nsec);
+}
+
+static long micro_benchmark(std::function<void()> callback)
+{
+	static constexpr size_t SAMPLES = 3000u;
+	callback();
+	auto t0 = time_now();
+	asm("" ::: "memory");
+	for (size_t i = 0; i < SAMPLES; i++) {
+		callback();
+	}
+	asm("" ::: "memory");
+	auto t1 = time_now();
+	return nanodiff(t0, t1) / SAMPLES;
 }
