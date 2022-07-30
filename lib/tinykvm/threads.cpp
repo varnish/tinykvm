@@ -194,7 +194,7 @@ void Machine::setup_multithreading()
 		});
 	Machine::install_syscall_handler(
 		56, [] (auto& cpu) { // clone
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			const auto flags = regs.rdi;
 			const auto stack = regs.rsi;
 			const auto ptid  = regs.rdx;
@@ -217,7 +217,7 @@ void Machine::setup_multithreading()
 	Machine::install_syscall_handler( // exit
 		60, [] (auto& cpu) {
 			if (cpu.machine().has_threads()) {
-				auto regs = cpu.registers();
+				auto& regs = cpu.registers();
 				const uint32_t status = regs.rdi;
 				auto& thread = cpu.machine().threads().get_thread();
 				THPRINT(">>> Exit on tid=%d, exit code = %d\n",
@@ -234,7 +234,7 @@ void Machine::setup_multithreading()
 	Machine::install_syscall_handler(
 		186, [] (auto& cpu) {
 			/* SYS gettid */
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			if (cpu.machine().has_threads()) {
 				regs.rax = cpu.machine().threads().get_thread().tid;
 				THPRINT("gettid() = %lld\n", regs.rax);
@@ -246,7 +246,7 @@ void Machine::setup_multithreading()
 	Machine::install_syscall_handler(
 		202, [] (auto& cpu) {
 			/* SYS futex */
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			const auto addr = regs.rdi;
 			const auto futex_op = regs.rsi;
 			const uint32_t val = regs.rdx;
@@ -277,7 +277,7 @@ void Machine::setup_multithreading()
 	Machine::install_syscall_handler(
 		218, [] (auto& cpu) {
 			/* SYS set_tid_address */
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 #ifdef ENABLE_GUEST_VERBOSE
 			THPRINT("Set TID address: clear_child_tid=0x%llX\n", regs.rdi);
 #endif

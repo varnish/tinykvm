@@ -24,7 +24,10 @@ inline void Machine::system_call(vCPU& cpu, unsigned idx)
 	m_unhandled_syscall(cpu, idx);
 }
 
-inline tinykvm_x86regs Machine::registers() const {
+inline tinykvm_x86regs& Machine::registers() {
+	return vcpu.registers();
+}
+inline const tinykvm_x86regs& Machine::registers() const {
 	return vcpu.registers();
 }
 inline void Machine::set_registers(const tinykvm_x86regs& regs) {

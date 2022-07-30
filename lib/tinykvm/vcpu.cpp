@@ -18,6 +18,8 @@
 extern "C" int gettid();
 extern "C" int close(int);
 static void unused_usr_handler(int) {}
+// KVM_SYNC_X86_REGS
+// KVM_SYNC_X86_SREGS
 
 struct ksigevent
 {
@@ -82,6 +84,8 @@ void vCPU::init(int id, Machine& machine)
 	if (UNLIKELY(kvm_run == MAP_FAILED)) {
 		Machine::machine_exception("Failed to create KVM run-time mapped memory");
 	}
+	/* We only want GPRs for now. */
+	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
 
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
@@ -160,6 +164,8 @@ void vCPU::smp_init(int id, Machine& machine)
 	if (UNLIKELY(kvm_run == MAP_FAILED)) {
 		Machine::machine_exception("Failed to create KVM run-time mapped memory");
 	}
+	/* We only want GPRs for now. */
+	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
 
 	const kvm_mp_state state {
 		.mp_state = KVM_MP_STATE_RUNNABLE
@@ -222,19 +228,22 @@ void vCPU::deinit()
 	timer_delete(this->timer_id);
 }
 
-tinykvm_x86regs vCPU::registers() const
+const tinykvm_x86regs& vCPU::registers() const
 {
-	struct tinykvm_x86regs regs;
-	if (ioctl(this->fd, KVM_GET_REGS, &regs) < 0) {
-		Machine::machine_exception("KVM_GET_REGS failed");
-	}
-	return regs;
+	return *(tinykvm_x86regs *)&this->kvm_run->s.regs.regs;
+}
+tinykvm_x86regs& vCPU::registers()
+{
+	return *(tinykvm_x86regs *)&this->kvm_run->s.regs.regs;
 }
 void vCPU::set_registers(const struct tinykvm_x86regs& regs)
 {
-	if (ioctl(this->fd, KVM_SET_REGS, &regs) < 0) {
-		Machine::machine_exception("KVM_SET_REGS failed");
-	}
+	this->kvm_run->kvm_dirty_regs = KVM_SYNC_X86_REGS;
+	auto* src_regs = (struct kvm_regs *) &regs;
+	auto* dest_regs = &this->kvm_run->s.regs.regs;
+	/* Only assign if there is a mismatch. */
+	if (src_regs != dest_regs)
+		*dest_regs = *src_regs;
 }
 tinykvm_fpuregs vCPU::fpu_registers() const
 {

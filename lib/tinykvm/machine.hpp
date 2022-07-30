@@ -19,7 +19,8 @@ struct vCPU
 	void init(int id, Machine &);
 	void smp_init(int id, Machine &);
 	void deinit();
-	tinykvm_x86regs registers() const;
+	tinykvm_x86regs& registers();
+	const tinykvm_x86regs& registers() const;
 	void set_registers(const struct tinykvm_x86regs &);
 	tinykvm_fpuregs fpu_registers() const;
 	void get_special_registers(struct kvm_sregs &) const;
@@ -125,7 +126,8 @@ struct Machine
 	long step_one();
 	long run_with_breakpoints(std::array<uint64_t, 4> bps);
 
-	tinykvm_x86regs registers() const;
+	tinykvm_x86regs& registers();
+	const tinykvm_x86regs& registers() const;
 	void set_registers(const tinykvm_x86regs&);
 	tinykvm_fpuregs fpu_registers() const;
 	void get_special_registers(struct kvm_sregs&) const;

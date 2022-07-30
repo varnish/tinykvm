@@ -27,13 +27,13 @@ void setup_kvm_system_calls()
 		[] (auto& cpu, unsigned scall) {
 			SYSPRINT("Unhandled system call: %u\n", scall);
 			(void) scall;
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		0, [] (auto& cpu) { // READ
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			SYSPRINT("READ to fd=%lld, data=0x%llX, size=%llu\n",
 				regs.rdi, regs.rsi, regs.rdx);
 			//auto data = machine.rw_memory_at(regs.rsi, regs.rdx);
@@ -43,7 +43,7 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		1, [] (auto& cpu) { // WRITE
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			const int    fd = regs.rdi;
 			const size_t bytes = regs.rdx;
 			if (bytes > 4096) {
@@ -63,13 +63,13 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		5, [] (auto& cpu) { // FSTAT
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		7, [] (auto& cpu) { // POLL
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			struct pollfd {
 				int   fd;         /* file descriptor */
 				short events;     /* requested events */
@@ -89,7 +89,7 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		9, [] (auto& cpu) { // MMAP
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			if (UNLIKELY(regs.rdi % vMemory::PageSize() != 0 || regs.rsi == 0)) {
 				regs.rax = ~0LL; /* MAP_FAILED */
 			} else {
@@ -113,7 +113,7 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		10, [] (auto& cpu) { // MPROTECT
 			/* SYS mprotect */
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			PRINTMMAP("mprotect(0x%llX, %llu, 0x%llX)\n",
 				regs.rdi, regs.rsi, regs.rdx);
 			regs.rax = 0;
@@ -121,14 +121,14 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		11, [] (auto& cpu) { // MUNMAP
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			PRINTMMAP("munmap(0x%llX, %llu)\n", regs.rdi, regs.rsi);
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		12, [] (auto& cpu) { // BRK
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			if (regs.rdi > cpu.machine().heap_address() + Machine::BRK_MAX) {
 				regs.rax = cpu.machine().heap_address() + Machine::BRK_MAX;
 			} else if (regs.rdi < cpu.machine().heap_address()) {
@@ -142,7 +142,7 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		13, [] (auto& cpu) {
 			/* SYS rt_sigaction */
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("rt_sigaction(signum=%x, act=0x%llX, oldact=0x%llx) = 0x%llX\n",
 				(int) regs.rdi, regs.rsi, regs.rdx, regs.rax);
@@ -151,7 +151,7 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		14, [] (auto& cpu) {
 			/* SYS rt_sigprocmask */
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("rt_sigprocmask(how=%x, set=0x%llX, oldset=0x%llx, size=%llu) = 0x%llX\n",
 					 (int)regs.rdi, regs.rsi, regs.rdx, regs.rcx, regs.rax);
@@ -160,7 +160,7 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		131, [] (auto& cpu) {
 			/* SYS sigaltstack */
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("sigaltstack(ss=0x%llX, old_ss=0x%llx) = 0x%llX\n",
 				regs.rdi, regs.rsi, regs.rax);
@@ -168,7 +168,7 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		16, [] (auto& cpu) { // IOCTL
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			switch (regs.rsi) {
 				case 0x5401: /* TCGETS */
 					regs.rax = 0;
@@ -186,7 +186,7 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		20, [] (auto& cpu) { // WRITEV
 			/* SYS writev */
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			struct g_iovec {
 				uint64_t iov_base;
 				size_t   iov_len;
@@ -226,14 +226,14 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		21, [] (auto& cpu) { // ACCESS
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			SYSPRINT("SYSCALL access 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
 			regs.rax = -1;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		25, [] (auto& cpu) { // MREMAP
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			auto& mm = cpu.machine().mmap();
 			uint64_t old_addr = regs.rdi & ~(uint64_t)0xFFF;
 			uint64_t old_len = regs.rsi & ~(uint64_t)0xFFF;
@@ -250,33 +250,33 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		28, [] (auto& cpu) { // MADVISE
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		35, [] (auto& cpu) { // nanosleep
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		39, [] (auto& cpu) { // GETPID
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		60, [] (auto& cpu) { // EXIT
 #ifdef VERBOSE_GUEST_EXITS
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			printf("Machine exited with return value 0x%llX\n", regs.rdi);
 #endif
 			cpu.stop();
 		});
 	Machine::install_syscall_handler(
 		63, [] (auto& cpu) { // UTSNAME
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			if (cpu.machine().memory_safe_at(regs.rdi, sizeof(struct utsname)))
 			{
 				struct utsname uts {};
@@ -293,13 +293,13 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		72, [] (auto& cpu) { // FCNTL
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		89, [] (auto& cpu) { // READLINK
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = -ENOENT;
 			SYSPRINT("READLINK 0x%llX, bufd=0x%llX, size=%llu = %lld\n",
 				regs.rdi, regs.rsi, regs.rdx, regs.rax);
@@ -307,7 +307,7 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		96, [] (auto& cpu) { // gettimeofday
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			struct timeval tv;
 			regs.rax = gettimeofday(&tv, nullptr);
 			cpu.machine().copy_to_guest(regs.rdi, &tv, sizeof(tv));
@@ -316,13 +316,13 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		102, [] (auto& cpu) { // GETUID
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		158, [] (auto& cpu) {
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			[[maybe_unused]] static constexpr long ARCH_SET_GS = 0x1001;
 			[[maybe_unused]] static constexpr long ARCH_SET_FS = 0x1002;
 			[[maybe_unused]] static constexpr long ARCH_GET_FS = 0x1003;
@@ -338,13 +338,13 @@ void setup_kvm_system_calls()
 		});
 	Machine::install_syscall_handler(
 		201, [] (auto& cpu) { // time
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = time(NULL);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		228, [] (auto& cpu) { // clock_gettime
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			struct timespec ts;
 			regs.rax = clock_gettime(CLOCK_MONOTONIC, &ts);
 			cpu.machine().copy_to_guest(regs.rsi, &ts, sizeof(ts));
@@ -356,7 +356,7 @@ void setup_kvm_system_calls()
 		231, [] (auto& cpu) {
 			/* SYS exit_group */
 #ifdef VERBOSE_GUEST_EXITS
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			printf("Machine exits: _exit(%lld)\n", regs.rdi);
 #endif
 			cpu.stop();
@@ -364,13 +364,13 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		273, [] (auto& cpu) {
 			/* SYS set_robust_list */
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		302, [] (auto& cpu) { // prlimit64
-			auto regs = cpu.registers();
+			auto& regs = cpu.registers();
 			struct
 			{
 				uint64_t cur = 0;
