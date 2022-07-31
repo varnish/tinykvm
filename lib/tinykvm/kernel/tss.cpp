@@ -36,11 +36,11 @@ void setup_amd64_tss(
 {
 	auto& tss = *(AMD64_TSS *)tss_ptr;
 	std::memset(&tss, 0, sizeof(tss));
-	tss.ist1 = IST_ADDR + 0x2000;
-	tss.ist2 = IST_ADDR + 0x1800;
-	tss.rsp0 = IST_ADDR + 0x2000;
-	tss.rsp1 = IST_ADDR + 0x2000;
-	tss.rsp2 = IST_ADDR + 0x2000;
+	tss.rsp0 = IST_ADDR + 0x1000;
+	tss.rsp1 = 0;
+	tss.rsp2 = 0;
+	tss.ist1 = IST_ADDR + 0x1000;
+	tss.ist2 = IST_ADDR + 0x800;
 	tss.iomap_base = 104; // unused
 
 	GDT_write_TSS_segment(gdt_ptr + tss_sel, tss_addr, sizeof(AMD64_TSS)-1);
@@ -49,11 +49,11 @@ void setup_amd64_tss(
 void setup_amd64_tss_smp(char* smp_tss_ptr)
 {
 	auto* tss = (AMD64_TSS *)smp_tss_ptr;
-	for (size_t c = 0; c < 78; c++) {
+	for (size_t c = 0; c < 17; c++) {
 		/** XXX: TSS_SMP_STACK exception stack enough? */
 		tss[c].rsp0 = IST_ADDR + TSS_SMP_STACK * (c + 1);
-		tss[c].rsp1 = tss[c].rsp0;
-		tss[c].rsp2 = tss[c].rsp0;
+		tss[c].rsp1 = 0;
+		tss[c].rsp2 = 0;
 		tss[c].ist1 = tss[c].rsp0;
 		tss[c].iomap_base = 104; // unused
 	}

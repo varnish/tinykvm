@@ -62,38 +62,29 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	const uint64_t pdpt_addr = pml4_addr + 0x1000;
 	const uint64_t pd1_addr  = pml4_addr + 0x2000;
 	const uint64_t pd2_addr  = pml4_addr + 0x3000;
-	const uint64_t pd503_addr  = pml4_addr + 0x4000;
-	const uint64_t low1_addr = pml4_addr + 0x5000;
+	const uint64_t low1_addr = pml4_addr + 0x4000;
 
 	// userspace
 	char* pagetable = memory.at(memory.page_tables);
 	auto* pml4 = (uint64_t*) (pagetable + 0x0);
 	auto* pdpt = (uint64_t*) (pagetable + 0x1000);
 	auto* pd   = (uint64_t*) (pagetable + 0x2000);
-	auto* pd503 = (uint64_t*) (pagetable + 0x4000);
-	auto* lowpage = (uint64_t*) (pagetable + 0x5000);
+	auto* lowpage = (uint64_t*) (pagetable + 0x4000);
 
-	const uint64_t vdso_pdpt_addr = pml4_addr + 0x6000;
-	const uint64_t vsyscall_pd_addr = pml4_addr + 0x7000;
-	const uint64_t vsyscall_pt_addr = pml4_addr + 0x8000;
-	auto* vdso_pdpt = (uint64_t*) (pagetable + 0x6000);
-	auto* vsyscall_pd = (uint64_t*) (pagetable + 0x7000);
-	auto* vsyscall_pt = (uint64_t*) (pagetable + 0x8000);
+	const uint64_t vdso_pdpt_addr = pml4_addr + 0x5000;
+	const uint64_t vsyscall_pd_addr = pml4_addr + 0x6000;
+	const uint64_t vsyscall_pt_addr = pml4_addr + 0x7000;
+	auto* vdso_pdpt = (uint64_t*) (pagetable + 0x5000);
+	auto* vsyscall_pd = (uint64_t*) (pagetable + 0x6000);
+	auto* vsyscall_pt = (uint64_t*) (pagetable + 0x7000);
 
 	// next free page for ELF loader
-	uint64_t free_page = pml4_addr + 0x9000;
+	uint64_t free_page = pml4_addr + 0x8000;
 
 	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
 	pml4[511] = PDE64_PRESENT | PDE64_USER | vdso_pdpt_addr;
 	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd1_addr;
 	pdpt[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd2_addr;
-
-#ifdef TINYKVM_FAST_EXECUTION_TIMEOUT
-	pdpt[3] = PDE64_PRESENT | PDE64_RW | pd503_addr;
-	for (size_t i = 0; i < 511; i++) {
-		pd503[i] = PDE64_PRESENT | PDE64_RW | PDE64_NX | PDE64_PS | 0xfee00000;
-	}
-#endif
 
 	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
 

@@ -274,6 +274,7 @@ std::string_view vCPU::io_data() const
 
 void Machine::setup_long_mode(const Machine* other, const MachineOptions& options)
 {
+	(void) options;
 	if (other == nullptr) // Main VM
 	{
 		setup_amd64_exceptions(
@@ -356,7 +357,7 @@ void Machine::setup_cow_mode(const Machine* other)
 	// XXX: In theory we can avoid initializing one of these pages
 	// until the guest asks for a certain level of concurrency.
 	memory.get_writable_page(IST_ADDR, true);
-	memory.get_writable_page(IST2_ADDR, true);
+	//memory.get_writable_page(IST2_ADDR, true);
 
 	/* Inherit the special registers of the master machine.
 	   Ensures that special registers can never be corrupted. */
