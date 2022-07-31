@@ -2,6 +2,9 @@
 #include <cstring>
 #include <cstdio>
 #include <cassert>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include "load_file.hpp"
 
 #include <tinykvm/rsp_client.hpp>
@@ -102,6 +105,38 @@ int main(int argc, char** argv)
 			master_vm.set_registers(regs);
 		});
 		printf("set_registers() average time: %lu nanos\n", set_registers_time);
+
+		const size_t size = 0x10000;
+		auto* mem = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+
+		auto insert_memory_time = micro_benchmark([&] {
+			tinykvm::VirtualMem vmem {0xC00000000, mem, size};
+			master_vm.install_memory(3, vmem, true);
+			master_vm.delete_memory(3);
+		});
+		munmap(mem, size);
+		printf("insert memory average time: %lu nanos\n", insert_memory_time);
+
+		auto memfd_time = micro_benchmark([&] {
+			int mfd = memfd_create("remapped memory", 0);
+			ftruncate(mfd, size);
+			close(mfd);
+		});
+		printf("memfd open/close average time: %lu nanos\n", memfd_time);
+
+		int mfd = memfd_create("remapped memory", 0);
+		ftruncate(mfd, size);
+
+		tinykvm::VirtualMem vmem{0xC00000000, (char *)0xC00000000, size};
+		master_vm.install_memory(3, vmem, true);
+
+		auto remap_memory_time = micro_benchmark([&] {
+			mem = (char *)mmap((void*)0xC00000000, size, PROT_READ | PROT_WRITE,
+				MAP_PRIVATE, mfd, 0);
+			munmap(mem, size);
+		});
+		printf("memfd map/unmap average time: %lu nanos\n", remap_memory_time);
 	}
 
 	asm("" : : : "memory");
