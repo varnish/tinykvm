@@ -90,7 +90,7 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 
 	lowpage[0] = 0; /* Null-page at 0x0 */
 	/* GDT, IDT and TSS */
-	lowpage[1] = PDE64_PRESENT | PDE64_NX | (1 << 12);
+	lowpage[1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (1 << 12);
 	lowpage[6] = PDE64_PRESENT | PDE64_NX | (6 << 12);
 	lowpage[7] = PDE64_PRESENT | PDE64_NX | (7 << 12);
 
@@ -196,7 +196,7 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	const size_t kernel_begin_idx = PT_ADDR >> 12;
 	const size_t kernel_end_idx = free_page >> 12;
 	for (unsigned i = kernel_begin_idx; i < kernel_end_idx; i++) {
-		lowpage[i] = PDE64_PRESENT | PDE64_RW | PDE64_NX;
+		lowpage[i] = PDE64_PRESENT | PDE64_NX;
 	}
 
 	/* Stack area ~64KB -> 2MB */
