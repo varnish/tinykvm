@@ -167,7 +167,7 @@ std::string_view Machine::sequential_view(address_t dst, size_t len)
 
 		auto* ptr = (const char*) &page[offset];
 		if (ptr != buf.ptr + buf.len)
-			return {nullptr, 0};
+			return {"", 0};
 
 		buf.len += size;
 		dst += size;
@@ -199,13 +199,13 @@ void Machine::foreach_memory(address_t src, size_t len,
 			view = {view.begin(), view.size() + size};
 		} else {
 			callback(view);
-			view = nullptr;
+			view = {"", 0};
 		}
 
 		src += size;
 		len -= size;
 	}
-	if (view != nullptr)
+	if (!view.empty())
 		callback(view);
 }
 
