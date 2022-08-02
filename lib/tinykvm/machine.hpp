@@ -109,6 +109,8 @@ struct Machine
 	   Returns the number of buffers filled, or an exception if not enough. */
 	struct Buffer { const char* ptr; size_t len; };
 	size_t gather_buffers_from_range(size_t cnt, Buffer[], address_t addr, size_t len);
+	/* Build std::string from zero-terminated memory. */
+	std::string copy_from_cstring(address_t src, size_t maxlen = 65535u) const;
 	/* Check if a payload is sequential in guest memory. */
 	std::string_view sequential_view(address_t src, size_t size);
 	/* Call function with each segment of memory in given buffer. */

@@ -209,4 +209,27 @@ void Machine::foreach_memory(address_t src, size_t len,
 		callback(view);
 }
 
+std::string Machine::copy_from_cstring(address_t src, size_t maxlen) const
+{
+	std::string result;
+	while (result.size() < maxlen)
+	{
+		const size_t max_size = std::min(vMemory::PageSize(), maxlen - result.size());
+		const size_t offset = src & PageMask();
+		const auto* page = memory.get_userpage_at(src & ~PageMask());
+
+		const auto* start = (const char *)&page[offset];
+		const auto* end = (const char *)&page[max_size];
+
+		const char* reader = start + strnlen(start, max_size);
+		result.append(start, reader);
+
+		if (reader < end)
+			return result;
+		src += max_size;
+	}
+	return result;
+}
+
+
 } // tinykvm
