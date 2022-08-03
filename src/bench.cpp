@@ -13,6 +13,7 @@
 #define NUM_RESETS   40000
 #define GUEST_MEMORY  0x40000000  /* 1024MB memory */
 #define GUEST_COW_MEM 65536  /* 64KB memory */
+#define FULL_RESET
 
 inline timespec time_now();
 inline long nanodiff(timespec start_time, timespec end_time);
@@ -303,7 +304,7 @@ int main(int argc, char** argv)
 		asm("" : : : "memory");
 		auto frt1 = time_now();
 		asm("" : : : "memory");
-		fvm.timed_vmcall(vmcall_address, 0x400000);
+		fvm.timed_vmcall(vmcall_address, 4.0f);
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		frtime += nanodiff(frt0, frt1);
@@ -401,7 +402,7 @@ void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm, const size_t
 		asm("" : : : "memory");
 		auto frt1 = time_now();
 		asm("" : : : "memory");
-		fvm.timed_vmcall(vmcall_address, 0x400000);
+		fvm.timed_vmcall(vmcall_address, 4.0f);
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		frtime += nanodiff(frt0, frt1);
@@ -438,11 +439,17 @@ void benchmark_multiple_vms(tinykvm::Machine& master_vm, size_t NUM, size_t RESE
 		auto frt0 = time_now();
 		asm("" : : : "memory");
 		counter = (counter + 1) % NUM;
+#ifdef FULL_RESET
 		fvm[counter].reset_to(master_vm, options);
+#endif
 		asm("" : : : "memory");
 		auto frt1 = time_now();
 		asm("" : : : "memory");
-		fvm[counter].timed_vmcall(vmcall_address, 0x400000);
+#ifdef FULL_RESET
+		fvm[counter].timed_vmcall(vmcall_address, 4.0f);
+#else
+		fvm[counter].timed_reentry(vmcall_address, 4.0f);
+#endif
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		frtime += nanodiff(frt0, frt1);
@@ -502,11 +509,17 @@ void benchmark_multiple_pooled_vms(tinykvm::Machine& master_vm, size_t NUM, size
 		asm("" : : : "memory");
 		auto frt0 = time_now();
 		asm("" : : : "memory");
+#ifdef FULL_RESET
 		fvm->reset_to(*data.master_vm, options);
+#endif
 		asm("" : : : "memory");
 		auto frt1 = time_now();
 		asm("" : : : "memory");
-		fvm->timed_vmcall(data.addr, 1.0f);
+#ifdef FULL_RESET
+		fvm->timed_vmcall(data.addr, 4.0f);
+#else
+		fvm->timed_reentry(data.addr, 4.0f);
+#endif
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		return {frt0, frt1, frt2};
