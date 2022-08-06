@@ -210,7 +210,7 @@ Machine::address_t Machine::mmap_allocate(size_t bytes)
 }
 bool Machine::mmap_relax(uint64_t addr, size_t size, size_t new_size)
 {
-	if (this->m_mm == addr + size && size <= new_size) {
+	if (this->m_mm == addr + size && new_size <= size) {
 		this->m_mm = (addr + new_size + PageMask) & ~PageMask;
 		return true;
 	}
