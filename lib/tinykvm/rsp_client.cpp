@@ -125,7 +125,11 @@ int RSPClient::forge_packet(
 {
 	char data[4 + 2*PACKET_SIZE];
 	int datalen = vsnprintf(data, sizeof(data), fmt, args);
-	return forge_packet(dst, dstlen, data, datalen);
+	/* NOTE: vsnprintf has an insane return value. */
+	if (datalen > 0 && (size_t)datalen < sizeof(data))
+		return forge_packet(dst, dstlen, data, datalen);
+	else
+		return -1;
 }
 bool RSPClient::sendf(const char* fmt, ...)
 {
