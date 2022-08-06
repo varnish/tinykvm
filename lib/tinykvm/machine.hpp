@@ -102,17 +102,19 @@ struct Machine
 
 	/* When zeroes == true, new pages will be zeroed instead of duplicated */
 	void copy_to_guest(address_t addr, const void*, size_t, bool zeroes = false);
-	void copy_from_guest(void* dst, address_t addr, size_t);
-	void unsafe_copy_from_guest(void* dst, address_t addr, size_t);
+	void copy_from_guest(void* dst, address_t addr, size_t) const;
+	void unsafe_copy_from_guest(void* dst, address_t addr, size_t) const;
 	/* Fill an array of buffers pointing to complete guest virtual [addr, len].
 	   Throws an exception if there was a protection violation.
 	   Returns the number of buffers filled, or an exception if not enough. */
 	struct Buffer { const char* ptr; size_t len; };
-	size_t gather_buffers_from_range(size_t cnt, Buffer[], address_t addr, size_t len);
+	size_t gather_buffers_from_range(size_t cnt, Buffer[], address_t addr, size_t len) const;
 	/* Build std::string from zero-terminated memory. */
 	std::string copy_from_cstring(address_t src, size_t maxlen = 65535u) const;
+	/* Build std::string from buffer, length in memory. */
+	std::string buffer_to_string(address_t src, size_t len, size_t maxlen = 65535u) const;
 	/* Check if a payload is sequential in guest memory. */
-	std::string_view sequential_view(address_t src, size_t size);
+	std::string_view sequential_view(address_t src, size_t size) const;
 	/* Call function with each segment of memory in given buffer. */
 	void foreach_memory(address_t src, size_t size, std::function<void(const std::string_view)>) const;
 	/* Efficiently copy between machines */

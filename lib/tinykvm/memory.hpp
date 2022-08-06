@@ -42,6 +42,7 @@ struct vMemory {
 	bool safely_within(uint64_t addr, size_t asize) const noexcept {
 		return (addr >= safebase) && (addr + asize <= physbase + this->size);
 	}
+	const char* safely_at(uint64_t addr, size_t asize) const;
 	char* safely_at(uint64_t addr, size_t asize);
 	std::string_view view(uint64_t addr, size_t asize) const;
 

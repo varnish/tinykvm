@@ -98,6 +98,18 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 	}
 	memory_exception("Memory::safely_at() invalid region", addr, asize);
 }
+const char* vMemory::safely_at(uint64_t addr, size_t asize) const
+{
+	if (safely_within(addr, asize))
+		return &ptr[addr - physbase];
+	/* XXX: Security checks */
+	for (auto& bank : banks) {
+		if (bank.within(addr, asize)) {
+			return bank.at(addr);
+		}
+	}
+	memory_exception("Memory::safely_at() invalid region", addr, asize);
+}
 std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 	if (safely_within(addr, asize))
 		return {&ptr[addr - physbase], asize};

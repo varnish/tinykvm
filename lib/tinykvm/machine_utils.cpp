@@ -30,7 +30,7 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 	std::memcpy(dst, vsrc, len);
 }
 
-void Machine::copy_from_guest(void* vdst, address_t addr, size_t len)
+void Machine::copy_from_guest(void* vdst, address_t addr, size_t len) const
 {
 	if (uses_cow_memory())
 	{
@@ -53,7 +53,7 @@ void Machine::copy_from_guest(void* vdst, address_t addr, size_t len)
 	std::memcpy(vdst, src, len);
 }
 
-void Machine::unsafe_copy_from_guest(void* vdst, address_t addr, size_t len)
+void Machine::unsafe_copy_from_guest(void* vdst, address_t addr, size_t len) const
 {
 	if (uses_cow_memory())
 	{
@@ -77,7 +77,7 @@ void Machine::unsafe_copy_from_guest(void* vdst, address_t addr, size_t len)
 }
 
 size_t Machine::gather_buffers_from_range(
-	size_t cnt, Buffer buffers[], address_t addr, size_t len)
+	size_t cnt, Buffer buffers[], address_t addr, size_t len) const
 {
 	size_t index = 0;
 	Buffer* last = nullptr;
@@ -149,7 +149,7 @@ void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size
 	}
 }
 
-std::string_view Machine::sequential_view(address_t dst, size_t len)
+std::string_view Machine::sequential_view(address_t dst, size_t len) const
 {
 	const size_t offset = dst & PageMask();
 	const size_t size = std::min(vMemory::PageSize() - offset, len);
@@ -231,5 +231,15 @@ std::string Machine::copy_from_cstring(address_t src, size_t maxlen) const
 	return result;
 }
 
+std::string Machine::buffer_to_string(address_t src, size_t len, size_t maxlen) const
+{
+	if (UNLIKELY(len > maxlen))
+		machine_exception("String buffer too large", len);
+
+	std::string result;
+	result.resize(len);
+	this->copy_from_guest(result.data(), src, len);
+	return result;
+}
 
 } // tinykvm
