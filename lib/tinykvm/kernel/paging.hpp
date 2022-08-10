@@ -13,7 +13,7 @@ extern void foreach_page(const vMemory&, foreach_page_t callback);
 extern void foreach_page_makecow(vMemory&, uint64_t shared_memory_boundary);
 
 extern void page_at(vMemory&, uint64_t addr, foreach_page_t);
-extern char * writable_page_at(vMemory&, uint64_t addr, bool zeroes = false);
+extern char * writable_page_at(vMemory&, uint64_t addr, uint64_t flags, bool zeroes = false);
 extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags);
 
 static inline bool page_is_zeroed(const uint64_t* page) {

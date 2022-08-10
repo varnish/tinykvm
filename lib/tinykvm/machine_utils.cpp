@@ -1,6 +1,7 @@
 #include "machine.hpp"
 
 #include <cstring>
+#define USERMODE_FLAGS (3UL << 1 | 1UL << 63) /* USER, READ/WRITE, NX */
 
 namespace tinykvm {
 static constexpr uint64_t PageMask() {
@@ -16,7 +17,7 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 		{
 			const size_t offset = addr & PageMask();
 			const size_t size = std::min(vMemory::PageSize() - offset, len);
-			auto* page = memory.get_writable_page(addr & ~PageMask(), zeroes);
+			auto* page = memory.get_writable_page(addr & ~PageMask(), USERMODE_FLAGS, zeroes);
 			std::copy(src, src + size, &page[offset]);
 
 			addr += size;
@@ -123,7 +124,7 @@ void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size
 			const size_t offset = addr & PageMask();
 			const size_t size = std::min(vMemory::PageSize() - offset, buf.len);
 			/* NOTE: We could use zeroes if remaining is >= PageSize() */
-			auto* page = memory.get_writable_page(addr & ~PageMask(), false);
+			auto *page = memory.get_writable_page(addr & ~PageMask(), USERMODE_FLAGS, false);
 			std::copy(buf.ptr, buf.ptr + size, &page[offset]);
 
 			if (size == buf.len) {

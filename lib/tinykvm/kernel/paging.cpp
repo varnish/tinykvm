@@ -399,7 +399,7 @@ static void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& d
 	data = page.pmem;
 }
 
-char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
+char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, bool write_zeroes)
 {
 	CLPRINT("Creating a writable page for 0x%lX\n", addr);
 	auto* pml4 = memory.page_at(memory.page_tables);
@@ -466,8 +466,12 @@ char * writable_page_at(vMemory& memory, uint64_t addr, bool write_zeroes)
 						}
 						CLPRINT("-> Cloning a PT entry: 0x%lX\n", pt[e]);
 					}
-					CLPRINT("-> Returning data: %p\n", data);
-					return (char *)data;
+					if ((pt[e] & verify_flags) == verify_flags) {
+						CLPRINT("-> Returning data: %p\n", data);
+						return (char *)data;
+					} else {
+						memory_exception("page_at: pt entry not user writable", addr, pt[e]);
+					}
 				} // pt
 				memory_exception("page_at: pt entry not present", addr, PDE64_PTE_SIZE);
 			} // pd

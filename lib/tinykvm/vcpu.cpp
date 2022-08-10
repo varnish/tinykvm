@@ -356,8 +356,8 @@ void Machine::setup_cow_mode(const Machine* other)
 	// stackless interrupts, to be honest. Something to think about?
 	// XXX: In theory we can avoid initializing one of these pages
 	// until the guest asks for a certain level of concurrency.
-	memory.get_writable_page(IST_ADDR, true);
-	//memory.get_writable_page(IST2_ADDR, true);
+	memory.get_writable_page(IST_ADDR, PDE64_RW, true);
+	//memory.get_writable_page(IST2_ADDR, PDE64_RW, true);
 
 	/* Inherit the special registers of the master machine.
 	   Ensures that special registers can never be corrupted. */

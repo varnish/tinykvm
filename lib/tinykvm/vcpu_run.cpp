@@ -1,5 +1,6 @@
 #include "machine.hpp"
 
+#include "kernel/amd64.hpp"
 #include "kernel/idt.hpp"
 #include "kernel/memory_layout.hpp"
 #include <linux/kvm.h>
@@ -142,7 +143,7 @@ long vCPU::run_once()
 					Machine::machine_exception("Security violation", intr);
 				}
 
-				machine().memory.get_writable_page(addr, false);
+				machine().memory.get_writable_page(addr, PDE64_USER | PDE64_RW, false);
 				return KVM_EXIT_IO;
 			}
 			else if (intr == 1) /* Debug trap */
@@ -167,12 +168,14 @@ long vCPU::run_once()
 		return KVM_EXIT_IO;
 
 	case KVM_EXIT_MMIO: {
+			const uint64_t addr = kvm_run->mmio.phys_addr;
 			char buffer[256];
 			PRINTER(machine().m_printer, buffer,
-				"Write outside of physical memory at 0x%llX\n",
-				kvm_run->mmio.phys_addr);
-			Machine::machine_exception("Memory write outside physical memory (out of memory?)",
-									   kvm_run->mmio.phys_addr);
+				"Write outside of physical memory at 0x%lX\n",
+				addr);
+			Machine::machine_exception(
+				"Memory write outside physical memory (out of memory?)",
+				addr);
 		}
 	case KVM_EXIT_INTERNAL_ERROR:
 		Machine::machine_exception("KVM internal error");

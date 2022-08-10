@@ -178,11 +178,11 @@ MemoryBank::Page vMemory::new_page(uint64_t vaddr)
 	return banks.get_available_bank().get_next_page(vaddr);
 }
 
-char* vMemory::get_writable_page(uint64_t addr, bool zeroes)
+char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)
 {
 	std::lock_guard<std::mutex> lock (this->mtx_smp);
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
-	char* ret = writable_page_at(*this, addr, zeroes);
+	char* ret = writable_page_at(*this, addr, flags, zeroes);
 	//printf("-> Translation of 0x%lX: 0x%lX\n",
 	//	addr, machine.translate(addr));
 	//print_pagetables(*this);
