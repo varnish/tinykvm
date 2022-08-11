@@ -1,5 +1,6 @@
 #include <tinykvm/machine.hpp>
 #include <cstring>
+#include <sys/random.h>
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
@@ -107,7 +108,7 @@ void setup_kvm_system_calls()
 				}
 			}
 			PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
-				regs.rdi, regs.rsi, regs.rdx, regs.rcx, regs.rax);
+				regs.rdi, regs.rsi, regs.rdx, regs.r10, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -395,6 +396,28 @@ void setup_kvm_system_calls()
 			default:
 				regs.rax = -ENOSYS;
 			}
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		318, [] (auto& cpu) { // getrandom
+			auto& regs = cpu.registers();
+			const uint64_t g_buf = regs.rdi;
+			const uint32_t bytes = regs.rsi;
+			const int      flags = regs.rdx;
+			(void) flags;
+
+			/* Max 64kb randomness. */
+			if (bytes <= 0x10000) {
+				char buffer[bytes];
+				ssize_t actual = getrandom(buffer, bytes, 0);
+				if (actual > 0)
+					cpu.machine().copy_to_guest(g_buf, buffer, actual);
+				regs.rax = actual;
+			} else {
+				regs.rax = -1;
+			}
+			SYSPRINT("getrandom(buf=0x%lX bytes=%u flags=%X) = %lld\n",
+					 g_buf, bytes, flags, regs.rax);
 			cpu.set_registers(regs);
 		});
 	// Threads: clone, futex, block/tkill etc.
