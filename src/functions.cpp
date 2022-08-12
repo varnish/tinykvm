@@ -211,7 +211,7 @@ void setup_kvm_system_calls()
 						continue;
 					if (vec.iov_len > 4096) {
 						written = -ENOMEM;
-						continue;
+						break;
 					}
 					const size_t bytes = vec.iov_len;
 					char buffer[bytes];
