@@ -109,12 +109,33 @@ struct Machine
 	   Returns the number of buffers filled, or an exception if not enough. */
 	struct Buffer { const char* ptr; size_t len; };
 	size_t gather_buffers_from_range(size_t cnt, Buffer[], address_t addr, size_t len) const;
+	/* Same as above, but all buffers have pre-allocated writable pages. */
+	struct WrBuffer { char* ptr; size_t len; };
+	size_t writable_buffers_from_range(size_t cnt, WrBuffer[], address_t addr, size_t len);
 	/* Build std::string from zero-terminated memory. */
 	std::string copy_from_cstring(address_t src, size_t maxlen = 65535u) const;
 	/* Build std::string from buffer, length in memory. */
 	std::string buffer_to_string(address_t src, size_t len, size_t maxlen = 65535u) const;
-	/* Check if a payload is sequential in guest memory. */
-	std::string_view sequential_view(address_t src, size_t size) const;
+
+	struct StringOrView {
+		const char* begin() const noexcept { return sv.begin(); }
+		const char* end() const noexcept { return sv.end(); }
+		const char* c_str() const noexcept { return sv.begin(); }
+		size_t size() const noexcept { return sv.size(); }
+
+		bool is_sequential() const noexcept { return str.empty(); }
+
+		explicit StringOrView(std::string_view strview) : sv{strview} {}
+		explicit StringOrView(std::string s) : str{std::move(s)}, sv{str} {}
+
+		std::string str;
+		std::string_view sv;
+	};
+	/* Helper to avoid allocating string. */
+	StringOrView string_or_view(address_t src, size_t size) const;
+	/* Calls string_view when memory is sequential, otherwise builds string. */
+	void string_or_view(address_t src, size_t size, std::function<void(std::string_view)>, std::function<void(std::string)>) const;
+
 	/* Call function with each segment of memory in given buffer. */
 	void foreach_memory(address_t src, size_t size, std::function<void(const std::string_view)>) const;
 	/* Efficiently copy between machines */

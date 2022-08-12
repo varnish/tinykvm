@@ -105,6 +105,34 @@ size_t Machine::gather_buffers_from_range(
 	}
 	return index;
 }
+size_t Machine::writable_buffers_from_range(
+	size_t cnt, WrBuffer buffers[], address_t addr, size_t len)
+{
+	size_t index = 0;
+	WrBuffer* last = nullptr;
+	while (len != 0 && index < cnt)
+	{
+		const size_t offset = addr & PageMask();
+		const size_t size = std::min(vMemory::PageSize() - offset, len);
+		auto *page = memory.get_writable_page(addr & ~PageMask(), USERMODE_FLAGS, false);
+
+		auto* ptr = (char*) &page[offset];
+		if (last && ptr == last->ptr + last->len) {
+			last->len += size;
+		} else {
+			last = &buffers[index];
+			last->ptr = ptr;
+			last->len = size;
+			index ++;
+		}
+		addr += size;
+		len -= size;
+	}
+	if (UNLIKELY(len != 0)) {
+		throw MemoryException("Out of buffers", index, cnt);
+	}
+	return index;
+}
 
 void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size_t len)
 {
@@ -150,31 +178,83 @@ void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size
 	}
 }
 
-std::string_view Machine::sequential_view(address_t dst, size_t len) const
+void Machine::string_or_view(address_t src, size_t len,
+	std::function<void(std::string_view)> sv_cb, std::function<void(std::string)> str_cb) const
 {
-	const size_t offset = dst & PageMask();
+	const size_t offset = src & PageMask();
 	const size_t size = std::min(vMemory::PageSize() - offset, len);
-	auto* page = memory.get_userpage_at(dst & ~PageMask());
+	const auto* page = memory.get_userpage_at(src & ~PageMask());
 
+	std::string str;
 	Buffer buf {(const char*) &page[offset], size};
-	dst += size;
+	src += size;
 	len -= size;
 
 	while (len != 0)
 	{
-		const size_t offset = dst & PageMask();
+		const size_t offset = src & PageMask();
 		const size_t size = std::min(vMemory::PageSize() - offset, len);
-		auto* page = memory.get_userpage_at(dst & ~PageMask());
+		const auto* page = memory.get_userpage_at(src & ~PageMask());
 
 		auto* ptr = (const char*) &page[offset];
-		if (ptr != buf.ptr + buf.len)
-			return {"", 0};
+		if (buf.len == 0) {
+			str.append(ptr, ptr + size);
+		}
+		else if (ptr != buf.ptr + buf.len) {
+			str = std::string(buf.ptr, buf.ptr + buf.len);
+			str.append(ptr, ptr + size);
+			buf.len = 0;
+		} else {
+			buf.len += size;
+		}
 
-		buf.len += size;
-		dst += size;
+		src += size;
 		len -= size;
 	}
-	return {buf.ptr, buf.len};
+	if (buf.len > 0) {
+		sv_cb({buf.ptr, buf.len});
+	} else {
+		str_cb(std::move(str));
+	}
+}
+Machine::StringOrView Machine::string_or_view(address_t src, size_t len) const
+{
+	const size_t offset = src & PageMask();
+	const size_t size = std::min(vMemory::PageSize() - offset, len);
+	const auto* page = memory.get_userpage_at(src & ~PageMask());
+
+	std::string str;
+	Buffer buf {(const char*) &page[offset], size};
+	src += size;
+	len -= size;
+
+	while (len != 0)
+	{
+		const size_t offset = src & PageMask();
+		const size_t size = std::min(vMemory::PageSize() - offset, len);
+		const auto* page = memory.get_userpage_at(src & ~PageMask());
+
+		auto* ptr = (const char*) &page[offset];
+		if (buf.len == 0) {
+			str.append(ptr, ptr + size);
+		}
+		else if (ptr != buf.ptr + buf.len) {
+			str.reserve(buf.len + len);
+			str.append(buf.ptr, buf.ptr + buf.len);
+			str.append(ptr, ptr + size);
+			buf.len = 0;
+		} else {
+			buf.len += size;
+		}
+
+		src += size;
+		len -= size;
+	}
+	if (buf.len > 0) {
+		return StringOrView{std::string_view{buf.ptr, buf.len}};
+	} else {
+		return StringOrView{std::move(str)};
+	}
 }
 
 void Machine::foreach_memory(address_t src, size_t len,
