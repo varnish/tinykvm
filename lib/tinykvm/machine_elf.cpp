@@ -183,11 +183,11 @@ uint64_t Machine::address_of(const char* name) const
 }
 std::string Machine::resolve(uint64_t rip) const
 {
-	if (UNLIKELY(m_binary.empty())) return nullptr;
+	if (UNLIKELY(m_binary.empty())) return "";
 	const auto* sym_hdr = section_by_name(m_binary, ".symtab");
-	if (UNLIKELY(sym_hdr == nullptr)) return nullptr;
+	if (UNLIKELY(sym_hdr == nullptr)) return "";
 	const auto* str_hdr = section_by_name(m_binary, ".strtab");
-	if (UNLIKELY(str_hdr == nullptr)) return nullptr;
+	if (UNLIKELY(str_hdr == nullptr)) return "";
 
 	const auto* symtab = elf_sym_index(m_binary, sym_hdr, 0);
 	const size_t symtab_ents = sym_hdr->sh_size / sizeof(Elf64_Sym);
