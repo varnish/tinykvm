@@ -420,6 +420,13 @@ void setup_kvm_system_calls()
 					 g_buf, bytes, flags, regs.rax);
 			cpu.set_registers(regs);
 		});
+	Machine::install_syscall_handler(
+		334, [] (auto& cpu) { // faccessat
+			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			cpu.set_registers(regs);
+		});
+
 	// Threads: clone, futex, block/tkill etc.
 	Machine::setup_multithreading();
 }
