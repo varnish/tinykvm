@@ -92,6 +92,19 @@ void MemoryBanks::reset(const MachineOptions& options)
 	}
 	m_search = 0;
 	m_max_pages = options.max_cow_mem / vMemory::PageSize();
+
+	/* The limit feature is off when reset_free_work_mem == 0. */
+	size_t limit_pages = options.reset_free_work_mem / vMemory::PageSize();
+	if (limit_pages > 0)
+	{
+		size_t final_banks = std::max(size_t(1u), limit_pages / MemoryBank::N_PAGES);
+		/* Erase the last N elements after final_banks */
+		while (final_banks < m_mem.size()) {
+			this->m_idx--;
+			m_machine.delete_memory(this->m_idx);
+			m_mem.pop_back();
+		}
+	}
 }
 
 MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint16_t np, uint16_t x)
