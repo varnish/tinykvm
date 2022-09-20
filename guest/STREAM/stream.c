@@ -91,7 +91,7 @@
  *          per array.
  */
 #ifndef STREAM_ARRAY_SIZE
-#   define STREAM_ARRAY_SIZE	8000000
+#   define STREAM_ARRAY_SIZE	18000000
 #endif
 
 /*  2) STREAM runs each kernel "NTIMES" times and reports the *best* result
@@ -105,11 +105,11 @@
  */
 #ifdef NTIMES
 #if NTIMES<=1
-#   define NTIMES	10
+#   define NTIMES	30
 #endif
 #endif
 #ifndef NTIMES
-#   define NTIMES	10
+#   define NTIMES	30
 #endif
 
 /*  Users are allowed to modify the "OFFSET" variable, which *may* change the
@@ -204,8 +204,8 @@ extern void tuned_STREAM_Triad(STREAM_TYPE scalar);
 #ifdef _OPENMP
 extern int omp_get_num_threads();
 #endif
-int
-main()
+void
+stream()
     {
     int			quantum, checktick();
     int			BytesPerWord;
@@ -374,8 +374,6 @@ main()
     /* --- Check Results --- */
     checkSTREAMresults();
     printf(HLINE);
-
-    return 0;
 }
 
 # define	M	20
@@ -584,11 +582,20 @@ void tuned_STREAM_Triad(STREAM_TYPE scalar)
 /* end of stubs for the "tuned" versions of the kernels */
 #endif
 
-__attribute__((used))
+int main(int argc, char** argv) {
+	stream();
+}
+
+__attribute__((used, retain))
 extern void my_backend() {
 	for (size_t i = 0; i < 4; i++) {
 		avgtime[i] = maxtime[i] = 0.0;
 		mintime[i] = FLT_MAX;
 	}
-	main();
+	bytes[0] = 2 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE;
+	bytes[1] = 2 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE;
+	bytes[2] = 3 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE;
+	bytes[3] = 3 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE;
+
+	stream();
 }

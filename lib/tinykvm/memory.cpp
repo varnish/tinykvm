@@ -175,7 +175,11 @@ VirtualMem vMemory::vmem() const
 
 MemoryBank::Page vMemory::new_page(uint64_t vaddr)
 {
-	return banks.get_available_bank().get_next_page(vaddr);
+	return banks.get_available_bank(1u).get_next_page(vaddr, 1u);
+}
+MemoryBank::Page vMemory::new_hugepage(uint64_t vaddr)
+{
+	return banks.get_available_bank(512u).get_next_page(vaddr, 512u);
 }
 
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)

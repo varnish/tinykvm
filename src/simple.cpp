@@ -6,7 +6,7 @@
 
 #include <tinykvm/rsp_client.hpp>
 #define GUEST_MEMORY   0x40000000  /* 1024MB memory */
-#define GUEST_WORK_MEM 256*1024*1024 /* 256MB working mem */
+#define GUEST_WORK_MEM 1024UL * 1024*1024 /* MB working mem */
 
 static uint64_t verify_exists(tinykvm::Machine& vm, const char* name)
 {
@@ -17,6 +17,9 @@ static uint64_t verify_exists(tinykvm::Machine& vm, const char* name)
 	}
 	return addr;
 }
+
+inline timespec time_now();
+inline long nanodiff(timespec start_time, timespec end_time);
 
 int main(int argc, char** argv)
 {
@@ -52,11 +55,12 @@ int main(int argc, char** argv)
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_WORK_MEM,
+		.reset_free_work_mem = 0,
 		.verbose_loader = false,
-		.hugepages = (getenv("HUGE") != nullptr)
+		.hugepages = (getenv("HUGE") != nullptr),
 	};
 	tinykvm::Machine master_vm {binary, options};
-	master_vm.set_stack_address(0x800000);
+	//master_vm.set_stack_address(0x800000);
 	master_vm.setup_linux(
 		{"vmod_kvm", "xpizza.com"
 					 "0"},
@@ -107,10 +111,22 @@ int main(int argc, char** argv)
 		return 0;
 	}
 
+	asm("" ::: "memory");
+	auto t0 = time_now();
+	asm("" ::: "memory");
+
 	/* Normal execution of _start -> main() */
 	master_vm.run();
 
-	if (call_addr == 0x0) return 0;
+	asm("" ::: "memory");
+	auto t1 = time_now();
+	asm("" ::: "memory");
+
+	if (call_addr == 0x0) {
+		double t = nanodiff(t0, t1) / 1e9;
+		printf("Time: %fs Return value: %ld\n", t, master_vm.return_value());
+		return 0;
+	}
 
 	/* Fork master VM */
 	master_vm.prepare_copy_on_write();
@@ -120,6 +136,25 @@ int main(int argc, char** argv)
 	tinykvm::tinykvm_x86regs regs;
 	vm.setup_call(regs, call_addr, rsp);
 	vm.set_registers(regs);
-	printf("Calling 0x%lX\n", call_addr);
-	vm.run(2.0f);
+	printf("Calling fork at 0x%lX\n", call_addr);
+	vm.run(5.0f);
+
+	/* Re-run */
+	vm.reset_to(master_vm, options);
+
+	vm.setup_call(regs, call_addr, rsp);
+	vm.set_registers(regs);
+	printf("Calling fork at 0x%lX\n", call_addr);
+	vm.run(5.0f);
+}
+
+timespec time_now()
+{
+	timespec t;
+	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+	return t;
+}
+long nanodiff(timespec start_time, timespec end_time)
+{
+	return (end_time.tv_sec - start_time.tv_sec) * (long)1e9 + (end_time.tv_nsec - start_time.tv_nsec);
 }

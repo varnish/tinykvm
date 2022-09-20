@@ -15,7 +15,7 @@
 #else
 #define CLPRINT(...) /* ... */
 #endif
-#define PDE64_CLONEABLE  (1ull << 11)
+#define PDE64_CLONEABLE  (1ul << 11)
 
 namespace tinykvm {
 
@@ -320,7 +320,7 @@ void foreach_page_makecow(vMemory& mem, uint64_t shared_memory_boundary)
 		if (addr < shared_memory_boundary && addr != 0xffe00000) {
 			const uint64_t flags = (PDE64_PRESENT | PDE64_RW);
 			if ((entry & flags) == flags) {
-				entry &= ~(uint64_t) PDE64_RW;
+				entry &= ~PDE64_RW;
 				entry |= PDE64_CLONEABLE;
 			}
 		}
@@ -428,28 +428,52 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 				uint64_t* pt = memory.page_at(pd[k] & ~(uint64_t)0x8000000000000FFF);
 				/* Make copy of page if needed (not likely) */
 				if (UNLIKELY(is_copy_on_write(pd[k]))) {
+					/* Copy-on-write 2MB page */
+					if ((pd[k] & PDE64_PS)) {
+						CLPRINT("Duplicating 2MB page, addr=0x%lX rw=%lu cloneable=%lu\n",
+							addr, pd[k] & PDE64_RW, pd[k] & PDE64_CLONEABLE);
+
+						const bool dirty = pd[k] & PDE64_DIRTY;
+
+						/* Get the physical page at pt_base. */
+						auto* data = memory.page_at(pt_mem);
+
+						/* Set the new page address and bits, adding RW and removing DIRTY. */
+						auto page = memory.new_hugepage(pt_mem);
+						uint64_t flags = (pd[k] & PDE64_PD_SPLIT_MASK) & ~PDE64_DIRTY;
+						pd[k] = page.addr | flags | PDE64_RW;
+
+						/* Verify flags after CLONEABLE -> RW, in order to match RW. */
+						if ((pd[k] & verify_flags) != verify_flags) {
+							print_pagetables(memory);
+							memory_exception("page_at: pt entry not user writable", addr, pd[k]);
+						}
+
+						/* We deliberately use DIRTY bit to know when to duplicate memory. */
+						if (dirty) {
+							for (size_t e = 0; e < 512; e++) {
+								tinykvm::page_duplicate(page.pmem + e * 512, data + e * 512);
+							}
+						}
+
+						/* Return 4k page offset to new duplicated page. */
+						const uint64_t e = index_from_pt_entry(addr);
+						return (char *)page.pmem + e * PAGE_SIZE;
+					}
+
 					clone_and_update_entry(memory, pd[k], pt, PDE64_RW);
 					CLPRINT("-> Cloning a PD entry: 0x%lX\n", pd[k]);
 				}
 
-				/* NOTE: Make sure we are re-reading pd[k] */
-				if (UNLIKELY(pd[k] & PDE64_PS)) { // 2MB page
-					CLPRINT("-> Splitting a 2MB PD entry into 4KB pages\n");
-					/* Remove PS flag */
-					pd[k] &= ~(uint64_t)PDE64_PS;
-					/* Copy flags from 2MB page, except read-write */
-					uint64_t flags = pd[k] & PDE64_PD_SPLIT_MASK;
-					uint64_t branch_flags = flags | PDE64_CLONEABLE;
-					/* Allocate pagetable page and fill 4k entries.
-					   NOTE: new_page(0x0) makes page not a candidate for
-					   sequentialization for eg. vmcommit() later on. */
-					auto page = memory.new_page(0x0);
-					for (size_t e = 0; e < 512; e++) {
-						page.pmem[e] = pt_base | (e << 12) | branch_flags;
+				if (pd[k] & PDE64_PS) { // 2MB page
+					if ((pd[k] & verify_flags) != verify_flags) {
+						print_pagetables(memory);
+						memory_exception("page_at: pt entry not user writable", addr, pd[k]);
 					}
-					/* Update 2MB entry, add read-write */
-					pd[k] = page.addr | flags | PDE64_RW;
-					pt = page.pmem;
+
+					const uint64_t e = index_from_pt_entry(addr);
+					auto* data = memory.page_at(pt_mem);
+					return (char *)data + e * PAGE_SIZE;
 				}
 
 				const uint64_t e = index_from_pt_entry(addr);

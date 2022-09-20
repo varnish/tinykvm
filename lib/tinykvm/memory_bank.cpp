@@ -34,7 +34,7 @@ void MemoryBanks::set_max_pages(size_t new_max)
 char* MemoryBanks::try_alloc(size_t N)
 {
 	char* ptr = (char*)MAP_FAILED;
-	if (this->m_using_hugepages) {
+	if (this->m_using_hugepages && N == 512) {
 		ptr = (char*) mmap(NULL, N * vMemory::PageSize(), PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
 	}
@@ -67,11 +67,12 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 	}
 	throw MemoryException("Failed to allocate memory bank", 0, size);
 }
-MemoryBank& MemoryBanks::get_available_bank()
+MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 {
+	/* Hugepages are 512 4k pages, and consume a whole bank, right now. */
 	for (; m_search < m_mem.size(); m_search++) {
 		auto& bank = m_mem.at(m_search);
-		if (!bank.empty()) {
+		if (bank.room_for(pages)) {
 			return bank;
 		}
 	}
@@ -115,13 +116,12 @@ MemoryBank::~MemoryBank()
 	munmap(this->mem, this->n_pages * vMemory::PageSize());
 }
 
-MemoryBank::Page MemoryBank::get_next_page(uint64_t vaddr)
+MemoryBank::Page MemoryBank::get_next_page(uint64_t vaddr, size_t pages)
 {
-	assert(n_used < n_pages);
+	assert(n_used + pages <= n_pages);
 	uint64_t offset = vMemory::PageSize() * n_used;
-	page_vaddr.at(n_used) = vaddr;
-	n_used++;
-	return {(uint64_t *)&mem[offset], addr + offset};
+	n_used += pages;
+	return {(uint64_t *)&mem[offset], addr + offset, pages * vMemory::PageSize()};
 }
 
 VirtualMem MemoryBank::to_vmem() const noexcept

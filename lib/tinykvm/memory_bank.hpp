@@ -9,15 +9,15 @@ struct Machine;
 struct MemoryBanks;
 
 struct MemoryBank {
-	// This is 1x 2MB page (smallest x86 hugepage)
-	static constexpr unsigned N_PAGES = 512;
+	// This is 1x 2MB page (second-level amd64 page)
+	static constexpr unsigned N_PAGES = 1u * 512;
+	static constexpr unsigned SEARCH_TRESHOLD = 512u;
 
 	char*    mem;
 	uint64_t addr;
 	uint16_t       n_used = 0;
 	const uint16_t n_pages;
 	const uint16_t idx;
-	std::array<uint64_t, N_PAGES> page_vaddr;
 	MemoryBanks& banks;
 
 	bool within(uint64_t a, uint64_t s) const noexcept {
@@ -31,11 +31,13 @@ struct MemoryBank {
 	}
 	uint64_t size() const noexcept { return n_pages * 4096; }
 	bool empty() const noexcept { return n_used == n_pages; }
+	bool room_for(size_t pages) const noexcept { return n_used + pages <= n_pages; }
 	struct Page {
 		uint64_t* pmem;
 		uint64_t  addr;
+		size_t    size;
 	};
-	Page get_next_page(uint64_t vaddr);
+	Page get_next_page(uint64_t vaddr, size_t n_pages);
 
 	VirtualMem to_vmem() const noexcept;
 
@@ -46,9 +48,11 @@ struct MemoryBank {
 struct MemoryBanks {
 	MemoryBanks(Machine&, const MachineOptions&);
 
-	MemoryBank& get_available_bank();
+	MemoryBank& get_available_bank(size_t n_pages);
 	void reset(const MachineOptions&);
 	void set_max_pages(size_t new_max);
+
+	bool using_hugepages() const noexcept { return m_using_hugepages; }
 
 	auto begin() { return m_mem.begin(); }
 	auto end()   { return m_mem.end(); }

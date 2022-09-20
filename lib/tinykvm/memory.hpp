@@ -50,6 +50,7 @@ struct vMemory {
 	char *get_kernelpage_at(uint64_t addr) const;
 	char *get_writable_page(uint64_t addr, uint64_t flags, bool zeroes);
 	MemoryBank::Page new_page(uint64_t vaddr);
+	MemoryBank::Page new_hugepage(uint64_t vaddr);
 
 	bool compare(const vMemory& other);
 
