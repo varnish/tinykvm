@@ -148,8 +148,25 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 #endif
 			for (size_t addr = base; addr < end; addr += 0x1000)
 			{
-				// Branch 2MB page
 				auto pdidx = addr >> 21;
+				// Look for possible 2MB pages
+				if ((addr & ~0xFFFFFFFFFFE00FFFL) == 0)
+				{
+					if (addr + (1UL << 21) <= end) {
+						// This is a 2MB-aligned ELF segment
+#if 0
+						printf("Found 2MB segment at 0x%lX -> 0x%lX\n", addr, end);
+#endif
+						auto& ptentry = pd[pdidx];
+						ptentry = PDE64_PRESENT | PDE64_USER | PDE64_NX | PDE64_PS | (pdidx << 21);
+						if (!read) ptentry &= ~PDE64_PRESENT; // A weird one, but... AMD64.
+						if (write) ptentry |= PDE64_RW;
+						if (exec) ptentry &= ~PDE64_NX;
+						continue;
+					}
+				}
+
+				// Un-aligned 2MB pages must be split into 4k array
 				if (pd[pdidx] & PDE64_PS) {
 					// Set default attributes + free PTE page
 					pd[pdidx] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
@@ -163,6 +180,7 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 					}
 					free_page += 0x1000;
 				}
+
 				// Get the pagetable array (NB: mask out NX)
 				auto ptaddr = pd[pdidx] & ~0x8000000000000FFF;
 				auto* pagetable = (uint64_t*) memory.at(ptaddr);
@@ -175,7 +193,6 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 				if (!(ptentry & PDE64_NX) && !exec) {
 					printf("Execute on 0x%lX, but not exec now\n", addr);
 				}*/
-				// We would enforce XO here, but no linker script support...
 				if (exec)
 					ptentry &= ~PDE64_NX;
 				else
