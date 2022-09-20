@@ -444,8 +444,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 						pd[k] = page.addr | flags | PDE64_RW;
 
 						/* Verify flags after CLONEABLE -> RW, in order to match RW. */
-						if ((pd[k] & verify_flags) != verify_flags) {
-							print_pagetables(memory);
+						if (UNLIKELY((pd[k] & verify_flags) != verify_flags)) {
 							memory_exception("page_at: pt entry not user writable", addr, pd[k]);
 						}
 
@@ -466,8 +465,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 				}
 
 				if (pd[k] & PDE64_PS) { // 2MB page
-					if ((pd[k] & verify_flags) != verify_flags) {
-						print_pagetables(memory);
+					if (UNLIKELY((pd[k] & verify_flags) != verify_flags)) {
 						memory_exception("page_at: pt entry not user writable", addr, pd[k]);
 					}
 
