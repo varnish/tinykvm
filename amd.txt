@@ -1,4 +1,9 @@
 STREAM benchmark
+-------------------------------------------------------------
+Array size = 18000000 (elements), Offset = 0 (elements)
+Memory per array = 137.3 MiB (= 0.1 GiB).
+Total memory required = 412.0 MiB (= 0.4 GiB).
+Each kernel will be executed 30 times.
 
 Native:
 Copy:           29073.2     0.009940     0.009906     0.010018
