@@ -1,0 +1,63 @@
+-= Native =-
+
+2K performance run parameters for coremark.
+CoreMark Size    : 666
+Total ticks      : 13700
+Total time (secs): 13.700000
+Iterations/Sec   : 29197.080292
+Iterations       : 400000
+Compiler version : Ubuntu Clang 14.0.0
+Compiler flags   : -O2 -DPERFORMANCE_RUN=1  -lrt
+Memory location  : Please put data memory location here
+			(e.g. code in flash, data on heap etc)
+seedcrc          : 0xe9f5
+[0]crclist       : 0xe714
+[0]crcmatrix     : 0x1fd7
+[0]crcstate      : 0x8e3a
+[0]crcfinal      : 0x65c5
+Correct operation validated. See README.md for run and reporting rules.
+CoreMark 1.0 : 29197.080292 / Ubuntu Clang 14.0.0 -O2 -DPERFORMANCE_RUN=1  -lrt / Heap
+
+-= TinyKVM with hugepages =-
+
+$ HUGE=1 ./simplekvm ../../coremark/coremark.exe 
+2K performance run parameters for coremark.
+CoreMark Size    : 666
+Total ticks      : 13594
+Total time (secs): 13.594000
+Iterations/Sec   : 29424.746212
+Iterations       : 400000
+Compiler version : Ubuntu Clang 14.0.0
+Compiler flags   : -O2 -DPERFORMANCE_RUN=1  -lrt
+Memory location  : Please put data memory location here
+			(e.g. code in flash, data on heap etc)
+seedcrc          : 0xe9f5
+[0]crclist       : 0xe714
+[0]crcmatrix     : 0x1fd7
+[0]crcstate      : 0x8e3a
+[0]crcfinal      : 0x65c5
+Correct operation validated. See README.md for run and reporting rules.
+CoreMark 1.0 : 29424.746212 / Ubuntu Clang 14.0.0 -O2 -DPERFORMANCE_RUN=1  -lrt / Heap
+Time: 17.374939s Return value: 0
+
+-= TinyKVM no hugepages =-
+
+$ ./simplekvm ../../coremark/coremark.exe 
+2K performance run parameters for coremark.
+CoreMark Size    : 666
+Total ticks      : 13665
+Total time (secs): 13.665000
+Iterations/Sec   : 29271.862422
+Iterations       : 400000
+Compiler version : Ubuntu Clang 14.0.0
+Compiler flags   : -O2 -DPERFORMANCE_RUN=1  -lrt
+Memory location  : Please put data memory location here
+			(e.g. code in flash, data on heap etc)
+seedcrc          : 0xe9f5
+[0]crclist       : 0xe714
+[0]crcmatrix     : 0x1fd7
+[0]crcstate      : 0x8e3a
+[0]crcfinal      : 0x65c5
+Correct operation validated. See README.md for run and reporting rules.
+CoreMark 1.0 : 29271.862422 / Ubuntu Clang 14.0.0 -O2 -DPERFORMANCE_RUN=1  -lrt / Heap
+Time: 17.446522s Return value: 0
