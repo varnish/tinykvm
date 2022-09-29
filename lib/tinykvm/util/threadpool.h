@@ -37,11 +37,6 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cassert>
-#ifndef __THROW
-extern "C" int nice(int);
-#else
-extern "C" int nice(int) __THROW;
-#endif
 
 namespace tinykvm {
 
@@ -258,7 +253,7 @@ inline void ThreadPool::start_worker(
         [this, worker_number]
         {
             this->m_start_function();
-            nice(this->m_nice);
+            pthread_setschedprio(pthread_self(), this->m_nice);
             for(;;)
             {
                 std::function<void()> task;
