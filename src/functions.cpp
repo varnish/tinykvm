@@ -103,7 +103,7 @@ void setup_kvm_system_calls()
 					auto& mm = cpu.machine().mmap();
 					regs.rax = mm;
 					// XXX: MAP_ANONYMOUS -->
-					//memset(machine.rw_memory_at(regs.rax, regs.rsi), 0, regs.rsi);
+					//cpu.machine().memzero(regs.rax, regs.rsi);
 					mm += regs.rsi;
 				}
 			}
@@ -117,13 +117,21 @@ void setup_kvm_system_calls()
 			auto& regs = cpu.registers();
 			PRINTMMAP("mprotect(0x%llX, %llu, 0x%llX)\n",
 				regs.rdi, regs.rsi, regs.rdx);
+			// mprotect(...) is unsupported, however it would be nice if we could
+			// support it on the identity-mapped main VM, during startup.
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		11, [] (auto& cpu) { // MUNMAP
+		11, [] (vCPU& cpu) { // MUNMAP
 			auto& regs = cpu.registers();
-			PRINTMMAP("munmap(0x%llX, %llu)\n", regs.rdi, regs.rsi);
+			// We don't support MMAP fully, but we can try to relax the mapping.
+			const uint64_t old_base = regs.rdi;
+			const uint64_t old_size = regs.rsi;
+			bool relaxed = cpu.machine().mmap_relax(old_base, old_size, 0u);
+			PRINTMMAP("munmap(0x%lX, %lu, relaxed=%d)\n", old_base, old_size, relaxed);
+			(void)relaxed;
+			// Because we do not support MMAP fully, we will just return 0 here.
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
