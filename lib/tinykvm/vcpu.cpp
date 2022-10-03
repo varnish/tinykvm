@@ -319,6 +319,8 @@ void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_
 	/* Make each writable page read-only, causing page fault.
 	   any page after the @shared_memory_boundary is untouched,
 	   effectively turning it into a shared memory area for all. */
+	if (shared_memory_boundary == 0)
+		shared_memory_boundary = max_address();
 	foreach_page_makecow(this->memory, shared_memory_boundary);
 	//print_pagetables(this->memory);
 	/* Cache all the special registers, which we will use on forks */
@@ -361,7 +363,9 @@ void Machine::setup_cow_mode(const Machine* other)
 
 	/* Inherit the special registers of the master machine.
 	   Ensures that special registers can never be corrupted. */
-	assert(other->cached_sregs);
+	if (UNLIKELY(other->cached_sregs == nullptr)) {
+		throw MachineException("SREGS was not cached");
+	}
 	struct kvm_sregs sregs = *other->cached_sregs;
 
 	/* Page table entry will be cloned at the start */

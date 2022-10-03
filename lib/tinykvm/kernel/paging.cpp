@@ -335,6 +335,9 @@ void foreach_page(const vMemory& mem, foreach_page_t callback)
 
 void foreach_page_makecow(vMemory& mem, uint64_t shared_memory_boundary)
 {
+	if (UNLIKELY(shared_memory_boundary == 0)) {
+		memory_exception("Shared memory boundary was illegal (zero)", shared_memory_boundary, 0u);
+	}
 	foreach_page(mem,
 	[=] (uint64_t addr, uint64_t& entry, size_t /*size*/) {
 		if (addr < shared_memory_boundary && addr != 0xffe00000) {
