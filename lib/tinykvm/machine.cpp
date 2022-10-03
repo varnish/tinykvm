@@ -195,9 +195,7 @@ void Machine::setup_registers(tinykvm_x86regs& regs)
 
 long Machine::return_value() const
 {
-	/* TODO: Return vcpu.kvm_run->s.regs.regs.rdi */
-	auto regs = registers();
-	return regs.rdi;
+	return registers().rdi;
 }
 
 /* TODO: Serialize access with mutex. */
