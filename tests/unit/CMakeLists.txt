@@ -23,3 +23,4 @@ endfunction()
 
 add_unit_test(basic basic.cpp)
 add_unit_test(fork  fork.cpp)
+add_unit_test(reset reset.cpp)
