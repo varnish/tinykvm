@@ -320,8 +320,8 @@ void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_
 	   any page after the @shared_memory_boundary is untouched,
 	   effectively turning it into a shared memory area for all. */
 	if (shared_memory_boundary == 0)
-		shared_memory_boundary = max_address();
-	foreach_page_makecow(this->memory, shared_memory_boundary);
+		shared_memory_boundary = UINT64_MAX;
+	foreach_page_makecow(this->memory, kernel_end_address(), shared_memory_boundary);
 	//print_pagetables(this->memory);
 	/* Cache all the special registers, which we will use on forks */
 	if (this->cached_sregs == nullptr) {
