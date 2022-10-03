@@ -116,6 +116,8 @@ struct Machine
 	std::string copy_from_cstring(address_t src, size_t maxlen = 65535u) const;
 	/* Build std::string from buffer, length in memory. */
 	std::string buffer_to_string(address_t src, size_t len, size_t maxlen = 65535u) const;
+	/* Explicitly zero memory range. */
+	void memzero(address_t src, size_t len);
 
 	struct StringOrView {
 		const char* begin() const noexcept { return sv.begin(); }

@@ -141,7 +141,7 @@ vMemory::AllocationResult vMemory::allocate_mapped_memory(
 		}
 	}
 	if (ptr == MAP_FAILED) {
-		// Try again without 2MB pages
+		// Try again with 4k pages
 		ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
 		if (ptr == MAP_FAILED) {

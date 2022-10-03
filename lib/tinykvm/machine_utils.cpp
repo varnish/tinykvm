@@ -8,6 +8,27 @@ static constexpr uint64_t PageMask() {
 	return vMemory::PageSize() - 1UL;
 }
 
+void Machine::memzero(address_t addr, size_t len)
+{
+	if (uses_cow_memory())
+	{
+		while (len != 0)
+		{
+			const size_t offset = addr & PageMask();
+			const size_t size = std::min(vMemory::PageSize() - offset, len);
+			auto* page = memory.get_writable_page(addr & ~PageMask(), USERMODE_FLAGS, true);
+			std::memset(&page[offset], 0, size);
+
+			addr += size;
+			len -= size;
+		}
+		return;
+	}
+	/* Original VM uses identity-mapped memory */
+	auto* dst = memory.safely_at(addr, len);
+	std::memset(dst, 0, len);
+}
+
 void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool zeroes)
 {
 	if (uses_cow_memory())
