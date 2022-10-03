@@ -146,7 +146,7 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 			printf("0x%lX->0x%lX --> 0x%lX:0x%lX\n",
 				hdr->p_vaddr, hdr->p_vaddr + len, base, end);
 #endif
-			for (size_t addr = base; addr < end; addr += 0x1000)
+			for (size_t addr = base; addr < end;)
 			{
 				auto pdidx = addr >> 21;
 				// Look for possible 2MB pages
@@ -162,6 +162,8 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 						if (!read) ptentry &= ~PDE64_PRESENT; // A weird one, but... AMD64.
 						if (write) ptentry |= PDE64_RW;
 						if (exec) ptentry &= ~PDE64_NX;
+						// Increment whole 2MB page
+						addr += (1UL << 21);
 						continue;
 					}
 				}
@@ -199,6 +201,7 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 					ptentry |= PDE64_NX;
 				if (!read) ptentry &= ~PDE64_PRESENT;
 				if (!write) ptentry &= ~PDE64_RW;
+				addr += 0x1000;
 			}
 		}
 	}
