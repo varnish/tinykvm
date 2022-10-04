@@ -32,13 +32,13 @@ inline ptentry_pair pdpt_from_index(size_t i, uint64_t* pml4) {
 	return {i << 39, pml4[i] & ~(uint64_t) 0xFFF, 1ul << 39};
 }
 inline ptentry_pair pd_from_index(size_t i, uint64_t pdpt_base, uint64_t* pdpt) {
-	return {pdpt_base | (i << 30), pdpt[i] & ~0x8000000000000FFF, 1ul << 30};
+	return {pdpt_base | (i << 30), pdpt[i] & PDE64_ADDR_MASK, 1ul << 30};
 }
 inline ptentry_pair pt_from_index(size_t i, uint64_t pd_base, uint64_t* pd) {
-	return {pd_base | (i << 21), pd[i] & ~0x8000000000000FFF, 1ul << 21};
+	return {pd_base | (i << 21), pd[i] & PDE64_ADDR_MASK, 1ul << 21};
 }
 inline ptentry_pair pte_from_index(size_t i, uint64_t pt_base, uint64_t* pt) {
-	return {pt_base | (i << 12), pt[i] & ~0x8000000000000FFF, 1ul << 12};
+	return {pt_base | (i << 12), pt[i] & PDE64_ADDR_MASK, 1ul << 12};
 }
 
 inline uint64_t index_from_pdpt_entry(uint64_t addr) {
@@ -184,7 +184,7 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 				}
 
 				// Get the pagetable array (NB: mask out NX)
-				auto ptaddr = pd[pdidx] & ~0x8000000000000FFF;
+				auto ptaddr = pd[pdidx] & PDE64_ADDR_MASK;
 				auto* pagetable = (uint64_t*) memory.at(ptaddr);
 				// Set read-only 4k attributes
 				auto entry = (addr >> 12) & 511;
@@ -234,7 +234,7 @@ void print_pte(const vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pt[i] & PDE64_PRESENT) {
 			printf("    |-- 4k PT (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s\n",
-				pte_addr + (i << 12), pt[i] & ~0x8000000000000FFF,
+				pte_addr + (i << 12), pt[i] & PDE64_ADDR_MASK,
 				pt[i] & PDE64_RW, !(pt[i] & PDE64_NX),
 				(pt[i] & PDE64_USER) ? "USER" : "KERNEL",
 				(pt[i] & PDE64_CLONEABLE) ? "CLONEABLE" : "");
@@ -248,7 +248,7 @@ void print_pd(const vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pd[i] & PDE64_PRESENT) {
 			uint64_t addr = pd_addr + (i << 21);
-			uint64_t mem  = pd[i] & ~0x8000000000000FFF;
+			uint64_t mem  = pd[i] & PDE64_ADDR_MASK;
 			printf("  |-* 2MB PD (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s\n",
 				addr, mem,
 				pd[i] & PDE64_RW, !(pd[i] & PDE64_NX),
@@ -403,7 +403,7 @@ static void unlock_identity_mapped_entry(uint64_t& entry) {
 }
 static void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
 	/* Allocate new page, pass old vaddr to memory banks */
-	auto page = memory.new_page(entry & PDE64_ADDR_MASK);
+	auto page = memory.new_page();
 	assert((page.addr & 0x8000000000000FFF) == 0x0);
 	/* Copy all entries from old page */
 	tinykvm::page_duplicate(page.pmem, data);
@@ -413,7 +413,7 @@ static void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& 
 }
 static void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
 	/* Allocate new page, pass old vaddr to memory banks */
-	auto page = memory.new_page(entry & PDE64_ADDR_MASK);
+	auto page = memory.new_page();
 	assert((page.addr & 0x8000000000000FFF) == 0x0);
 	/* Zero all entries from old page */
 	tinykvm::page_memzero(page.pmem);
@@ -462,7 +462,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 						auto* data = memory.page_at(pt_mem);
 
 						/* Set the new page address and bits, adding RW and removing DIRTY. */
-						auto page = memory.new_hugepage(pt_mem);
+						auto page = memory.new_hugepage();
 						uint64_t flags = (pd[k] & PDE64_PD_SPLIT_MASK) & ~PDE64_DIRTY;
 						pd[k] = page.addr | flags | PDE64_RW;
 

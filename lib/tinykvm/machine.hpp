@@ -23,7 +23,8 @@ struct vCPU
 	const tinykvm_x86regs& registers() const;
 	void set_registers(const struct tinykvm_x86regs &);
 	tinykvm_fpuregs fpu_registers() const;
-	void get_special_registers(struct kvm_sregs &) const;
+	const struct kvm_sregs& get_special_registers() const;
+	struct kvm_sregs& get_special_registers();
 	void set_special_registers(const struct kvm_sregs &);
 
 	void run(uint32_t tix);
@@ -157,8 +158,8 @@ struct Machine
 	const tinykvm_x86regs& registers() const;
 	void set_registers(const tinykvm_x86regs&);
 	tinykvm_fpuregs fpu_registers() const;
-	void get_special_registers(struct kvm_sregs&) const;
-	void set_special_registers(const struct kvm_sregs&);
+	const kvm_sregs& get_special_registers() const;
+	void set_special_registers(const kvm_sregs&);
 	std::pair<__u64, __u64> get_fsgs() const;
 	void set_tls_base(__u64 baseaddr);
 

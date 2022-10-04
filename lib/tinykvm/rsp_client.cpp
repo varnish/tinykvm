@@ -528,8 +528,7 @@ reg_at(struct tinykvm_x86regs& regs, size_t idx)
 static __u32&
 reg32_at(Machine& m, struct tinykvm_x86regs& regs, size_t idx)
 {
-	struct kvm_sregs sregs;
-	m.get_special_registers(sregs);
+	auto& sregs = m.get_special_registers();
 
 	static __u32 seg = 0x0;
 	static __u32 fs = 0x0, gs = 0x0;

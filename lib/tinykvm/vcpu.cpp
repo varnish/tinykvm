@@ -84,8 +84,8 @@ void vCPU::init(int id, Machine& machine)
 	if (UNLIKELY(kvm_run == MAP_FAILED)) {
 		Machine::machine_exception("Failed to create KVM run-time mapped memory");
 	}
-	/* We only want GPRs for now. */
-	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
+	/* We only want GPRs and SREGS for now. */
+	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS;
 
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
@@ -164,8 +164,8 @@ void vCPU::smp_init(int id, Machine& machine)
 	if (UNLIKELY(kvm_run == MAP_FAILED)) {
 		Machine::machine_exception("Failed to create KVM run-time mapped memory");
 	}
-	/* We only want GPRs for now. */
-	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
+	/* We only want GPRs and SREGS for now. */
+	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS;
 
 	const kvm_mp_state state {
 		.mp_state = KVM_MP_STATE_RUNNABLE
@@ -201,13 +201,13 @@ void vCPU::smp_init(int id, Machine& machine)
 		Machine::machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
 	}
 
-	struct kvm_sregs sregs;
+	auto& sregs = this->get_special_registers();
 	/* XXX: Is this correct? */
 	if (machine.cached_sregs != nullptr)
 		/* Inherit the special registers of the main vCPU */
 		sregs = *machine.cached_sregs;
 	else
-		machine.vcpu.get_special_registers(sregs);
+		sregs = machine.vcpu.get_special_registers();
 	sregs.tr.base = TSS_SMP_ADDR + (id - 1) * 104; /* AMD64_TSS */
 	sregs.gs.base = usercode_header().vm64_cpuid + 4 * id;
 	/* XXX: Is this correct? */
@@ -238,7 +238,7 @@ tinykvm_x86regs& vCPU::registers()
 }
 void vCPU::set_registers(const struct tinykvm_x86regs& regs)
 {
-	this->kvm_run->kvm_dirty_regs = KVM_SYNC_X86_REGS;
+	this->kvm_run->kvm_dirty_regs |= KVM_SYNC_X86_REGS;
 	auto* src_regs = (struct kvm_regs *) &regs;
 	auto* dest_regs = &this->kvm_run->s.regs.regs;
 	/* Only assign if there is a mismatch. */
@@ -253,17 +253,22 @@ tinykvm_fpuregs vCPU::fpu_registers() const
 	}
 	return regs;
 }
-void vCPU::get_special_registers(struct kvm_sregs& sregs) const
+const kvm_sregs& vCPU::get_special_registers() const
 {
-	if (ioctl(this->fd, KVM_GET_SREGS, &sregs) < 0) {
-		Machine::machine_exception("KVM_GET_SREGS failed");
-	}
+	return this->kvm_run->s.regs.sregs;
 }
-void vCPU::set_special_registers(const struct kvm_sregs& sregs)
+kvm_sregs& vCPU::get_special_registers()
 {
-	if (ioctl(this->fd, KVM_SET_SREGS, &sregs) < 0) {
-		Machine::machine_exception("KVM_GET_SREGS failed");
-	}
+	return this->kvm_run->s.regs.sregs;
+}
+void vCPU::set_special_registers(const kvm_sregs& sregs)
+{
+	this->kvm_run->kvm_dirty_regs |= KVM_SYNC_X86_SREGS;
+
+	auto* dest_regs = &this->kvm_run->s.regs.sregs;
+	/* Only assign if there is a mismatch. */
+	if (dest_regs != &sregs)
+		*dest_regs = sregs;
 }
 
 std::string_view vCPU::io_data() const
@@ -297,15 +302,13 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 
 std::pair<__u64, __u64> Machine::get_fsgs() const
 {
-	struct kvm_sregs sregs;
-	vcpu.get_special_registers(sregs);
+	const auto& sregs = vcpu.get_special_registers();
 
 	return {sregs.fs.base, sregs.gs.base};
 }
 void Machine::set_tls_base(__u64 baseaddr)
 {
-	struct kvm_sregs sregs;
-	vcpu.get_special_registers(sregs);
+	auto& sregs = vcpu.get_special_registers();
 
 	sregs.fs.base = baseaddr;
 
@@ -327,7 +330,7 @@ void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_
 	if (this->cached_sregs == nullptr) {
 		this->cached_sregs = new kvm_sregs {};
 	}
-	get_special_registers(*this->cached_sregs);
+	*this->cached_sregs = get_special_registers();
 
 	/* Make this machine runnable again using itself
 	   as the master VM. */
@@ -346,7 +349,7 @@ void Machine::setup_cow_mode(const Machine* other)
 	   directly in order to avoid duplicating the memory banked
 	   page tables that allow the master VM to execute code
 	   separately from its forks, while sharing a master page table. */
-	auto pml4 = memory.new_page(0x0);
+	auto pml4 = memory.new_page();
 	tinykvm::page_duplicate(pml4.pmem, other->memory.page_at(PT_ADDR));
 	memory.page_tables = pml4.addr;
 
@@ -400,8 +403,7 @@ void Machine::print_pagetables() const {
 }
 void Machine::print_exception_handlers() const
 {
-	struct kvm_sregs sregs;
-	vcpu.get_special_registers(sregs);
+	const auto& sregs = vcpu.get_special_registers();
 	tinykvm::print_exception_handlers(memory.at(sregs.idt.base));
 }
 

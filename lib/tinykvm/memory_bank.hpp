@@ -37,7 +37,7 @@ struct MemoryBank {
 		uint64_t  addr;
 		size_t    size;
 	};
-	Page get_next_page(uint64_t vaddr, size_t n_pages);
+	Page get_next_page(size_t n_pages);
 
 	VirtualMem to_vmem() const noexcept;
 

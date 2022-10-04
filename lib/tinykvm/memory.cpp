@@ -173,13 +173,13 @@ VirtualMem vMemory::vmem() const
 	return VirtualMem::New(physbase, ptr, size);
 }
 
-MemoryBank::Page vMemory::new_page(uint64_t vaddr)
+MemoryBank::Page vMemory::new_page()
 {
-	return banks.get_available_bank(1u).get_next_page(vaddr, 1u);
+	return banks.get_available_bank(1u).get_next_page(1u);
 }
-MemoryBank::Page vMemory::new_hugepage(uint64_t vaddr)
+MemoryBank::Page vMemory::new_hugepage()
 {
-	return banks.get_available_bank(512u).get_next_page(vaddr, 512u);
+	return banks.get_available_bank(512u).get_next_page(512u);
 }
 
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)

@@ -116,7 +116,7 @@ MemoryBank::~MemoryBank()
 	munmap(this->mem, this->n_pages * vMemory::PageSize());
 }
 
-MemoryBank::Page MemoryBank::get_next_page(uint64_t vaddr, size_t pages)
+MemoryBank::Page MemoryBank::get_next_page(size_t pages)
 {
 	assert(n_used + pages <= n_pages);
 	uint64_t offset = vMemory::PageSize() * n_used;

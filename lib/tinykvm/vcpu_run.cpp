@@ -224,8 +224,7 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 TINYKVM_COLD()
 void vCPU::print_registers() const
 {
-	struct kvm_sregs sregs;
-	this->get_special_registers(sregs);
+	auto& sregs = this->get_special_registers();
 	const auto& printer = machine().m_printer;
 
 	char buffer[1024];
@@ -271,8 +270,7 @@ void vCPU::handle_exception(uint8_t intr)
 	// Page fault
 	const auto& printer = machine().m_printer;
 	if (intr == 14) {
-		struct kvm_sregs sregs;
-		this->get_special_registers(sregs);
+		auto& sregs = this->get_special_registers();
 		PRINTER(printer, buffer,
 			"*** %s on address 0x%llX\n",
 			amd64_exception_name(intr), sregs.cr2);

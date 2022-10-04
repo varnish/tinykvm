@@ -35,8 +35,7 @@ void Thread::suspend(uint64_t return_value)
 	stored_regs = mt.machine.registers();
 	stored_regs.rax = return_value;
 	// thread pointer
-	struct kvm_sregs sregs;
-	mt.machine.get_special_registers(sregs);
+	const auto& sregs = mt.machine.get_special_registers();
 	fsbase = sregs.fs.base;
 	// add to suspended (NB: can throw)
 	mt.m_suspended.push_back(this);
