@@ -70,14 +70,16 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 {
 	/* Hugepages are 512 4k pages, and consume a whole bank, right now. */
-	for (; m_search < m_mem.size(); m_search++) {
-		auto& bank = m_mem.at(m_search);
+	for (unsigned idx = 0; idx < m_mem.size(); idx++) {
+		auto& bank = m_mem.at(idx);
 		if (bank.room_for(pages)) {
 			return bank;
 		}
 	}
 	/* Allocate new memory bank if we are not maxing out memory */
 	if (m_num_pages < m_max_pages) {
+		//printf("Allocating new bank at 0x%lX with total pages %u\n",
+		//	m_arena_next, m_num_pages + MemoryBank::N_PAGES);
 		auto& bank = this->allocate_new_bank(m_arena_next);
 		m_num_pages += bank.n_pages;
 		m_arena_next += bank.size();
@@ -91,7 +93,6 @@ void MemoryBanks::reset(const MachineOptions& options)
 	for (auto& bank : m_mem) {
 		bank.n_used = 0;
 	}
-	m_search = 0;
 	m_max_pages = options.max_cow_mem / vMemory::PageSize();
 
 	/* The limit feature is off when reset_free_work_mem == 0. */
