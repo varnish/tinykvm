@@ -72,6 +72,7 @@ void vCPU::disable_timer()
 long vCPU::run_once()
 {
 	int result = ioctl(this->fd, KVM_RUN, 0);
+	// Handle potential KVM_RUN failure or execution timeout
 	if (UNLIKELY(result < 0)) {
 		if (this->timer_ticks) {
 			if constexpr (VERBOSE_TIMER) {
@@ -87,6 +88,15 @@ long vCPU::run_once()
 		}
 	}
 
+	// Validate the integrity of the guests kernel space
+	const auto& sregs = get_special_registers();
+	if (UNLIKELY(sregs.cr3 != machine().memory.page_tables ||
+		sregs.gdt.base != GDT_ADDR || sregs.idt.base != IDT_ADDR || sregs.tr.base != TSS_ADDR
+		)) {
+		Machine::machine_exception("Kernel integrity loss detected");
+	}
+
+	// Handle the KVM guest exit reason
 	switch (kvm_run->exit_reason) {
 	case KVM_EXIT_HLT:
 		Machine::machine_exception("Halt from kernel space", 5);
