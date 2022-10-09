@@ -111,7 +111,8 @@ long vCPU::run_once()
 	// Validate the integrity of the guests kernel space
 	const auto& sregs = get_special_registers();
 	if (UNLIKELY(sregs.cr3 != machine().memory.page_tables ||
-		sregs.gdt.base != GDT_ADDR || sregs.idt.base != IDT_ADDR || sregs.tr.base != TSS_ADDR
+		sregs.gdt.base != GDT_ADDR || sregs.idt.base != IDT_ADDR
+		// Doesn't work on other vCPUs: sregs.tr.base != TSS_ADDR
 		)) {
 		Machine::machine_exception("Kernel integrity loss detected");
 	}
