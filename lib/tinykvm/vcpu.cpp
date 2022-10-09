@@ -17,7 +17,7 @@
 #include "kernel/usercode.hpp"
 extern "C" int gettid();
 extern "C" int close(int);
-static void unused_usr_handler(int) {}
+extern "C" void tinykvm_timer_signal_handler(int);
 // KVM_SYNC_X86_REGS
 // KVM_SYNC_X86_SREGS
 
@@ -56,7 +56,7 @@ void initialize_vcpu_stuff(int kvm_fd)
 
 void* Machine::create_vcpu_timer()
 {
-	signal(SIGUSR2, unused_usr_handler);
+	signal(SIGUSR2, tinykvm_timer_signal_handler);
 
 	struct ksigevent sigev {};
 	sigev.sigev_notify = SIGEV_SIGNAL | SIGEV_THREAD_ID;

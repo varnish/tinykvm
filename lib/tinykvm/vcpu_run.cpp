@@ -15,10 +15,24 @@
 extern "C" int gettid();
 
 namespace tinykvm {
+	thread_local bool timer_was_triggered = false;
+}
+extern "C"
+void tinykvm_timer_signal_handler(int sig) {
+	// The idea is that we will not migrate this VM while
+	// it is running. This allows using TLS to determine if
+	// the timer already expired.
+	if (sig == SIGUSR2) {
+		tinykvm::timer_was_triggered = true;
+	}
+}
+
+namespace tinykvm {
 	static constexpr bool VERBOSE_TIMER = false;
 
 void vCPU::run(uint32_t ticks)
 {
+	timer_was_triggered = false;
 	this->timer_ticks = ticks;
 	if (timer_ticks != 0) {
 		const struct itimerspec its {
@@ -58,6 +72,7 @@ void vCPU::run(uint32_t ticks)
 }
 void vCPU::disable_timer()
 {
+	timer_was_triggered = false;
 	if (timer_ticks != 0) {
 		this->timer_ticks = 0;
 		struct itimerspec its;
@@ -85,6 +100,11 @@ long vCPU::run_once()
 		}
 		else {
 			Machine::machine_exception("KVM_RUN failed");
+		}
+	} else if (this->timer_ticks) {
+		// Occasionally we miss timer interruptions, and we must catch it via TLS.
+		if (UNLIKELY(timer_was_triggered)) {
+			Machine::timeout_exception("Timeout Exception", this->timer_ticks);
 		}
 	}
 
