@@ -14,7 +14,8 @@ namespace tinykvm {
 vMemory::vMemory(Machine& m, const MachineOptions& options,
 	uint64_t ph, uint64_t sf, char* p, size_t s, bool own)
 	: machine(m), physbase(ph), safebase(sf),
-	  ptr(p), size(s), owned(own),
+	  // Over-allocate in order to avoid trouble with 2MB-aligned operations
+	  ptr(p), size(overaligned_memsize(s)), owned(own),
 	  main_memory_writes(options.master_direct_memory_writes),
 	  banks(m, options)
 {
@@ -164,6 +165,8 @@ vMemory::AllocationResult vMemory::allocate_mapped_memory(
 vMemory vMemory::New(Machine& m, const MachineOptions& options,
 	uint64_t phys, uint64_t safe, size_t size)
 {
+	// Over-allocate in order to avoid trouble with 2MB-aligned operations
+	size = vMemory::overaligned_memsize(size);
 	const auto [res_ptr, res_size] = allocate_mapped_memory(options, size);
 	return vMemory(m, options, phys, safe, res_ptr, res_size);
 }

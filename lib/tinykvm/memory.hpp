@@ -69,6 +69,11 @@ struct vMemory {
 	/* Loan memory from another machine */
 	vMemory(Machine&, const MachineOptions&, const vMemory& other);
 	~vMemory();
+
+	static uint64_t overaligned_memsize(uint64_t size) {
+		static constexpr uint64_t ALIGN = 1ULL << 21;
+		return (size + (ALIGN - 1)) & ~(ALIGN - 1);
+	}
 private:
 	using AllocationResult = std::tuple<char*, size_t>;
 	static AllocationResult allocate_mapped_memory(const MachineOptions&, size_t size);
