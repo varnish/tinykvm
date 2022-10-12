@@ -273,7 +273,7 @@ int Machine::create_kvm_vm()
 {
 	int fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
 	if (UNLIKELY(fd < 0)) {
-		machine_exception("Failed to KVM_CREATE_VM");
+		machine_exception("Failed to KVM_CREATE_VM. Is your user in the 'kvm' group?");
 	}
 
 	/*if (ioctl(fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
