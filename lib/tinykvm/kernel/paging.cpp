@@ -140,8 +140,9 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 			const bool write = (hdr->p_flags & PF_W) != 0;
 			const bool exec  = (hdr->p_flags & PF_X) != 0;
 
-			auto base = hdr->p_vaddr & ~0xFFF;
-			auto end  = ((hdr->p_vaddr + len) + 0xFFF) & ~0xFFF;
+			/* TODO: Prevent extremely high addresses */
+			auto base = hdr->p_vaddr & ~0xFFFL;
+			auto end  = ((hdr->p_vaddr + len) + 0xFFFL) & ~0xFFFL;
 #if 0
 			printf("0x%lX->0x%lX --> 0x%lX:0x%lX\n",
 				hdr->p_vaddr, hdr->p_vaddr + len, base, end);
