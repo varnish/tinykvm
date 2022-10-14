@@ -120,9 +120,11 @@ void vCPU::init(int id, Machine& machine)
 		/* Enable AVX and AVX512 instructions */
 		master_xregs.xcrs[0].xcr = 0;
 		master_xregs.xcrs[0].value |= 0x7; // FPU, SSE, YMM
-#  ifdef KVM_AVX512
-		master_xregs.xcrs[0].value |= 0xE0; // AVX512
-#  endif
+		
+		/* Host supports AVX-512F (most basic AVX-512 feature) */
+		if (__builtin_cpu_supports("avx512f")) {
+			master_xregs.xcrs[0].value |= 0xE0; // AVX512
+		}
 		master_xregs.nr_xcrs = 1;
 	}
 

@@ -4,7 +4,6 @@ project(tinykvm)
 # C++17 KVM library
 #
 
-option(KVM_AVX512       "Enable AVX512 instructions" OFF)
 option(KVM_EXPERIMENTAL "Enable experimental features" OFF)
 
 set (SOURCES
@@ -42,9 +41,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 	target_compile_options(tinykvm PUBLIC -O0 -ggdb3)
 else()
 	target_compile_options(tinykvm PUBLIC -O2 -g)
-endif()
-if (KVM_AVX512)
-	target_compile_definitions(tinykvm PUBLIC KVM_AVX512=1)
 endif()
 if (KVM_EXPERIMENTAL)
 	target_compile_definitions(tinykvm PUBLIC TINYKVM_FAST_EXECUTION_TIMEOUT=1)
