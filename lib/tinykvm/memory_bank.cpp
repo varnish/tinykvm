@@ -85,7 +85,8 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 		m_arena_next += bank.size();
 		return bank;
 	}
-	throw MemoryException("Out of working memory", m_num_pages, m_max_pages);
+	throw MemoryException("Out of working memory",
+		m_num_pages * vMemory::PageSize(), m_max_pages * vMemory::PageSize());
 }
 void MemoryBanks::reset(const MachineOptions& options)
 {
@@ -103,6 +104,7 @@ void MemoryBanks::reset(const MachineOptions& options)
 		/* Erase the last N elements after final_banks */
 		while (final_banks < m_mem.size()) {
 			this->m_idx--;
+			this->m_num_pages -= m_mem.back().n_pages;
 			m_machine.delete_memory(this->m_idx);
 			m_mem.pop_back();
 		}
