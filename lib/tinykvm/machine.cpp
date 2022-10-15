@@ -3,6 +3,7 @@
 #include "kernel/amd64.hpp"
 #include "kernel/vdso.hpp"
 #include "threads.hpp"
+#include "smp.hpp"
 #include "util/threadpool.h"
 #include <cassert>
 #include <cstring>
@@ -87,7 +88,6 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 __attribute__ ((cold))
 Machine::~Machine()
 {
-	m_cpus.clear();
 	vcpu.deinit();
 	delete cached_sregs;
 	close(this->fd);

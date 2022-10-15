@@ -160,29 +160,6 @@ void Machine::timed_reentry_stack(uint64_t addr, uint64_t stk, float timeout, Ar
 	this->run(timeout);
 }
 
-template <typename... Args> inline
-void Machine::timed_smpcall(size_t num_cpus,
-	address_t stack_base, uint32_t stack_size,
-	address_t addr, float timeout, Args&&... args)
-{
-	assert(num_cpus != 0);
-	this->prepare_cpus(num_cpus);
-	auto* data = smp_allocate_vcpu_data(num_cpus);
-
-	/* XXX: This counter can be wrong when exceptions
-	   happen during setup_call and async_exec. */
-	__sync_fetch_and_add(&m_smp_active, num_cpus);
-
-	for (size_t c = 0; c < num_cpus; c++) {
-		data[c].vcpu = &m_cpus[c].cpu;
-		data[c].ticks = to_ticks(timeout);
-		this->setup_call(data[c].regs, addr,
-			stack_base + (c+1) * stack_size,
-			std::forward<Args> (args)...);
-		m_cpus[c].async_exec(data[c]);
-	}
-}
-
 inline uint64_t Machine::stack_push(__u64& sp, const std::string& string)
 {
 	return stack_push(sp, string.data(), string.size()+1); /* zero */

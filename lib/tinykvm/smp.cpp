@@ -1,3 +1,5 @@
+#include "smp.hpp"
+
 #include "machine.hpp"
 #include <cassert>
 #include <linux/kvm.h>
@@ -5,7 +7,43 @@
 
 namespace tinykvm {
 
-Machine::MPvCPU::MPvCPU(int c, Machine& m)
+SMP& Machine::smp() {
+	if (m_smp == nullptr)
+		m_smp.reset(new SMP(*this));
+	return *m_smp;
+}
+const SMP& Machine::smp() const {
+	if (m_smp == nullptr)
+		m_smp.reset(new SMP(const_cast<Machine&> (*this)));
+	return *m_smp;
+}
+bool Machine::smp_active() const noexcept {
+	if (m_smp == nullptr) return false;
+	return smp().smp_active() != 0;
+}
+int  Machine::smp_active_count() const noexcept {
+	if (m_smp == nullptr) return 0;
+	return smp().smp_active();
+}
+void Machine::smp_wait() {
+	if (m_smp == nullptr)
+		return;
+	smp().wait();
+}
+void Machine::smp_vcpu_broadcast(std::function<void(vCPU&)> callback)
+{
+	if (m_smp == nullptr)
+		return;
+	smp().broadcast(std::move(callback));
+}
+
+SMP::~SMP()
+{
+	m_cpus.clear();
+}
+
+
+SMP::MPvCPU::MPvCPU(int c, Machine& m)
 	: thpool(1, 0, false)
 {
 	/* We store the CPU ID in GSBASE register
@@ -15,9 +53,10 @@ Machine::MPvCPU::MPvCPU(int c, Machine& m)
 		this->cpu.smp_init(c, m);
 	});
 }
-Machine::MPvCPU::~MPvCPU() {}
+SMP::MPvCPU::~MPvCPU() {}
 
-void Machine::MPvCPU::blocking_message(std::function<void(vCPU&)> func)
+
+void SMP::MPvCPU::blocking_message(std::function<void(vCPU&)> func)
 {
 	auto res = thpool.enqueue([this, func] {
 		func(this->cpu);
@@ -25,7 +64,7 @@ void Machine::MPvCPU::blocking_message(std::function<void(vCPU&)> func)
 	res.get();
 }
 
-void Machine::MPvCPU::async_exec(MPvCPU_data& data)
+void SMP::MPvCPU::async_exec(MPvCPU_data& data)
 {
 	/* To get the best performance we do:
 		1. Allocate regs on heap.
@@ -59,7 +98,7 @@ void Machine::MPvCPU::async_exec(MPvCPU_data& data)
 	});
 }
 
-Machine::MPvCPU_data* Machine::smp_allocate_vcpu_data(size_t num_cpus)
+SMP::MPvCPU_data* SMP::smp_allocate_vcpu_data(size_t num_cpus)
 {
 	auto* data = new MPvCPU_data[num_cpus];
 
@@ -68,34 +107,42 @@ Machine::MPvCPU_data* Machine::smp_allocate_vcpu_data(size_t num_cpus)
 
 	return data;
 }
-void Machine::prepare_cpus(size_t num_cpus)
+void SMP::prepare_cpus(size_t num_cpus)
 {
 	if (m_cpus.size() < num_cpus) {
 		while (m_cpus.size() < num_cpus) {
 			/* NB: The cpu ids start at 1..2..3.. */
 			const int c = 1 + m_cpus.size();
-			m_cpus.emplace_back(c, *this);
+			m_cpus.emplace_back(c, machine());
 		}
 		//printf("%zu SMP vCPUs initialized\n", this->m_cpus.size());
 	}
 }
 void vCPU::decrement_smp_count()
 {
-	const int v = __sync_fetch_and_sub(&machine().m_smp_active, 1);
+	auto& smp = machine().smp();
+	const int v = __sync_fetch_and_sub(&smp.m_smp_active, 1);
 	/* Check if we are the lucky one to clear out the SMP registers. */
 	if (UNLIKELY(v == 1))
 	{
 		/* Create temporary vector and swap in contents. */
-		machine().m_smp_data_mtx.lock();
-		auto tmp = std::move(machine().m_smp_data);
-		machine().m_smp_data_mtx.unlock();
+		smp.m_smp_data_mtx.lock();
+		auto tmp = std::move(smp.m_smp_data);
+		smp.m_smp_data_mtx.unlock();
 		/* Delete registers one by one, then let it destruct. */
 		for (auto* regs : tmp)
 			delete[] regs;
 	}
 }
 
-void Machine::timed_smpcall_array(size_t num_cpus,
+void SMP::broadcast(std::function<void(vCPU &)> func)
+{
+	for (auto& cpu : this->m_cpus) {
+		cpu.blocking_message(func);
+	}
+}
+
+void SMP::timed_smpcall_array(size_t num_cpus,
 	address_t stack_base, uint32_t stack_size,
 	address_t addr, float timeout,
 	address_t array, uint32_t array_isize)
@@ -109,7 +156,7 @@ void Machine::timed_smpcall_array(size_t num_cpus,
 	for (size_t c = 0; c < m_cpus.size(); c++) {
 		data[c].vcpu = &m_cpus[c].cpu;
 		data[c].ticks = to_ticks(timeout);
-		this->setup_call(data[c].regs, addr,
+		machine().setup_call(data[c].regs, addr,
 			stack_base + (c+1) * stack_size,
 			array + (c+1) * array_isize,
 			array_isize);
@@ -117,7 +164,7 @@ void Machine::timed_smpcall_array(size_t num_cpus,
 	}
 }
 
-void Machine::timed_smpcall_clone(size_t num_cpus,
+void SMP::timed_smpcall_clone(size_t num_cpus,
 	address_t stack_base, uint32_t stack_size,
 	float timeout, const tinykvm_x86regs& regs)
 {
@@ -131,21 +178,21 @@ void Machine::timed_smpcall_clone(size_t num_cpus,
 		data[c].vcpu = &m_cpus[c].cpu;
 		data[c].ticks = to_ticks(timeout);
 		data[c].regs = regs;
-		this->setup_clone(data[c].regs,
+		machine().setup_clone(data[c].regs,
 			stack_base + (c+1) * stack_size);
 
 		m_cpus[c].async_exec(data[c]);
 	}
 }
 
-void Machine::smp_wait()
+void SMP::wait()
 {
 	for (size_t c = 0; c < m_cpus.size(); c++) {
 		m_cpus[c].thpool.wait_until_nothing_in_flight();
 	}
 }
 
-std::vector<long> Machine::gather_return_values(unsigned cpus)
+std::vector<long> SMP::gather_return_values(unsigned cpus)
 {
 	if (cpus == 0 || cpus > m_cpus.size())
 		cpus = m_cpus.size();

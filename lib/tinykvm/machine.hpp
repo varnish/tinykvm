@@ -1,55 +1,15 @@
 #pragma once
 #include "common.hpp"
-#include "forward.hpp"
 #include "memory.hpp"
 #include "memory_bank.hpp"
-#include "util/threadpool.h"
+#include "vcpu.hpp"
 #include <array>
 #include <cassert>
-#include <deque>
 #include <functional>
-#include <pthread.h>
 #include <memory>
 #include <vector>
 
 namespace tinykvm {
-struct Machine;
-struct vCPU
-{
-	void init(int id, Machine &);
-	void smp_init(int id, Machine &);
-	void deinit();
-	tinykvm_x86regs& registers();
-	const tinykvm_x86regs& registers() const;
-	void set_registers(const struct tinykvm_x86regs &);
-	tinykvm_fpuregs fpu_registers() const;
-	const struct kvm_sregs& get_special_registers() const;
-	struct kvm_sregs& get_special_registers();
-	void set_special_registers(const struct kvm_sregs &);
-
-	void run(uint32_t tix);
-	long run_once();
-	void stop() { stopped = true; }
-	void disable_timer();
-	std::string_view io_data() const;
-
-	void print_registers() const;
-	void handle_exception(uint8_t intr);
-	void decrement_smp_count();
-
-	auto& machine() { return *m_machine; }
-	const auto& machine() const { return *m_machine; }
-
-	int fd = 0;
-	int cpu_id = 0;
-	bool stopped = true;
-	uint32_t timer_ticks = 0;
-	void *timer_id = nullptr;
-
-private:
-	struct kvm_run *kvm_run = nullptr;
-	Machine *m_machine = nullptr;
-};
 
 struct Machine
 {
@@ -83,18 +43,6 @@ struct Machine
 	void timed_reentry_stack(address_t, address_t stk, float timeout, Args&&...);
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
-
-	template <typename... Args>
-	void timed_smpcall(size_t cpus,
-		address_t stack, uint32_t stack_size,
-		address_t addr, float tmo, Args&&...);
-	void timed_smpcall_array(size_t cpus,
-		address_t stack, uint32_t stack_size,
-		address_t addr, float tmo,
-		address_t array, uint32_t array_item_size);
-	void timed_smpcall_clone(size_t num_cpus,
-		address_t stack_base, uint32_t stack_size,
-		float timeout, const tinykvm_x86regs& regs);
 
 	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
@@ -198,16 +146,17 @@ struct Machine
 	uint64_t address_of(const char*) const;
 	std::string resolve(uint64_t rip) const;
 
-	bool smp_active() const noexcept { return m_smp_active != 0; }
-	int  smp_active_count() const noexcept { return m_smp_active; }
+	bool smp_active() const noexcept;
+	int  smp_active_count() const noexcept;
 	void smp_wait();
-	/* Retrieve return values from a smpcall */
-	std::vector<long> gather_return_values(unsigned cpus = 0);
+	const struct SMP& smp() const;
+	struct SMP& smp();
 
 	bool has_threads() const noexcept { return m_mt != nullptr; }
 	const struct MultiThreading& threads() const;
 	struct MultiThreading& threads();
 	static void setup_multithreading();
+
 
 	const auto& mmap() const { return m_mm; }
 	auto& mmap() { return m_mm; }
@@ -257,16 +206,14 @@ private:
 	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const Machine* other, const MachineOptions&);
 	void setup_cow_mode(const Machine*); // After prepare_copy_on_write and forking
-	void prepare_cpus(size_t num_cpus);
-	vCPU& smp_cpu(size_t idx);
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
+	void smp_vcpu_broadcast(std::function<void(vCPU&)>);
 
 	vCPU  vcpu;
 	int   fd = 0;
 	bool  m_prepped = false;
 	bool  m_forked = false;
-	int   m_smp_active = 0;
 	void* m_userdata = nullptr;
 
 	std::string_view m_binary;
@@ -282,24 +229,7 @@ private:
 	mutable std::unique_ptr<MultiThreading> m_mt;
 	struct kvm_sregs* cached_sregs = nullptr;
 
-	struct MPvCPU_data {
-		vCPU* vcpu = nullptr;
-		uint32_t ticks = 0;
-		struct tinykvm_x86regs regs;
-	};
-	struct MPvCPU {
-		void blocking_message(std::function<void(vCPU&)>);
-		void async_exec(struct MPvCPU_data&);
-
-		MPvCPU(int, Machine&);
-		~MPvCPU();
-		vCPU cpu;
-		ThreadPool thpool;
-	};
-	std::deque<MPvCPU> m_cpus;
-	std::vector<const struct MPvCPU_data*> m_smp_data;
-	std::mutex m_smp_data_mtx;
-	MPvCPU_data* smp_allocate_vcpu_data(size_t);
+	mutable std::unique_ptr<SMP> m_smp;
 
 	/* How to print exceptions, register dumps etc. */
 	printer_func m_printer = m_default_printer;

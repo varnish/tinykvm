@@ -389,12 +389,13 @@ void Machine::setup_cow_mode(const Machine* other)
 	});
 #endif
 
+
 	/* This blocking message passes the new special registers
 	   to every existing vCPU used in multi-processing. In the
 	   future there may be more stuff we need to pass onto the
 	   vCPUs, but for now we only need updated sregs. */
-	for (auto& cpu : m_cpus) {
-		cpu.blocking_message([sregs] (auto& cpu) {
+	if (m_smp != nullptr) {
+		smp_vcpu_broadcast([sregs] (auto& cpu) {
 			cpu.set_special_registers(sregs);
 		});
 	}
