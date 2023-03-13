@@ -140,7 +140,8 @@ uint64_t Machine::stack_push_cstr(__u64& sp, const char* string)
 	return stack_push(sp, string, strlen(string)+1);
 }
 
-void Machine::install_memory(uint32_t idx, const VirtualMem& mem, bool ro)
+void Machine::install_memory(uint32_t idx, const VirtualMem& mem,
+	[[maybe_unused]] bool readonly)
 {
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,

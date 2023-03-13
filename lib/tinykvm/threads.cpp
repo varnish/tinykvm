@@ -217,7 +217,7 @@ void Machine::setup_multithreading()
 		60, [] (auto& cpu) {
 			if (cpu.machine().has_threads()) {
 				auto& regs = cpu.registers();
-				const uint32_t status = regs.rdi;
+				[[maybe_unused]] const uint32_t status = regs.rdi;
 				auto& thread = cpu.machine().threads().get_thread();
 				THPRINT(">>> Exit on tid=%d, exit code = %d\n",
 					thread.tid, (int) status);

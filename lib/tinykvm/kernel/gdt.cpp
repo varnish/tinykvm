@@ -57,6 +57,8 @@ void GDT_write_TSS_segment(void* area, uint64_t tss_addr, uint32_t size)
 
 void setup_amd64_segments(uint64_t gdt_addr, char* gdt_ptr)
 {
+	(void)gdt_addr;
+
 	/* Null segment */
 	memset(gdt_ptr + 0x0, 0, 8);
 	/* Kernel mode */

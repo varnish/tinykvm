@@ -102,6 +102,7 @@ void RSPClient::close_now() {
 int RSPClient::forge_packet(
 	char* dst, size_t dstlen, const char* data, int datalen)
 {
+	(void)dstlen;
 	char* d = dst;
 	*d++ = '$';
 	uint8_t csum = 0;
