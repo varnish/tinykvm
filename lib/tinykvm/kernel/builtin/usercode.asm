@@ -3,6 +3,7 @@
 org 0x5000
 dw .vm64_entry
 dw .vm64_reentry
+dw .vm64_user_entry
 dw .vm64_rexit
 dd .vm64_cpuid
 
@@ -16,9 +17,9 @@ ALIGN 0x10
 	mov r13, rcx
 	mov rax, 0x1F777
 	syscall
-.vm64_user_jmp:
 	mov rcx, r13
-	jmp r15
+	call r15
+	jmp .vm64_rexit
 ;; Entry function that does not reset pagetables
 .vm64_reentry:
 	;; Execute a do-nothing system call that ensures
@@ -28,8 +29,12 @@ ALIGN 0x10
 	mov r13, rcx
 	mov rax, 0x1F707
 	syscall
-	jmp .vm64_user_jmp
-;; The exit function (pre-written to stack)
+	mov rcx, r13
+;; Entry that directly calls guest function
+.vm64_user_entry:
+	;; The guest function
+	call r15
+;; The exit function
 .vm64_rexit:
 	mov rdi, rax
 .vm64_rexit_retry:

@@ -138,6 +138,10 @@ struct Machine
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
 
+	/// @brief Jump to a shorter usermode entry if already in usermode, otherwise reentry_address
+	/// @return Returns the address needed to safely call a guest function
+	address_t entry_address_if_usermode() const noexcept;
+
 	static constexpr uint64_t BRK_MAX = 0x100000;
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t mmap_allocate(size_t bytes);

@@ -410,6 +410,18 @@ void Machine::print_exception_handlers() const
 	tinykvm::print_exception_handlers(memory.at(sregs.idt.base));
 }
 
+Machine::address_t Machine::entry_address_if_usermode() const noexcept
+{
+	// Check if we are already usermode
+	// If we are, we return userfunc which is safe to jump to
+	// XXX: This shortcut *requires* KVM_SYNC_X86_SREGS
+	if (this->vcpu.get_special_registers().cs.dpl == 0x3)
+		return usercode_header().vm64_userentry;
+	// If not, return the "dummy syscall" entry address
+	// Returning from a dummy syscall leaves us in usermode
+	return usercode_header().vm64_reentry;
+}
+
 Machine::address_t Machine::entry_address() const noexcept {
 	return usercode_header().vm64_entry;
 }

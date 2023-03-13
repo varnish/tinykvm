@@ -97,6 +97,8 @@ int main(int argc, char** argv)
 		/* Normal execution of _start -> main() */
 		master_vm.run();
 
+		printf("Master VM uses CoW memory? %d\n", master_vm.uses_cow_memory());
+
 		auto registers_time = micro_benchmark([&] {
 			volatile auto x = master_vm.registers();
 		});
@@ -106,6 +108,16 @@ int main(int argc, char** argv)
 			master_vm.set_registers(regs);
 		});
 		printf("set_registers() average time: %lu nanos\n", set_registers_time);
+
+		auto fastest_call_time = micro_benchmark([&] {
+			master_vm.timed_reentry(vmcall_address, 0.0f);
+		});
+		printf("Fastest possible vmcall time: %lu ns\n", fastest_call_time);
+
+		auto fastest_timed_call_time = micro_benchmark([&] {
+			master_vm.timed_reentry(vmcall_address, 4.0f);
+		});
+		printf("Fastest possible timed vmcall time: %lu ns\n", fastest_timed_call_time);
 
 		const size_t size = 0x10000;
 		auto* mem = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
@@ -139,6 +151,8 @@ int main(int argc, char** argv)
 		});
 		printf("memfd map/unmap average time: %lu nanos\n", remap_memory_time);
 	}
+
+	return 0;
 
 	asm("" : : : "memory");
 	auto t0 = time_now();
@@ -217,6 +231,7 @@ int main(int argc, char** argv)
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 	/* Normal execution of _start -> main() */
 	master_vm.run();
+
 	/* Make the master VM able to mass-produce copies */
 	master_vm.prepare_copy_on_write();
 

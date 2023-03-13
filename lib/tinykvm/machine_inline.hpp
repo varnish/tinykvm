@@ -50,7 +50,7 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 	Args&&... args)
 {
 	regs = {};
-	/* Set IOPL=3 to allow I/O instructions */
+	/* Set IOPL=3 to allow I/O instructions in usermode */
 	regs.rflags = 2 | (3 << 12);
 	regs.r15 = addr;
 	regs.rip = this->entry_address();
@@ -88,10 +88,6 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 			throw MachineException("Unsupported vmcall argument");
 		}
 	}(), ...);
-	/* Re-align stack for SSE */
-	regs.rsp &= ~(uint64_t) 0xF;
-	/* Push return value last */
-	stack_push<uint64_t> (regs.rsp, exit_address());
 }
 
 inline void Machine::setup_clone(tinykvm_x86regs& regs, address_t stack)
@@ -107,7 +103,7 @@ inline void Machine::setup_clone(tinykvm_x86regs& regs, address_t stack)
 template <typename... Args> inline constexpr
 void Machine::vmcall(uint64_t addr, Args&&... args)
 {
-	tinykvm_x86regs regs;
+	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr, this->stack_address(), std::forward<Args> (args)...);
 	vcpu.set_registers(regs);
 	this->run();
@@ -123,7 +119,7 @@ void Machine::vmcall(const char* function, Args&&... args)
 template <typename... Args> inline constexpr
 void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 {
-	tinykvm_x86regs regs;
+	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr,
 		this->stack_address(), std::forward<Args> (args)...);
 	vcpu.set_registers(regs);
@@ -133,7 +129,7 @@ void Machine::timed_vmcall(uint64_t addr, float timeout, Args&&... args)
 template <typename... Args> inline constexpr
 void Machine::timed_vmcall_stack(uint64_t addr, uint64_t stk, float timeout, Args&&... args)
 {
-	tinykvm_x86regs regs;
+	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr, stk, std::forward<Args> (args)...);
 	vcpu.set_registers(regs);
 	this->run(timeout);
@@ -142,10 +138,11 @@ void Machine::timed_vmcall_stack(uint64_t addr, uint64_t stk, float timeout, Arg
 template <typename... Args> inline constexpr
 void Machine::timed_reentry(uint64_t addr, float timeout, Args&&... args)
 {
-	tinykvm_x86regs regs;
+	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr,
 		this->stack_address(), std::forward<Args> (args)...);
-	regs.rip = this->reentry_address();
+	/// This may jump directly to the guest function if DPL=3
+	regs.rip = this->entry_address_if_usermode();
 	vcpu.set_registers(regs);
 	this->run(timeout);
 }
@@ -153,9 +150,10 @@ void Machine::timed_reentry(uint64_t addr, float timeout, Args&&... args)
 template <typename... Args> inline constexpr
 void Machine::timed_reentry_stack(uint64_t addr, uint64_t stk, float timeout, Args&&... args)
 {
-	tinykvm_x86regs regs;
+	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr, stk, std::forward<Args> (args)...);
-	regs.rip = this->reentry_address();
+	/// This may jump directly to the guest function if DPL=3
+	regs.rip = this->entry_address_if_usermode();
 	vcpu.set_registers(regs);
 	this->run(timeout);
 }

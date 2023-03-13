@@ -28,9 +28,6 @@ void Machine::elf_loader(const MachineOptions& options)
 	if (UNLIKELY(program_headers >= 16)) {
 		throw std::runtime_error("ELF with too many program-headers. Dynamic?");
 	}
-	if (UNLIKELY(elf->e_phoff > 0x4000)) {
-		throw std::runtime_error("ELF program-headers have bogus offset");
-	}
 	if (UNLIKELY(elf->e_phoff + program_headers * sizeof(Elf64_Phdr) > m_binary.size())) {
 		throw std::runtime_error("ELF program-headers are outside the binary");
 	}

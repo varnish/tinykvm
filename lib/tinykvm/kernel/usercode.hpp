@@ -5,6 +5,7 @@ namespace tinykvm {
 struct user_asm_header {
 	uint16_t vm64_entry;
 	uint16_t vm64_reentry;
+	uint16_t vm64_userentry;
 	uint16_t vm64_rexit;
 	uint32_t vm64_cpuid;
 };
