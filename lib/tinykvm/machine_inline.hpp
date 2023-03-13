@@ -85,7 +85,7 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 			reg = stack_push(regs.rsp, args);
 			iargs ++;
 		} else {
-			throw MachineException("Unsupported vmcall argument");
+			static_assert(always_false<decltype(args)>, "Unknown vmcall argument type");
 		}
 	}(), ...);
 }

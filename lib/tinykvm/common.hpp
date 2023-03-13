@@ -68,6 +68,8 @@ namespace tinykvm
 		uint64_t m_size;
 	};
 
+	template <class...> constexpr std::false_type always_false {};
+
 	template<typename T>
 	struct is_string
 		: public std::disjunction<

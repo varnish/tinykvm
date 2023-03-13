@@ -18,8 +18,7 @@
 extern "C" int gettid();
 extern "C" int close(int);
 extern "C" void tinykvm_timer_signal_handler(int);
-// KVM_SYNC_X86_REGS
-// KVM_SYNC_X86_SREGS
+#define TINYKVM_USE_SYNCED_SREGS 1
 
 struct ksigevent
 {
@@ -85,7 +84,10 @@ void vCPU::init(int id, Machine& machine)
 		Machine::machine_exception("Failed to create KVM run-time mapped memory");
 	}
 	/* We only want GPRs and SREGS for now. */
-	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS;
+	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
+#ifdef TINYKVM_USE_SYNCED_SREGS
+	kvm_run->kvm_valid_regs |= KVM_SYNC_X86_SREGS;
+#endif
 
 	/* Assign CPUID features to guest */
 	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
@@ -120,7 +122,7 @@ void vCPU::init(int id, Machine& machine)
 		/* Enable AVX and AVX512 instructions */
 		master_xregs.xcrs[0].xcr = 0;
 		master_xregs.xcrs[0].value |= 0x7; // FPU, SSE, YMM
-		
+
 		/* Host supports AVX-512F (most basic AVX-512 feature) */
 		if (__builtin_cpu_supports("avx512f")) {
 			master_xregs.xcrs[0].value |= 0xE0; // AVX512
@@ -167,7 +169,10 @@ void vCPU::smp_init(int id, Machine& machine)
 		Machine::machine_exception("Failed to create KVM run-time mapped memory");
 	}
 	/* We only want GPRs and SREGS for now. */
-	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS;
+	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
+#ifdef TINYKVM_USE_SYNCED_SREGS
+	kvm_run->kvm_valid_regs |= KVM_SYNC_X86_SREGS;
+#endif
 
 	const kvm_mp_state state {
 		.mp_state = KVM_MP_STATE_RUNNABLE
@@ -257,20 +262,36 @@ tinykvm_fpuregs vCPU::fpu_registers() const
 }
 const kvm_sregs& vCPU::get_special_registers() const
 {
+#ifndef TINYKVM_USE_SYNCED_SREGS
+	if (ioctl(this->fd, KVM_GET_SREGS, &this->kvm_run->s.regs.sregs) < 0) {
+		Machine::machine_exception("KVM_GET_SREGS failed");
+	}
+#endif
 	return this->kvm_run->s.regs.sregs;
 }
 kvm_sregs& vCPU::get_special_registers()
 {
+#ifndef TINYKVM_USE_SYNCED_SREGS
+	if (ioctl(this->fd, KVM_GET_SREGS, &this->kvm_run->s.regs.sregs) < 0) {
+		Machine::machine_exception("KVM_GET_SREGS failed");
+	}
+#endif
 	return this->kvm_run->s.regs.sregs;
 }
 void vCPU::set_special_registers(const kvm_sregs& sregs)
 {
+#ifdef TINYKVM_USE_SYNCED_SREGS
 	this->kvm_run->kvm_dirty_regs |= KVM_SYNC_X86_SREGS;
 
 	auto* dest_regs = &this->kvm_run->s.regs.sregs;
 	/* Only assign if there is a mismatch. */
 	if (dest_regs != &sregs)
 		*dest_regs = sregs;
+#else
+	if (ioctl(this->fd, KVM_SET_SREGS, &sregs) < 0) {
+		Machine::machine_exception("KVM_SET_SREGS failed");
+	}
+#endif
 }
 
 std::string_view vCPU::io_data() const
@@ -414,9 +435,11 @@ Machine::address_t Machine::entry_address_if_usermode() const noexcept
 {
 	// Check if we are already usermode
 	// If we are, we return userfunc which is safe to jump to
-	// XXX: This shortcut *requires* KVM_SYNC_X86_SREGS
+#ifdef TINYKVM_USE_SYNCED_SREGS
+	// WARNING: This shortcut *requires* KVM_SYNC_X86_SREGS
 	if (this->vcpu.get_special_registers().cs.dpl == 0x3)
 		return usercode_header().vm64_userentry;
+#endif
 	// If not, return the "dummy syscall" entry address
 	// Returning from a dummy syscall leaves us in usermode
 	return usercode_header().vm64_reentry;
