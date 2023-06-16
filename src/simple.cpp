@@ -135,14 +135,16 @@ int main(int argc, char** argv)
 	/* Make a VM function call */
 	tinykvm::tinykvm_x86regs regs;
 	vm.setup_call(regs, call_addr, rsp);
+	//regs.rip = vm.entry_address_if_usermode();
 	vm.set_registers(regs);
 	printf("Calling fork at 0x%lX\n", call_addr);
 	vm.run(5.0f);
 
 	/* Re-run */
-	vm.reset_to(master_vm, options);
+	//vm.reset_to(master_vm, options);
 
 	vm.setup_call(regs, call_addr, rsp);
+	//regs.rip = vm.entry_address_if_usermode();
 	vm.set_registers(regs);
 	printf("Calling fork at 0x%lX\n", call_addr);
 	vm.run(5.0f);

@@ -13,7 +13,9 @@
 #define NUM_RESETS   40000
 #define GUEST_MEMORY  0x40000000  /* 1024MB memory */
 #define GUEST_COW_MEM 65536  /* 64KB memory */
-#define FULL_RESET
+static constexpr size_t BENCH_SAMPLES = 100u;
+static constexpr bool   BENCH_BASICS  = false;
+static constexpr bool   FULL_RESET    = true;
 
 inline timespec time_now();
 inline long nanodiff(timespec start_time, timespec end_time);
@@ -99,60 +101,99 @@ int main(int argc, char** argv)
 
 		printf("Master VM uses CoW memory? %d\n", master_vm.uses_cow_memory());
 
-		auto registers_time = micro_benchmark([&] {
-			volatile auto x = master_vm.registers();
-		});
-		printf("registers() average time: %lu nanos\n", registers_time);
-		auto regs = master_vm.registers();
-		auto set_registers_time = micro_benchmark([&] {
-			master_vm.set_registers(regs);
-		});
-		printf("set_registers() average time: %lu nanos\n", set_registers_time);
+		if constexpr (BENCH_BASICS)
+		{
+			auto registers_time = micro_benchmark([&] {
+				volatile auto x = master_vm.registers();
+			});
+			printf("registers() average time: %lu nanos\n", registers_time);
+			auto regs = master_vm.registers();
+			auto set_registers_time = micro_benchmark([&] {
+				master_vm.set_registers(regs);
+			});
+			printf("set_registers() average time: %lu nanos\n", set_registers_time);
 
-		auto fastest_call_time = micro_benchmark([&] {
-			master_vm.timed_reentry(vmcall_address, 0.0f);
-		});
-		printf("Fastest possible vmcall time: %lu ns\n", fastest_call_time);
+			auto fastest_call_time = micro_benchmark([&] {
+				master_vm.timed_reentry(vmcall_address, 0.0f);
+			});
+			printf("Fastest possible vmcall time: %lu ns\n", fastest_call_time);
 
-		auto fastest_timed_call_time = micro_benchmark([&] {
-			master_vm.timed_reentry(vmcall_address, 4.0f);
-		});
-		printf("Fastest possible timed vmcall time: %lu ns\n", fastest_timed_call_time);
+			auto fastest_timed_call_time = micro_benchmark([&] {
+				master_vm.timed_reentry(vmcall_address, 4.0f);
+			});
+			printf("Fastest possible timed vmcall time: %lu ns\n", fastest_timed_call_time);
 
-		const size_t size = 0x10000;
-		auto* mem = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
-			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+			static const auto simple_binary = load_file("../guest/musl/simple");
 
-		auto insert_memory_time = micro_benchmark([&] {
-			tinykvm::VirtualMem vmem {0xC00000000, mem, size};
-			master_vm.install_memory(3, vmem, true);
-			master_vm.delete_memory(3);
-		});
-		munmap(mem, size);
-		printf("insert memory average time: %lu nanos\n", insert_memory_time);
+			auto boot_time = micro_benchmark([&] {
+				tinykvm::Machine vm {simple_binary, options};
+				vm.setup_linux(
+					{"kvmtest", "Hello World!\n"},
+					{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+				vm.run();
+			});
+			printf("VM create-boot-delete time: %lu ns\n", boot_time);
 
-		auto memfd_time = micro_benchmark([&] {
+			// Create new VM, prepare it for CoW
+			tinykvm::Machine new_master_vm {simple_binary, options};
+			new_master_vm.setup_linux(
+				{"kvmtest", "Hello World!\n"},
+				{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+			new_master_vm.run();
+			new_master_vm.prepare_copy_on_write();
+
+			auto fork_boot_time = micro_benchmark([&] {
+				tinykvm::Machine vm {new_master_vm, options};
+			});
+			printf("VM fork-delete time: %lu ns\n", fork_boot_time);
+
+			// memfd_create()
+			auto fd = memfd_create("benchmark dontneed", 0);
+			assert(fd >= 0);
+
+			const size_t bench_memory_size = 128ULL * 1024 * 1024;
+			ftruncate(fd, bench_memory_size);
+
+			auto* mem = (char*) mmap(NULL, bench_memory_size, PROT_READ | PROT_WRITE,
+				MAP_SHARED, fd, 0);
+			std::memset(mem, 0, bench_memory_size);
+
+			auto insert_memory_time = micro_benchmark([&] {
+				tinykvm::VirtualMem vmem {0xC00000000, mem, bench_memory_size};
+				master_vm.install_memory(3, vmem, true);
+				master_vm.delete_memory(3);
+			});
+			printf("insert memory average time: %lu nanos\n", insert_memory_time);
+
+			auto dontneed_time = micro_benchmark([&] {
+				madvise(mem, bench_memory_size, MADV_DONTNEED);
+			});
+			munmap(mem, bench_memory_size);
+			close(fd);
+			printf("madv_dontneed time: %lu nanos\n", dontneed_time);
+			// memfd closed
+
+			auto memfd_time = micro_benchmark([&] {
+				int mfd = memfd_create("remapped memory", 0);
+				ftruncate(mfd, bench_memory_size);
+				close(mfd);
+			});
+			printf("memfd open/close average time: %lu nanos\n", memfd_time);
+
 			int mfd = memfd_create("remapped memory", 0);
-			ftruncate(mfd, size);
-			close(mfd);
-		});
-		printf("memfd open/close average time: %lu nanos\n", memfd_time);
+			ftruncate(mfd, bench_memory_size);
 
-		int mfd = memfd_create("remapped memory", 0);
-		ftruncate(mfd, size);
+			tinykvm::VirtualMem vmem{0xC00000000, (char *)0xC00000000, bench_memory_size};
+			master_vm.install_memory(3, vmem, true);
 
-		tinykvm::VirtualMem vmem{0xC00000000, (char *)0xC00000000, size};
-		master_vm.install_memory(3, vmem, true);
-
-		auto remap_memory_time = micro_benchmark([&] {
-			mem = (char *)mmap((void*)0xC00000000, size, PROT_READ | PROT_WRITE,
-				MAP_PRIVATE, mfd, 0);
-			munmap(mem, size);
-		});
-		printf("memfd map/unmap average time: %lu nanos\n", remap_memory_time);
+			auto remap_memory_time = micro_benchmark([&] {
+				mem = (char *)mmap((void*)0xC00000000, bench_memory_size, PROT_READ | PROT_WRITE,
+					MAP_SHARED, mfd, 0);
+				munmap(mem, bench_memory_size);
+			});
+			printf("memfd map/unmap average time: %lu nanos\n", remap_memory_time);
+		} // BENCH_BASICS
 	}
-
-	return 0;
 
 	asm("" : : : "memory");
 	auto t0 = time_now();
@@ -454,17 +495,17 @@ void benchmark_multiple_vms(tinykvm::Machine& master_vm, size_t NUM, size_t RESE
 		auto frt0 = time_now();
 		asm("" : : : "memory");
 		counter = (counter + 1) % NUM;
-#ifdef FULL_RESET
-		fvm[counter].reset_to(master_vm, options);
-#endif
+		if constexpr (FULL_RESET) {
+			fvm[counter].reset_to(master_vm, options);
+		}
 		asm("" : : : "memory");
 		auto frt1 = time_now();
 		asm("" : : : "memory");
-#ifdef FULL_RESET
-		fvm[counter].timed_vmcall(vmcall_address, 4.0f);
-#else
-		fvm[counter].timed_reentry(vmcall_address, 4.0f);
-#endif
+		if constexpr (FULL_RESET) {
+			fvm[counter].timed_vmcall(vmcall_address, 4.0f);
+		} else {
+			fvm[counter].timed_reentry(vmcall_address, 4.0f);
+		}
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		frtime += nanodiff(frt0, frt1);
@@ -524,17 +565,17 @@ void benchmark_multiple_pooled_vms(tinykvm::Machine& master_vm, size_t NUM, size
 		asm("" : : : "memory");
 		auto frt0 = time_now();
 		asm("" : : : "memory");
-#ifdef FULL_RESET
-		fvm->reset_to(*data.master_vm, options);
-#endif
+		if constexpr (FULL_RESET) {
+			fvm->reset_to(*data.master_vm, options);
+		}
 		asm("" : : : "memory");
 		auto frt1 = time_now();
 		asm("" : : : "memory");
-#ifdef FULL_RESET
-		fvm->timed_vmcall(data.addr, 4.0f);
-#else
-		fvm->timed_reentry(data.addr, 4.0f);
-#endif
+		if constexpr (FULL_RESET) {
+			fvm->timed_vmcall(data.addr, 4.0f);
+		} else {
+			fvm->timed_reentry(data.addr, 4.0f);
+		}
 		asm("" : : : "memory");
 		auto frt2 = time_now();
 		return {frt0, frt1, frt2};
@@ -577,14 +618,13 @@ long nanodiff(timespec start_time, timespec end_time)
 
 static long micro_benchmark(std::function<void()> callback)
 {
-	static constexpr size_t SAMPLES = 3000u;
 	callback();
 	auto t0 = time_now();
 	asm("" ::: "memory");
-	for (size_t i = 0; i < SAMPLES; i++) {
+	for (size_t i = 0; i < BENCH_SAMPLES; i++) {
 		callback();
 	}
 	asm("" ::: "memory");
 	auto t1 = time_now();
-	return nanodiff(t0, t1) / SAMPLES;
+	return nanodiff(t0, t1) / BENCH_SAMPLES;
 }

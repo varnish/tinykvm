@@ -92,7 +92,7 @@
  *          per array.
  */
 #ifndef STREAM_ARRAY_SIZE
-#   define STREAM_ARRAY_SIZE	8000000
+#   define STREAM_ARRAY_SIZE	20000000
 #endif
 
 /*  2) STREAM runs each kernel "NTIMES" times and reports the *best* result
@@ -390,9 +390,12 @@ newmain(STREAM_TYPE* restrict a, STREAM_TYPE* restrict b, STREAM_TYPE* restrict 
 }
 
 int main() {
-	a = allocate_stream_data();
-	b = allocate_stream_data();
-	c = allocate_stream_data();
+	if (!a)
+		a = allocate_stream_data();
+	if (!b)
+		b = allocate_stream_data();
+	if (!c)
+		c = allocate_stream_data();
 	newmain(a, b, c);
 }
 

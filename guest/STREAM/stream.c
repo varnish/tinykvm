@@ -91,7 +91,7 @@
  *          per array.
  */
 #ifndef STREAM_ARRAY_SIZE
-#   define STREAM_ARRAY_SIZE	2000000
+#   define STREAM_ARRAY_SIZE	20000000
 #endif
 
 /*  2) STREAM runs each kernel "NTIMES" times and reports the *best* result
@@ -582,12 +582,8 @@ void tuned_STREAM_Triad(STREAM_TYPE scalar)
 /* end of stubs for the "tuned" versions of the kernels */
 #endif
 
-int main(int argc, char** argv) {
-	stream();
-}
-
-__attribute__((used, retain))
-extern void my_backend() {
+static void reset_stream()
+{
 	for (size_t i = 0; i < 4; i++) {
 		avgtime[i] = maxtime[i] = 0.0;
 		mintime[i] = FLT_MAX;
@@ -596,6 +592,14 @@ extern void my_backend() {
 	bytes[1] = 2 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE;
 	bytes[2] = 3 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE;
 	bytes[3] = 3 * sizeof(STREAM_TYPE) * STREAM_ARRAY_SIZE;
+}
 
+int main(int argc, char** argv) {
+	stream();
+}
+
+__attribute__((used, retain))
+extern void my_backend() {
+	reset_stream();
 	stream();
 }
