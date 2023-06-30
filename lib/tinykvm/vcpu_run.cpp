@@ -1,8 +1,8 @@
 #include "machine.hpp"
 
-#include "kernel/amd64.hpp"
-#include "kernel/idt.hpp"
-#include "kernel/memory_layout.hpp"
+#include "amd64/amd64.hpp"
+#include "amd64/idt.hpp"
+#include "amd64/memory_layout.hpp"
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <time.h>

@@ -133,7 +133,7 @@ int main(int argc, char** argv)
 	tinykvm::Machine vm{master_vm, options};
 
 	/* Make a VM function call */
-	tinykvm::tinykvm_x86regs regs;
+	tinykvm::tinykvm_regs regs;
 	vm.setup_call(regs, call_addr, rsp);
 	//regs.rip = vm.entry_address_if_usermode();
 	vm.set_registers(regs);

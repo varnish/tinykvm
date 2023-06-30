@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 namespace tinykvm {
 	static constexpr uint64_t GDT_ADDR = 0x1600;

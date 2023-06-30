@@ -10,7 +10,7 @@
 #include <cstdarg>
 #include <cstring>
 #include <stdexcept>
-#include "kernel/memory_layout.hpp"
+#include "amd64/memory_layout.hpp"
 
 /**
 **/

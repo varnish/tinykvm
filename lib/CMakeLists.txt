@@ -6,6 +6,13 @@ project(tinykvm)
 
 option(KVM_EXPERIMENTAL "Enable experimental features" OFF)
 
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)")
+	set (TINYKVM_ARCH "AMD64" CACHE STRING "TinyKVM Arch Backend")
+else()
+	# TODO: Detect ARM properly
+	set (TINYKVM_ARCH "ARM64" CACHE STRING "TinyKVM Arch Backend")
+endif()
+
 set (SOURCES
 	tinykvm/machine.cpp
 	tinykvm/machine_elf.cpp
@@ -15,17 +22,21 @@ set (SOURCES
 	tinykvm/memory_bank.cpp
 	tinykvm/page_streaming.cpp
 	tinykvm/smp.cpp
-	tinykvm/rsp_client.cpp
 	tinykvm/threads.cpp
 	tinykvm/vcpu.cpp
 	tinykvm/vcpu_run.cpp
-	tinykvm/kernel/gdt.cpp
-	tinykvm/kernel/idt.cpp
-	tinykvm/kernel/tss.cpp
-	tinykvm/kernel/paging.cpp
-	tinykvm/kernel/usercode.cpp
-	tinykvm/kernel/vdso.cpp
 	)
+if (TINYKVM_ARCH STREQUAL "AMD64")
+	list(APPEND SOURCES
+		tinykvm/amd64/gdt.cpp
+		tinykvm/amd64/idt.cpp
+		tinykvm/amd64/tss.cpp
+		tinykvm/amd64/paging.cpp
+		tinykvm/amd64/usercode.cpp
+		tinykvm/amd64/vdso.cpp
+		tinykvm/rsp_client.cpp
+	)
+endif()
 
 add_library(tinykvm STATIC ${SOURCES})
 target_compile_definitions(tinykvm PUBLIC _GNU_SOURCE=1)

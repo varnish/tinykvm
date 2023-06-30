@@ -7,14 +7,14 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include "page_streaming.hpp"
-#include "kernel/amd64.hpp"
-#include "kernel/idt.hpp"
-#include "kernel/gdt.hpp"
-#include "kernel/lapic.hpp"
-#include "kernel/tss.hpp"
-#include "kernel/paging.hpp"
-#include "kernel/memory_layout.hpp"
-#include "kernel/usercode.hpp"
+#include "amd64/amd64.hpp"
+#include "amd64/idt.hpp"
+#include "amd64/gdt.hpp"
+#include "amd64/lapic.hpp"
+#include "amd64/tss.hpp"
+#include "amd64/paging.hpp"
+#include "amd64/memory_layout.hpp"
+#include "amd64/usercode.hpp"
 extern "C" int gettid();
 extern "C" int close(int);
 extern "C" void tinykvm_timer_signal_handler(int);

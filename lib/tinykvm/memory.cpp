@@ -5,9 +5,13 @@
 #include <unistd.h>
 #include <unordered_set>
 #include "page_streaming.hpp"
-#include "kernel/amd64.hpp"
-#include "kernel/paging.hpp"
-#include "kernel/memory_layout.hpp"
+#ifdef TINYKVM_ARCH_AMD64
+#include "amd64/amd64.hpp"
+#include "amd64/memory_layout.hpp"
+#include "amd64/paging.hpp"
+#else
+#include "arm64/memory_layout.hpp"
+#endif
 
 namespace tinykvm {
 
@@ -187,7 +191,7 @@ MemoryBank::Page vMemory::new_hugepage()
 
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)
 {
-	std::lock_guard<std::mutex> lock (this->mtx_smp);
+//	std::lock_guard<std::mutex> lock (this->mtx_smp);
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
 	char* ret = writable_page_at(*this, addr, flags, zeroes);
 	//printf("-> Translation of 0x%lX: 0x%lX\n",
@@ -198,14 +202,22 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)
 
 char* vMemory::get_kernelpage_at(uint64_t addr) const
 {
+#ifdef TINYKVM_ARCH_AMD64
 	constexpr uint64_t flags = PDE64_PRESENT;
 	return readable_page_at(*this, addr, flags);
+#else
+#error "Implement me!"
+#endif
 }
 
 char* vMemory::get_userpage_at(uint64_t addr) const
 {
+#ifdef TINYKVM_ARCH_AMD64
 	constexpr uint64_t flags = PDE64_PRESENT | PDE64_USER;
 	return readable_page_at(*this, addr, flags);
+#else
+#error "Implement me!"
+#endif
 }
 
 size_t Machine::banked_memory_pages() const noexcept

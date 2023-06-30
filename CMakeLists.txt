@@ -16,6 +16,10 @@ endif()
 
 add_subdirectory(lib tinykvm)
 
+target_compile_definitions(tinykvm PUBLIC
+	TINYKVM_ARCH_${TINYKVM_ARCH}=1
+	TINYKVM_ARCH="${TINYKVM_ARCH}")
+
 add_executable(bench
 	src/bench.cpp
 	src/functions.cpp

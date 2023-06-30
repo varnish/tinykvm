@@ -3,7 +3,9 @@
 #include <cassert>
 #include <cstring>
 #include <stdexcept>
-#include "kernel/idt.hpp"
+#ifdef TINYKVM_ARCH_AMD64
+#include "amd64/idt.hpp" // interrupt_header()
+#endif
 #include "util/elf.hpp"
 
 namespace tinykvm {
@@ -238,7 +240,9 @@ void Machine::relocate_section(const char* section_name, const char* sym_section
 			const uint64_t addr = rela_addr[i].r_offset;
 			printf("Rela ent %zu with addend 0x%X = 0x%lX\n", i, addend, addr);
 			auto* entry = (address_t*) memory.at(addend, 8);
+#ifdef TINYKVM_ARCH_AMD64
 			*entry = interrupt_header().vm64_dso;
+#endif
 
 /*			auto* entry = elf_offset<address_t> (m_binary, rela_addr[i].r_offset);
 			auto* final = elf_offset<address_t> (m_binary, sym->st_value);

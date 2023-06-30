@@ -1,7 +1,5 @@
 #include "machine.hpp"
 
-#include "kernel/amd64.hpp"
-#include "kernel/vdso.hpp"
 #include "threads.hpp"
 #include "smp.hpp"
 #include "util/threadpool.h"
@@ -44,7 +42,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->vcpu.init(0, *this);
 	this->setup_long_mode(nullptr, options);
-	struct tinykvm_x86regs regs {};
+	struct tinykvm_regs regs {};
 	/* Store the registers, so that Machine is ready to go */
 	this->setup_registers(regs);
 	this->set_registers(regs);
@@ -186,7 +184,7 @@ uint64_t Machine::translate(uint64_t virt) const
 	return tr.physical_address;
 }
 
-void Machine::setup_registers(tinykvm_x86regs& regs)
+void Machine::setup_registers(tinykvm_regs& regs)
 {
 	/* Set IOPL=3 to allow I/O instructions, IF *NOT* enabled */
 	regs.rflags = 2 | (3 << 12); // IF: 0x200
