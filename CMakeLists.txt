@@ -37,3 +37,9 @@ add_executable(simplekvm
 	src/functions.cpp
 )
 target_link_libraries(simplekvm tinykvm)
+
+add_executable(storagekvm
+	src/storage.cpp
+	src/functions.cpp
+)
+target_link_libraries(storagekvm tinykvm)

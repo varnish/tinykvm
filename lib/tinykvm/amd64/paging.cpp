@@ -84,14 +84,14 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
 	pml4[511] = PDE64_PRESENT | PDE64_USER | vdso_pdpt_addr;
 
-	const auto base_giga_page = memory.physbase >> 30UL;
+	const auto base_giga_page = (memory.physbase >> 30UL) & 511;
 	pdpt[base_giga_page+0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd1_addr;
 	pdpt[base_giga_page+1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd2_addr;
 
 	const auto base_2mb_page = (memory.physbase >> 21UL) & 511;
 	pd[base_2mb_page+0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
 
-	lowpage[0] = 0; /* Null-page at 0x0 */
+	lowpage[0] = 0; /* Null-page at PHYS+0x0 */
 	/* GDT, IDT and TSS */
 	lowpage[1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (memory.physbase + 0x1000);
 	lowpage[6] = PDE64_PRESENT | PDE64_NX | (memory.physbase + VSYS_ADDR);
@@ -113,19 +113,21 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	/* Initial userspace area (no execute) */
 	pd[base_2mb_page+1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
 	{
-		/* Spend one page pre-splitting the (likely) stack area */
+		// Spend one page pre-splitting the (likely) stack area
 		auto* pte = (uint64_t*) memory.at(free_page);
 		// Set writable 4k attributes
 		for (uint64_t i = 0; i < 512; i++) {
 			// Second 2MB page in the physical memory area
-			uint64_t addr4k = (memory.physbase + 0x200000) | (i << 12);
+			uint64_t addr4k = ((base_giga_page << 30) + ((base_2mb_page+1) << 21)) + (i << 12);
 			pte[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | addr4k;
 		}
 		free_page += 0x1000;
 	}
-	for (uint64_t i = 2; i < 1024; i++) {
-		pd[base_2mb_page+i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX
-			| (memory.physbase + (i << 21));
+
+	// Covers 2x 1GB pages with 512x2 2MB user-read-write entries
+	for (uint64_t i = base_2mb_page+2; i < 1024; i++) {
+		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX
+			| ((base_giga_page << 30) + (i << 21));
 	}
 
 	/* ELF executable area */
@@ -146,17 +148,18 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 			const bool exec  = (hdr->p_flags & PF_X) != 0;
 
 			/* TODO: Prevent extremely high addresses */
-			auto base = hdr->p_vaddr & ~0xFFFL;
-			auto end  = ((hdr->p_vaddr + len) + 0xFFFL) & ~0xFFFL;
+			/* XXX: Prevent crossing gigabyte boundries */
+			auto base = hdr->p_vaddr & ~0xFFFLL;
+			auto end  = ((hdr->p_vaddr + len) + 0xFFFLL) & ~0xFFFLL;
 #if 0
 			printf("0x%lX->0x%lX --> 0x%lX:0x%lX\n",
 				hdr->p_vaddr, hdr->p_vaddr + len, base, end);
 #endif
 			for (size_t addr = base; addr < end;)
 			{
-				auto pdidx = addr >> 21;
-				// Look for possible 2MB pages
-				if ((addr & ~0xFFFFFFFFFFE00FFFL) == 0)
+				auto pdidx = (addr >> 21) & 511;
+				// Look for *complete* 2MB pages within segment
+				if ((addr & ~0xFFFFFFFFFFE00FFFLL) == 0)
 				{
 					if (addr + (1UL << 21) <= end) {
 						// This is a 2MB-aligned ELF segment
@@ -164,7 +167,8 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 						printf("Found 2MB segment at 0x%lX -> 0x%lX\n", addr, end);
 #endif
 						auto& ptentry = pd[pdidx];
-						ptentry = PDE64_PRESENT | PDE64_USER | PDE64_NX | PDE64_PS | (pdidx << 21);
+						const uint64_t addr2m = (base_giga_page << 30) | (pdidx << 21);
+						ptentry = PDE64_PRESENT | PDE64_USER | PDE64_NX | PDE64_PS | addr2m;
 						if (!read) ptentry &= ~PDE64_PRESENT; // A weird one, but... AMD64.
 						if (write) ptentry |= PDE64_RW;
 						if (exec) ptentry &= ~PDE64_NX;
@@ -182,7 +186,7 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 					auto* pagetable = (uint64_t*) memory.at(free_page);
 					for (uint64_t i = 0; i < 512; i++) {
 						// Set writable 4k attributes
-						uint64_t addr4k = (pdidx << 21) | (i << 12);
+						uint64_t addr4k = (base_giga_page << 30) | (pdidx << 21) | (i << 12);
 						pagetable[i] =
 							PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | addr4k;
 					}
@@ -216,10 +220,10 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	// vsyscall gettimeofday: 0xFFFFFFFFFF600000
 	vdso_pdpt[511] = PDE64_PRESENT | PDE64_USER | vsyscall_pd_addr;
 	vsyscall_pd[507] = PDE64_PRESENT | PDE64_USER | vsyscall_pt_addr;
-	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | (memory.physbase + 0x4000);
+	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | (memory.physbase + VSYS_ADDR);
 
 	/* Kernel area ~64KB */
-	const size_t kernel_begin_idx = ((memory.physbase + PT_ADDR) >> 12) & 511;
+	const size_t kernel_begin_idx = PT_ADDR >> 12;
 	const size_t kernel_end_idx = (free_page >> 12) & 511;
 	for (unsigned i = kernel_begin_idx; i < kernel_end_idx; i++) {
 		lowpage[i] = PDE64_PRESENT | PDE64_NX;
@@ -228,8 +232,17 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	/* Stack area ~64KB -> 2MB */
 	for (unsigned i = kernel_end_idx; i < 512; i++) {
 		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX
-			| (memory.physbase + (i << 12));
+			| (base_giga_page << 30) | (base_2mb_page << 21) | (i << 12);
 	}
+
+	/* Verify a kernel page */
+	page_at(memory, memory.physbase + 0x1000,
+		[&memory] (uint64_t addr, uint64_t& entry, size_t size) {
+			if (addr != memory.physbase + 0x1000 || size != PAGE_SIZE
+				|| (entry & PDE64_ADDR_MASK) != memory.physbase + 0x1000) {
+				throw MachineException("Corrupted kernel-page during paging initialization");
+			}
+		});
 
 	return free_page;
 }
@@ -307,12 +320,23 @@ void foreach_page(vMemory& memory, foreach_page_t callback)
 		if (pml4[i] & PDE64_PRESENT) {
 			const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
 			callback(pdpt_base, pml4[i], pdpt_size);
+
+			// Skip out-of-bounds memory, as it may not be relevant for foreach
+			if (pdpt_mem >= memory.physbase + memory.size)
+				continue;
+
 			auto* pdpt = memory.page_at(pdpt_mem);
 			for (uint64_t j = 0; j < 512; j++)
 			{
 				if (pdpt[j] & PDE64_PRESENT) {
 					const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
 					callback(pd_base, pdpt[j], pd_size);
+
+					// Skip out-of-bounds memory, as it may not be relevant for foreach
+					// (also, it is impossible to read page-memory out of bounds...)
+					if (pd_mem >= memory.physbase + memory.size)
+						continue;
+
 					auto* pd = memory.page_at(pd_mem);
 					for (uint64_t k = 0; k < 512; k++)
 					{

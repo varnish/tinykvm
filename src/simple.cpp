@@ -56,18 +56,20 @@ int main(int argc, char** argv)
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_WORK_MEM,
 		.reset_free_work_mem = 0,
+		.vmem_base_address = uint64_t(getenv("UPPER") != nullptr ? 0x40000000 : 0x0),
 		.verbose_loader = false,
 		.hugepages = (getenv("HUGE") != nullptr),
 	};
 	tinykvm::Machine master_vm {binary, options};
 	//master_vm.set_stack_address(0x800000);
+	//master_vm.print_pagetables();
+
 	master_vm.setup_linux(
 		{"vmod_kvm", "xpizza.com"
 					 "0"},
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 
 	const auto rsp = master_vm.stack_address();
-	//master_vm.print_pagetables();
 
 	uint64_t call_addr = verify_exists(master_vm, "my_backend");
 
@@ -116,7 +118,12 @@ int main(int argc, char** argv)
 	asm("" ::: "memory");
 
 	/* Normal execution of _start -> main() */
-	master_vm.run();
+	try {
+		master_vm.run();
+	} catch (...) {
+		master_vm.print_registers();
+		throw;
+	}
 
 	asm("" ::: "memory");
 	auto t1 = time_now();
@@ -138,7 +145,7 @@ int main(int argc, char** argv)
 	//regs.rip = vm.entry_address_if_usermode();
 	vm.set_registers(regs);
 	printf("Calling fork at 0x%lX\n", call_addr);
-	vm.run(5.0f);
+	vm.run(8.0f);
 
 	/* Re-run */
 	//vm.reset_to(master_vm, options);
@@ -147,7 +154,7 @@ int main(int argc, char** argv)
 	//regs.rip = vm.entry_address_if_usermode();
 	vm.set_registers(regs);
 	printf("Calling fork at 0x%lX\n", call_addr);
-	vm.run(5.0f);
+	vm.run(8.0f);
 }
 
 timespec time_now()

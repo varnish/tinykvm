@@ -29,7 +29,6 @@ struct ksigevent
 };
 
 namespace tinykvm {
-	static struct kvm_sregs master_sregs;
 	static struct kvm_xcrs master_xregs;
 	static struct {
 		__u32 nent;
@@ -94,31 +93,33 @@ void vCPU::init(int id, Machine& machine)
 		Machine::machine_exception("KVM_SET_CPUID2 failed");
 	}
 
-	// XXX: This doesn't work with offset physical base memory
+	machine.cached_sregs = new kvm_sregs;
+	auto& master_sregs = *machine.cached_sregs;
+	if (ioctl(this->fd, KVM_GET_SREGS, &master_sregs) < 0) {
+		Machine::machine_exception("KVM_GET_SREGS failed");
+	}
+	const auto physbase = machine.main_memory().physbase;
+
+	master_sregs.cr3 = physbase + PT_ADDR;
+	// NOTE: SMEP is not currently possible to due to the usermode
+	// assembly being used in a kernel context. Some writing occurs?
+	// XXX: TODO: Figure out why SMEP causes problems.
+	master_sregs.cr4 =
+		CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
+		CR4_FSGSBASE;
+	master_sregs.cr0 =
+		CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
+	master_sregs.efer =
+		EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
+	setup_amd64_segment_regs(master_sregs, physbase + GDT_ADDR);
+	master_sregs.gs.base = usercode_header().translated_vm_cpuid(machine.main_memory());
+	setup_amd64_tss_regs(master_sregs, physbase + TSS_ADDR);
+	setup_amd64_exception_regs(master_sregs, physbase + IDT_ADDR);
+
+	// Avoid loading X-regs more than once
 	static bool minit = false;
 	if (!minit) {
 		minit = true;
-		if (ioctl(this->fd, KVM_GET_SREGS, &master_sregs) < 0) {
-			Machine::machine_exception("KVM_GET_SREGS failed");
-		}
-		const auto physbase = machine.main_memory().physbase;
-
-		master_sregs.cr3 = physbase + PT_ADDR;
-		// NOTE: SMEP is not currently possible to due to the usermode
-		// assembly being used in a kernel context. Some writing occurs?
-		// XXX: TODO: Figure out why SMEP causes problems.
-		master_sregs.cr4 =
-			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
-			CR4_FSGSBASE;
-		master_sregs.cr0 =
-			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
-		master_sregs.efer =
-			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
-		setup_amd64_segment_regs(master_sregs, physbase + GDT_ADDR);
-		master_sregs.gs.base = usercode_header().translated_vm_cpuid(machine.main_memory());
-		setup_amd64_tss_regs(master_sregs, physbase + TSS_ADDR);
-		setup_amd64_exception_regs(master_sregs, physbase + IDT_ADDR);
-
 		if (ioctl(this->fd, KVM_GET_XCRS, &master_xregs) < 0) {
 			Machine::machine_exception("KVM_GET_XCRS failed");
 		}
@@ -327,7 +328,7 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 
 		this->m_kernel_end = setup_amd64_paging(memory, m_binary);
 
-		vcpu.set_special_registers(master_sregs);
+		vcpu.set_special_registers(*cached_sregs);
 	}
 	else // Forked VM
 	{
@@ -360,11 +361,16 @@ void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_
 	if (shared_memory_boundary == 0)
 		shared_memory_boundary = UINT64_MAX;
 	foreach_page_makecow(this->memory, kernel_end_address(), shared_memory_boundary);
+
+	// Visualizing the page tables after makecow should show that all
+	// relevant user-writable pages have been made read-only and cloneable
 	//print_pagetables(this->memory);
+
 	/* Cache all the special registers, which we will use on forks */
 	if (this->cached_sregs == nullptr) {
 		this->cached_sregs = new kvm_sregs {};
 	}
+	/* Always cache again during prep, because it may contain new FS/GS */
 	*this->cached_sregs = get_special_registers();
 
 	/* Make this machine runnable again using itself
