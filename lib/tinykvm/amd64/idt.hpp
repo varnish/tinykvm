@@ -1,4 +1,6 @@
 #include <cstdint>
+#include "../memory.hpp"
+#include "memory_layout.hpp"
 struct kvm_sregs;
 
 namespace tinykvm {
@@ -17,6 +19,11 @@ struct iasm_header {
 	uint16_t vm64_exception;
 	uint16_t vm64_except_size;
 	uint16_t vm64_dso;
+
+	uint64_t translated_vm_syscall(const vMemory& memory) const noexcept
+	{
+		return memory.physbase + INTR_ASM_ADDR + vm64_syscall;
+	}
 };
 const iasm_header& interrupt_header();
 }

@@ -24,6 +24,7 @@ namespace tinykvm
 		uint64_t max_mem;
 		uint32_t max_cow_mem = 0;
 		uint32_t reset_free_work_mem = 0; /* reset_to() */
+		uint64_t vmem_base_address = 0;
 		std::string_view binary = {};
 
 		bool verbose_loader = false;

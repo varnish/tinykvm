@@ -14,7 +14,7 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	: m_machine { machine },
 	  m_arena_begin { 0x7000000000 },
 	  m_arena_next { m_arena_begin },
-	  m_idx_begin { 2 },
+	  m_idx_begin { FIRST_BANK_IDX },
 	  m_idx { m_idx_begin },
 	  m_using_hugepages { options.hugepages }
 {

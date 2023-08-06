@@ -2,6 +2,7 @@
 
 #include <linux/kvm.h>
 #include <cstring>
+#include "../memory.hpp"
 #include "memory_layout.hpp"
 #include "gdt.hpp"
 
@@ -31,27 +32,34 @@ struct AMD64_TSS
 static constexpr uint16_t tss_sel = 0x30;
 
 
-void setup_amd64_tss(
-	uint64_t tss_addr, char* tss_ptr, char* gdt_ptr)
+void setup_amd64_tss(vMemory& memory)
 {
+	const auto tss_base = memory.physbase + TSS_ADDR;
+	const auto ist_base = memory.physbase + IST_ADDR;
+	auto* tss_ptr = memory.at(tss_base);
+
 	auto& tss = *(AMD64_TSS *)tss_ptr;
 	std::memset(&tss, 0, sizeof(tss));
-	tss.rsp0 = IST_ADDR + 0x1000;
+	tss.rsp0 = ist_base + 0x1000;
 	tss.rsp1 = 0;
 	tss.rsp2 = 0;
-	tss.ist1 = IST_ADDR + 0x1000;
-	tss.ist2 = IST_ADDR + 0x800;
+	tss.ist1 = ist_base + 0x1000;
+	tss.ist2 = ist_base + 0x800;
 	tss.iomap_base = 104; // unused
 
-	GDT_write_TSS_segment(gdt_ptr + tss_sel, tss_addr, sizeof(AMD64_TSS)-1);
+	auto* gdt_ptr = memory.at(memory.physbase + GDT_ADDR);
+	GDT_write_TSS_segment(gdt_ptr + tss_sel, tss_base, sizeof(AMD64_TSS)-1);
 }
 
-void setup_amd64_tss_smp(char* smp_tss_ptr)
+void setup_amd64_tss_smp(vMemory& memory)
 {
+	const auto ist_base = memory.physbase + IST_ADDR;
+	auto* smp_tss_ptr = memory.at(memory.physbase + TSS_SMP_ADDR);
+
 	auto* tss = (AMD64_TSS *)smp_tss_ptr;
 	for (size_t c = 0; c < 17; c++) {
 		/** XXX: TSS_SMP_STACK exception stack enough? */
-		tss[c].rsp0 = IST_ADDR + TSS_SMP_STACK * (c + 1);
+		tss[c].rsp0 = ist_base + TSS_SMP_STACK * (c + 1);
 		tss[c].rsp1 = 0;
 		tss[c].rsp2 = 0;
 		tss[c].ist1 = tss[c].rsp0;

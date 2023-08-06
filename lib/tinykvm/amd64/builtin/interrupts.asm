@@ -1,7 +1,6 @@
 [BITS 64]
 global vm64_exception
 
-org 0x2000
 ;; CPU exception frame:
 ;; 1. stack    rsp+32
 ;; 2. rflags   rsp+24

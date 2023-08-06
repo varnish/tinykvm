@@ -173,6 +173,8 @@ struct Machine
 
 	void install_memory(uint32_t idx, const VirtualMem&, bool ro);
 	void delete_memory(uint32_t idx);
+	vMemory& main_memory() noexcept;
+	const vMemory& main_memory() const noexcept;
 	std::string_view binary() const noexcept { return m_binary; }
 
 	/* The extra used memory attached to a VM for copy-on-write mechanisms. */

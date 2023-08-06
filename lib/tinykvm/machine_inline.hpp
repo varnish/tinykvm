@@ -168,6 +168,15 @@ inline uint64_t Machine::stack_push(__u64& sp, const T& type)
 	return stack_push(sp, &type, sizeof(T));
 }
 
+inline vMemory& Machine::main_memory() noexcept
+{
+	return memory;
+}
+inline const vMemory& Machine::main_memory() const noexcept
+{
+	return memory;
+}
+
 inline std::string_view Machine::memory_at(uint64_t a, size_t s) const
 {
 	return memory.view(a, s);

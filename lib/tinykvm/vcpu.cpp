@@ -94,13 +94,16 @@ void vCPU::init(int id, Machine& machine)
 		Machine::machine_exception("KVM_SET_CPUID2 failed");
 	}
 
+	// XXX: This doesn't work with offset physical base memory
 	static bool minit = false;
 	if (!minit) {
 		minit = true;
 		if (ioctl(this->fd, KVM_GET_SREGS, &master_sregs) < 0) {
 			Machine::machine_exception("KVM_GET_SREGS failed");
 		}
-		master_sregs.cr3 = PT_ADDR;
+		const auto physbase = machine.main_memory().physbase;
+
+		master_sregs.cr3 = physbase + PT_ADDR;
 		// NOTE: SMEP is not currently possible to due to the usermode
 		// assembly being used in a kernel context. Some writing occurs?
 		// XXX: TODO: Figure out why SMEP causes problems.
@@ -111,10 +114,10 @@ void vCPU::init(int id, Machine& machine)
 			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
 		master_sregs.efer =
 			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
-		setup_amd64_segment_regs(master_sregs, GDT_ADDR);
-		master_sregs.gs.base = usercode_header().vm64_cpuid;
-		setup_amd64_tss_regs(master_sregs, TSS_ADDR);
-		setup_amd64_exception_regs(master_sregs, IDT_ADDR);
+		setup_amd64_segment_regs(master_sregs, physbase + GDT_ADDR);
+		master_sregs.gs.base = usercode_header().translated_vm_cpuid(machine.main_memory());
+		setup_amd64_tss_regs(master_sregs, physbase + TSS_ADDR);
+		setup_amd64_exception_regs(master_sregs, physbase + IDT_ADDR);
 
 		if (ioctl(this->fd, KVM_GET_XCRS, &master_xregs) < 0) {
 			Machine::machine_exception("KVM_GET_XCRS failed");
@@ -146,7 +149,7 @@ void vCPU::init(int id, Machine& machine)
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
 	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
-	msrs.entries[1].data  = interrupt_header().vm64_syscall;
+	msrs.entries[1].data  = interrupt_header().translated_vm_syscall(machine.main_memory());
 
 	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < (int)msrs.nmsrs) {
 		Machine::machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
@@ -158,6 +161,8 @@ void vCPU::smp_init(int id, Machine& machine)
 	this->cpu_id = id;
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
 	this->m_machine = &machine;
+	auto& memory = machine.main_memory();
+
 	if (UNLIKELY(this->fd < 0)) {
 		Machine::machine_exception("Failed to KVM_CREATE_VCPU");
 	}
@@ -202,7 +207,7 @@ void vCPU::smp_init(int id, Machine& machine)
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
 	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
-	msrs.entries[1].data  = interrupt_header().vm64_syscall;
+	msrs.entries[1].data  = interrupt_header().translated_vm_syscall(memory);
 
 	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < (int)msrs.nmsrs) {
 		Machine::machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
@@ -215,10 +220,10 @@ void vCPU::smp_init(int id, Machine& machine)
 		sregs = *machine.cached_sregs;
 	else
 		sregs = machine.vcpu.get_special_registers();
-	sregs.tr.base = TSS_SMP_ADDR + (id - 1) * 104; /* AMD64_TSS */
-	sregs.gs.base = usercode_header().vm64_cpuid + 4 * id;
+	sregs.tr.base = memory.physbase + TSS_SMP_ADDR + (id - 1) * 104; /* AMD64_TSS */
+	sregs.gs.base = usercode_header().translated_vm_cpuid(memory) + 4 * id;
 	/* XXX: Is this correct? */
-	sregs.cr3 = machine.memory.page_tables;
+	sregs.cr3 = memory.page_tables;
 	sregs.cr0 &= ~CR0_WP; // XXX: Fix me!
 	this->set_special_registers(sregs);
 }
@@ -302,16 +307,23 @@ std::string_view vCPU::io_data() const
 
 void Machine::setup_long_mode(const Machine* other, const MachineOptions& options)
 {
-	(void) options;
+	(void)options;
+
 	if (other == nullptr) // Main VM
 	{
+		const auto physbase = this->memory.physbase;
+
 		setup_amd64_exceptions(
-			IDT_ADDR, memory.at(IDT_ADDR), memory.at(INTR_ASM_ADDR));
-		setup_amd64_segments(GDT_ADDR, memory.at(GDT_ADDR));
-		setup_amd64_tss(TSS_ADDR, memory.at(TSS_ADDR), memory.at(GDT_ADDR));
-		setup_amd64_tss_smp(memory.at(TSS_SMP_ADDR));
+			physbase + INTR_ASM_ADDR,
+			memory.at(physbase + IDT_ADDR), memory.at(physbase + INTR_ASM_ADDR));
+		setup_amd64_segments(
+			physbase + GDT_ADDR,
+			memory.at(physbase + GDT_ADDR));
+		setup_amd64_tss(memory);
+		setup_amd64_tss_smp(memory);
 		/* Userspace entry/exit code */
-		setup_vm64_usercode(memory.at(USER_ASM_ADDR));
+		setup_vm64_usercode(
+			memory.at(physbase + USER_ASM_ADDR));
 
 		this->m_kernel_end = setup_amd64_paging(memory, m_binary);
 
@@ -373,7 +385,8 @@ void Machine::setup_cow_mode(const Machine* other)
 	   page tables that allow the master VM to execute code
 	   separately from its forks, while sharing a master page table. */
 	auto pml4 = memory.new_page();
-	tinykvm::page_duplicate(pml4.pmem, other->memory.page_at(PT_ADDR));
+	tinykvm::page_duplicate(pml4.pmem,
+		other->memory.page_at(other->memory.physbase + PT_ADDR)); // Intentional!
 	memory.page_tables = pml4.addr;
 
 	/* Zero a new page for IST stack */
@@ -384,7 +397,7 @@ void Machine::setup_cow_mode(const Machine* other)
 	// stackless interrupts, to be honest. Something to think about?
 	// XXX: In theory we can avoid initializing one of these pages
 	// until the guest asks for a certain level of concurrency.
-	memory.get_writable_page(IST_ADDR, PDE64_RW, true);
+	memory.get_writable_page(memory.physbase + IST_ADDR, PDE64_RW, true);
 	//memory.get_writable_page(IST2_ADDR, PDE64_RW, true);
 
 	/* Inherit the special registers of the master machine.
@@ -402,9 +415,9 @@ void Machine::setup_cow_mode(const Machine* other)
 	//print_pagetables(this->memory);
 #if 0
 	/* It shouldn't be identity-mapped anymore */
-	assert(translate(IST_ADDR) != IST_ADDR);
+	assert(translate(memory.physbase + IST_ADDR) != IST_ADDR);
 	//printf("Translate 0x%lX => 0x%lX\n", IST_ADDR, translate(IST_ADDR));
-	page_at(memory, IST_ADDR, [] (auto, auto& entry, auto) {
+	page_at(memory, memory.physbase + IST_ADDR, [] (auto, auto& entry, auto) {
 		assert(entry & (PDE64_PRESENT | PDE64_RW | PDE64_NX));
 		(void) entry;
 	});
@@ -438,21 +451,21 @@ Machine::address_t Machine::entry_address_if_usermode() const noexcept
 #ifdef TINYKVM_USE_SYNCED_SREGS
 	// WARNING: This shortcut *requires* KVM_SYNC_X86_SREGS
 	if (this->vcpu.get_special_registers().cs.dpl == 0x3)
-		return usercode_header().vm64_userentry;
+		return usercode_header().translated_vm_userentry(memory);
 #endif
 	// If not, return the "dummy syscall" entry address
 	// Returning from a dummy syscall leaves us in usermode
-	return usercode_header().vm64_reentry;
+	return usercode_header().translated_vm_reentry(memory);
 }
 
 Machine::address_t Machine::entry_address() const noexcept {
-	return usercode_header().vm64_entry;
+	return usercode_header().translated_vm_entry(memory);
 }
 Machine::address_t Machine::reentry_address() const noexcept {
-	return usercode_header().vm64_reentry;
+	return usercode_header().translated_vm_reentry(memory);
 }
 Machine::address_t Machine::exit_address() const noexcept {
-	return usercode_header().vm64_rexit;
+	return usercode_header().translated_vm_rexit(memory);
 }
 
 } // tinykvm

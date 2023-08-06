@@ -102,7 +102,7 @@ void setup_amd64_segment_regs(struct kvm_sregs& sregs, uint64_t gdt_addr)
 }
 
 TINYKVM_COLD()
-void print_gdt_entries(void* area, size_t count)
+void print_gdt_entries(const void* area, size_t count)
 {
 	const auto* entry = (const GDT_entry*) area;
 	for (size_t i = 0; i < count; i++) {

@@ -46,6 +46,8 @@ struct MemoryBank {
 };
 
 struct MemoryBanks {
+	static constexpr unsigned FIRST_BANK_IDX = 3;
+
 	MemoryBanks(Machine&, const MachineOptions&);
 
 	MemoryBank& get_available_bank(size_t n_pages);

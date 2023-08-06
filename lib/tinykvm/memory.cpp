@@ -23,7 +23,9 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	  main_memory_writes(options.master_direct_memory_writes),
 	  banks(m, options)
 {
-	this->page_tables = PT_ADDR;
+	// Main memory is not always starting at 0x0
+	// The default top-level pagetable location
+	this->page_tables = this->physbase + PT_ADDR;
 }
 vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other)
 	: vMemory{m, options, other.physbase, other.safebase, other.ptr, other.size, false}
@@ -169,6 +171,8 @@ vMemory::AllocationResult vMemory::allocate_mapped_memory(
 vMemory vMemory::New(Machine& m, const MachineOptions& options,
 	uint64_t phys, uint64_t safe, size_t size)
 {
+	if (UNLIKELY(phys & 0xFFFFF))
+		throw MachineException("Invalid physical memory alignment. Must be at least 2MB aligned.", phys);
 	// Over-allocate in order to avoid trouble with 2MB-aligned operations
 	size = vMemory::overaligned_memsize(size);
 	const auto [res_ptr, res_size] = allocate_mapped_memory(options, size);

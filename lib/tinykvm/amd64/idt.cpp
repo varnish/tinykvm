@@ -81,9 +81,7 @@ void setup_amd64_exception_regs(struct kvm_sregs& sregs, uint64_t addr)
 
 void setup_amd64_exceptions(uint64_t addr, void* area, void* except_area)
 {
-	(void)addr;
-
-	uint64_t offset = interrupt_header().vm64_exception;
+	uint64_t offset = addr + interrupt_header().vm64_exception;
 	for (int i = 0; i <= 20; i++) {
 		if (i == 15) continue;
 		//printf("Exception handler %d at 0x%lX\n", i, offset);

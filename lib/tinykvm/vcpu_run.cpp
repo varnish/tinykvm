@@ -1,6 +1,7 @@
 #include "machine.hpp"
 
 #include "amd64/amd64.hpp"
+#include "amd64/gdt.hpp"
 #include "amd64/idt.hpp"
 #include "amd64/memory_layout.hpp"
 #include <linux/kvm.h>
@@ -110,10 +111,15 @@ long vCPU::run_once()
 
 	// Validate the integrity of the guests kernel space
 	const auto& sregs = get_special_registers();
-	if (UNLIKELY(sregs.cr3 != machine().memory.page_tables ||
-		sregs.gdt.base != GDT_ADDR || sregs.idt.base != IDT_ADDR
-		// Doesn't work on other vCPUs: sregs.tr.base != TSS_ADDR
+	const auto& memory = machine().main_memory();
+
+	if (UNLIKELY(
+		sregs.cr3 != machine().memory.page_tables
+		|| sregs.gdt.base != memory.physbase + GDT_ADDR
+		|| sregs.idt.base != memory.physbase + IDT_ADDR
+		// Doesn't work on other vCPUs: || sregs.tr.base != TSS_ADDR
 		)) {
+		this->print_registers();
 		Machine::machine_exception("Kernel integrity loss detected");
 	}
 
@@ -170,7 +176,8 @@ long vCPU::run_once()
 #endif
 				/* Page fault handling */
 				/* We should be in kernel mode, otherwise it's fishy! */
-				if (UNLIKELY(regs.rip >= INTR_ASM_ADDR+0x1000)) {
+				auto& memory = machine().main_memory();
+				if (UNLIKELY(regs.rip >= memory.physbase + INTR_ASM_ADDR+0x1000)) {
 					Machine::machine_exception("Security violation", intr);
 				}
 
@@ -255,7 +262,7 @@ long Machine::run_with_breakpoints(std::array<uint64_t, 4> bp)
 TINYKVM_COLD()
 void vCPU::print_registers() const
 {
-	auto& sregs = this->get_special_registers();
+	const auto& sregs = this->get_special_registers();
 	const auto& printer = machine().m_printer;
 
 	char buffer[1024];
@@ -286,10 +293,10 @@ void vCPU::print_registers() const
 #endif
 #if 0
 	printf("IDT: 0x%llX (Size=%x)\n", sregs.idt.base, sregs.idt.limit);
-	print_exception_handlers(memory.at(sregs.idt.base));
+	print_exception_handlers(machine().main_memory().at(sregs.idt.base));
 #endif
 #if 0
-	print_gdt_entries(memory.at(sregs.gdt.base), 7);
+	print_gdt_entries(machine().main_memory().at(sregs.gdt.base), 7);
 #endif
 }
 

@@ -83,44 +83,49 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 
 	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
 	pml4[511] = PDE64_PRESENT | PDE64_USER | vdso_pdpt_addr;
-	pdpt[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd1_addr;
-	pdpt[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd2_addr;
 
-	pd[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
+	const auto base_giga_page = memory.physbase >> 30UL;
+	pdpt[base_giga_page+0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd1_addr;
+	pdpt[base_giga_page+1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd2_addr;
+
+	const auto base_2mb_page = (memory.physbase >> 21UL) & 511;
+	pd[base_2mb_page+0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
 
 	lowpage[0] = 0; /* Null-page at 0x0 */
 	/* GDT, IDT and TSS */
-	lowpage[1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (1 << 12);
-	lowpage[6] = PDE64_PRESENT | PDE64_NX | (6 << 12);
-	lowpage[7] = PDE64_PRESENT | PDE64_NX | (7 << 12);
+	lowpage[1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (memory.physbase + 0x1000);
+	lowpage[6] = PDE64_PRESENT | PDE64_NX | (memory.physbase + VSYS_ADDR);
+	lowpage[7] = PDE64_PRESENT | PDE64_NX | (memory.physbase + TSS_SMP_ADDR);
 
 	/* Kernel code: Exceptions, system calls */
 	const uint64_t except_page = INTR_ASM_ADDR >> 12;
-	lowpage[except_page] = PDE64_PRESENT | INTR_ASM_ADDR;
+	lowpage[except_page] = PDE64_PRESENT | (memory.physbase + INTR_ASM_ADDR);
 
 	/* Exception (IST) stack */
 	const uint64_t ist_page = IST_ADDR >> 12;
-	lowpage[ist_page+0] = PDE64_PRESENT | PDE64_RW | PDE64_NX | IST_ADDR;
-	lowpage[ist_page+1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | IST2_ADDR;
+	lowpage[ist_page+0] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (memory.physbase + IST_ADDR);
+	lowpage[ist_page+1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (memory.physbase + IST2_ADDR);
 
 	/* Usercode page: Entry, exit */
 	const uint64_t user_page = USER_ASM_ADDR >> 12;
-	lowpage[user_page] = PDE64_PRESENT | PDE64_USER | USER_ASM_ADDR;
+	lowpage[user_page] = PDE64_PRESENT | PDE64_USER | (memory.physbase + USER_ASM_ADDR);
 
 	/* Initial userspace area (no execute) */
-	pd[1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
+	pd[base_2mb_page+1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
 	{
 		/* Spend one page pre-splitting the (likely) stack area */
 		auto* pte = (uint64_t*) memory.at(free_page);
 		// Set writable 4k attributes
 		for (uint64_t i = 0; i < 512; i++) {
-			uint64_t addr4k = (1ul << 21) | (i << 12);
+			// Second 2MB page in the physical memory area
+			uint64_t addr4k = (memory.physbase + 0x200000) | (i << 12);
 			pte[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | addr4k;
 		}
 		free_page += 0x1000;
 	}
-	for (unsigned i = 2; i < 1024; i++) {
-		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX | (i << 21);
+	for (uint64_t i = 2; i < 1024; i++) {
+		pd[base_2mb_page+i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX
+			| (memory.physbase + (i << 21));
 	}
 
 	/* ELF executable area */
@@ -211,18 +216,19 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	// vsyscall gettimeofday: 0xFFFFFFFFFF600000
 	vdso_pdpt[511] = PDE64_PRESENT | PDE64_USER | vsyscall_pd_addr;
 	vsyscall_pd[507] = PDE64_PRESENT | PDE64_USER | vsyscall_pt_addr;
-	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | 0x4000;
+	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | (memory.physbase + 0x4000);
 
 	/* Kernel area ~64KB */
-	const size_t kernel_begin_idx = PT_ADDR >> 12;
-	const size_t kernel_end_idx = free_page >> 12;
+	const size_t kernel_begin_idx = ((memory.physbase + PT_ADDR) >> 12) & 511;
+	const size_t kernel_end_idx = (free_page >> 12) & 511;
 	for (unsigned i = kernel_begin_idx; i < kernel_end_idx; i++) {
 		lowpage[i] = PDE64_PRESENT | PDE64_NX;
 	}
 
 	/* Stack area ~64KB -> 2MB */
 	for (unsigned i = kernel_end_idx; i < 512; i++) {
-		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | (i << 12);
+		lowpage[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX
+			| (memory.physbase + (i << 12));
 	}
 
 	return free_page;
