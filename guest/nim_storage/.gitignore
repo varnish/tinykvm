@@ -1,0 +1,4 @@
+*.syms
+storage
+main
+*_nimcache/
