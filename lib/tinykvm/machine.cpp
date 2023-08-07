@@ -75,8 +75,9 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->install_memory(0, memory.vmem(), true);
 
 	/* Install remote VM memory too, if enabled. (read-write) */
-	if (other.remote_is_enabled()) {
-		this->install_memory(1, other.m_remote->memory.vmem(), false);
+	if (other.is_remote_connected()) {
+		this->m_remote = other.m_remote;
+		this->install_memory(1, remote().memory.vmem(), false);
 	}
 
 	/* Initialize vCPU and long mode (fast path) */

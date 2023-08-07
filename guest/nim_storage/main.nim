@@ -1,4 +1,6 @@
+proc quick_exit(code: int) {.importc.}
 proc remote_calc(v: int): int {.importc.}
+proc remote_string(): string {.importc.}
 proc do_calculation() {.cdecl, exportc.}
 import json
 
@@ -15,4 +17,5 @@ proc do_calculation() =
 
 # Executed by master VM
 echo "Remote calculation of 21 is " & $remote_calc(21)
-system.quit(remote_calc(21))
+echo "Remote string is " & remote_string()
+quick_exit(remote_calc(21))

@@ -91,6 +91,11 @@ uint64_t* vMemory::page_at(uint64_t addr) const
 		if (bank.within(addr, PAGE_SIZE))
 			return (uint64_t *)bank.at(addr);
 	}
+	/* Remote machine always last resort */
+	if (machine.is_remote_connected())
+	{
+		return machine.remote().main_memory().page_at(addr);
+	}
 	memory_exception("Memory::page_at() invalid region", addr, 4096);
 }
 char* vMemory::safely_at(uint64_t addr, size_t asize)
@@ -102,6 +107,11 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 		if (bank.within(addr, asize)) {
 			return bank.at(addr);
 		}
+	}
+	/* Remote machine always last resort */
+	if (machine.is_remote_connected())
+	{
+		return machine.remote().main_memory().safely_at(addr, asize);
 	}
 	memory_exception("Memory::safely_at() invalid region", addr, asize);
 }
@@ -115,6 +125,11 @@ const char* vMemory::safely_at(uint64_t addr, size_t asize) const
 			return bank.at(addr);
 		}
 	}
+	/* Remote machine always last resort */
+	if (machine.is_remote_connected())
+	{
+		return machine.remote().main_memory().safely_at(addr, asize);
+	}
 	memory_exception("Memory::safely_at() invalid region", addr, asize);
 }
 std::string_view vMemory::view(uint64_t addr, size_t asize) const {
@@ -125,6 +140,11 @@ std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 		if (bank.within(addr, asize)) {
 			return bank.at(addr);
 		}
+	}
+	/* Remote machine always last resort */
+	if (machine.is_remote_connected())
+	{
+		return machine.remote().main_memory().view(addr, asize);
 	}
 	memory_exception("vMemory::view failed", addr, asize);
 }

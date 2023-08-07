@@ -86,7 +86,15 @@ int main(int argc, char** argv)
 	master_vm.remote_connect(storage_vm);
 
 	auto tdiff = timed_action([&] {
-		master_vm.run();
+		try {
+			master_vm.run();
+		} catch (const tinykvm::MachineException& e) {
+			fprintf(stderr, "Exception: %s with data 0x%lX\n",
+				e.what(), e.data());
+		} catch (const tinykvm::MemoryException& e) {
+			fprintf(stderr, "Exception: %s at 0x%lX (size=%lu)\n",
+				e.what(), e.data(), e.size());
+		}
 	});
 	printf("Call time: %fms Return value: %ld\n", tdiff*1e3, master_vm.return_value());
 
@@ -95,6 +103,7 @@ int main(int argc, char** argv)
 
 	/* Fork the master VM, and install remote memory */
 	tinykvm::Machine vm{master_vm, options};
+	assert(vm.is_remote_connected());
 
 	/* Call 'do_calculation' with 21 as argument */
 	const auto call_addr = vm.address_of("do_calculation");

@@ -2,6 +2,19 @@
 
 namespace tinykvm {
 
+Machine& Machine::remote()
+{
+	if (this->is_remote_connected())
+		return *m_remote;
+	throw MachineException("Remote not enabled");
+}
+const Machine& Machine::remote() const
+{
+	if (this->is_remote_connected())
+		return *m_remote;
+	throw MachineException("Remote not enabled");
+}
+
 void Machine::remote_connect(Machine& remote)
 {
 	// Install the remote memory in this machine

@@ -197,7 +197,9 @@ struct Machine
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other);
-	bool remote_is_enabled() const noexcept { return m_remote != nullptr; };
+	bool is_remote_connected() const noexcept { return m_remote != nullptr; };
+	const Machine& remote() const;
+	Machine& remote();
 
 	/* Migrates the VM to the current thread. Allows creating in
 	   one thread, and using it in another. */
