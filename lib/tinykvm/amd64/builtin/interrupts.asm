@@ -43,8 +43,9 @@ ALIGN 0x10
 	push rsi
 	push rcx
 	push rdx
-	cmp rdi, 0x1002 ;; PRCTL
-	jne .vm64_prctl_trap
+	cmp rdi, 0x1002 ;; PRCTL: SET_FS
+	jne .vm64_prctl_get
+	;; SET_FS [rsi]
 	mov ecx, 0xC0000100  ;; FSBASE
 	mov eax, esi ;; low-32 FS base
 	shr rsi, 32
@@ -56,7 +57,20 @@ ALIGN 0x10
 	pop rcx
 	pop rsi
 	o64 sysret
+.vm64_prctl_get:
+	cmp rdi, 0x1003 ;; PRCTL: GET_FS
+	jne .vm64_prctl_trap
+	;; GET_FS [rsi]
+	mov ecx, 0xC0000100  ;; FSBASE
+	rdmsr
+	shl rdx, 32   ;; lift high-32 FS base
+	or  rdx, rax  ;; low-32 FS base
+	mov [rsi], rax
+	xor rax, rax ;; return 0
+	jmp .vm64_prctl_end
+
 .vm64_prctl_trap:
+	;; PRCTL fallback to host syscall trap
 	out 0, ax
 	jmp .vm64_prctl_end
 
