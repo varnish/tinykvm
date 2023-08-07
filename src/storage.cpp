@@ -83,21 +83,7 @@ int main(int argc, char** argv)
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 	storage_vm.run(5.0f);
 
-	/* Insert storage VM memory into VM */
-	master_vm.install_memory(2, storage_vm.main_memory().vmem(), false);
-
-	/**
-	 * Apply pagetable entries from storage VM in master VM.
-	 * Effectively we are mapping half a 2GB area in each VM.
-	 * 0-1 GB: Main VM
-	 * 1-2 GB: Storage VM
-	*/
-	static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
-	auto* main_pml4 = master_vm.main_memory().page_at(master_vm.main_memory().page_tables);
-	auto* main_pdpt = master_vm.main_memory().page_at(main_pml4[0] & PDE64_ADDR_MASK);
-	auto* storage_pml4 = storage_vm.main_memory().page_at(storage_vm.main_memory().page_tables);
-	auto* storage_pdpt = storage_vm.main_memory().page_at(storage_pml4[0] & PDE64_ADDR_MASK);
-	main_pdpt[1] = storage_pdpt[1]; // 1..2GB-page
+	master_vm.remote_connect(storage_vm);
 
 	auto tdiff = timed_action([&] {
 		master_vm.run();
@@ -109,14 +95,11 @@ int main(int argc, char** argv)
 
 	/* Fork the master VM, and install remote memory */
 	tinykvm::Machine vm{master_vm, options};
-	vm.install_memory(2, storage_vm.main_memory().vmem(), false);
 
 	/* Call 'do_calculation' with 21 as argument */
 	const auto call_addr = vm.address_of("do_calculation");
 	auto fork_tdiff = timed_action([&] {
 		vm.timed_vmcall(call_addr, 5.0f, 21);
 	});
-	printf("Fork call time: %fms Return value: %ld\n", fork_tdiff*1e3, master_vm.return_value());
-
-	printf("vmcall return value: %ld\n", vm.return_value());
+	printf("Fork call time: %fms Return value: %ld\n", fork_tdiff*1e3, vm.return_value());
 }

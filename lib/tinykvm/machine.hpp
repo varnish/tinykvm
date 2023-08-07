@@ -194,6 +194,11 @@ struct Machine
 	void set_main_memory_writable(bool v) { memory.main_memory_writes = v; }
 	bool is_forked() const noexcept { return m_forked; }
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
+
+	/* Remote VM through address space merging */
+	void remote_connect(Machine& other);
+	bool remote_is_enabled() const noexcept { return m_remote != nullptr; };
+
 	/* Migrates the VM to the current thread. Allows creating in
 	   one thread, and using it in another. */
 	void migrate_to_this_thread();
@@ -236,6 +241,8 @@ private:
 	struct kvm_sregs* cached_sregs = nullptr;
 
 	mutable std::unique_ptr<SMP> m_smp;
+
+	Machine* m_remote = nullptr;
 
 	/* How to print exceptions, register dumps etc. */
 	printer_func m_printer = m_default_printer;

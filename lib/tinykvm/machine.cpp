@@ -74,6 +74,11 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	/* Reuse pre-CoWed pagetable from the master machine */
 	this->install_memory(0, memory.vmem(), true);
 
+	/* Install remote VM memory too, if enabled. (read-write) */
+	if (other.remote_is_enabled()) {
+		this->install_memory(1, other.m_remote->memory.vmem(), false);
+	}
+
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(0, *this);
 	this->setup_long_mode(&other, options);

@@ -46,7 +46,7 @@ struct MemoryBank {
 };
 
 struct MemoryBanks {
-	static constexpr unsigned FIRST_BANK_IDX = 3;
+	static constexpr unsigned FIRST_BANK_IDX = 2;
 
 	MemoryBanks(Machine&, const MachineOptions&);
 
