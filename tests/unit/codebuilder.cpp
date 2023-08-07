@@ -7,9 +7,10 @@
 static constexpr bool VERBOSE_COMPILER = true;
 
 std::string compile_command(const std::string& cc,
-	const std::string& outfile, const std::string& codefile)
+	const std::string& outfile, const std::string& codefile,
+	const std::string& arguments)
 {
-	return cc + " -O2 -static -std=c11 -x c -o " + outfile + " " + codefile;
+	return cc + " -O2 -static -std=c11 " + arguments + " -x c -o " + outfile + " " + codefile;
 }
 std::string env_with_default(const char* var, const std::string& defval) {
 	std::string value = defval;
@@ -37,7 +38,7 @@ std::vector<uint8_t> load_file(const std::string& filename)
 	return result;
 }
 
-std::vector<uint8_t> build_and_load(const std::string& code)
+std::string build(const std::string& code, const std::string& compiler_args)
 {
 	// Create temporary filenames for code and binary
 	char code_filename[64];
@@ -61,7 +62,7 @@ std::vector<uint8_t> build_and_load(const std::string& code)
 		"/tmp/binary-%08X", checksum);
 
 	auto cc = env_with_default("cc", "gcc");
-	auto command = compile_command(cc, bin_filename, code_filename);
+	auto command = compile_command(cc, bin_filename, code_filename, compiler_args);
 	if constexpr (VERBOSE_COMPILER) {
 		printf("Command: %s\n", command.c_str());
 	}
@@ -74,5 +75,17 @@ std::vector<uint8_t> build_and_load(const std::string& code)
 	pclose(f);
 	unlink(code_filename);
 
-	return load_file(bin_filename);
+	return bin_filename;
+}
+std::vector<uint8_t> build_and_load(const std::string& code)
+{
+	return load_file(build(code, ""));
+}
+std::pair<
+	std::string,
+	std::vector<uint8_t>
+> build_and_load(const std::string& code, const std::string& args)
+{
+	const auto file = build(code, args);
+	return {file, load_file(file)};
 }
