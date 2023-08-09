@@ -2,7 +2,7 @@
 
 dw .vm64_entry
 dw .vm64_reentry
-dw 0x0
+dw .vm64_userentry
 dw .vm64_rexit
 dd .vm64_cpuid
 
@@ -29,6 +29,7 @@ ALIGN 0x10
 	mov rax, 0x1F707
 	syscall
 	mov rcx, r13
+.vm64_userentry:
 	jmp r15
 ;; The exit function (pre-written to stack)
 .vm64_rexit:

@@ -146,7 +146,8 @@ void Machine::timed_reentry(uint64_t addr, float timeout, Args&&... args)
 	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr,
 		this->stack_address(), std::forward<Args> (args)...);
-	regs.rip = this->reentry_address();
+	/// This may jump directly to the guest function if DPL=3
+	regs.rip = this->entry_address_if_usermode();
 	vcpu.set_registers(regs);
 	this->run(timeout);
 }
@@ -156,7 +157,8 @@ void Machine::timed_reentry_stack(uint64_t addr, uint64_t stk, float timeout, Ar
 {
 	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr, stk, std::forward<Args> (args)...);
-	regs.rip = this->reentry_address();
+	/// This may jump directly to the guest function if DPL=3
+	regs.rip = this->entry_address_if_usermode();
 	vcpu.set_registers(regs);
 	this->run(timeout);
 }

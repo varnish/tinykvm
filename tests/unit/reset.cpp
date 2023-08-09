@@ -154,13 +154,13 @@ extern void crash(const char *arg) {
 		REQUIRE(output_is_hello_world);
 
 		output_is_hello_world = false;
-		m.timed_vmcall(m.address_of("hello_world"), 2.0f, "Hello World!");
+		m.timed_reentry(m.address_of("hello_world"), 2.0f, "Hello World!");
 		REQUIRE(m.return_value() == 1023);
 		REQUIRE(output_is_hello_world);
 
 		output_is_hello_world = false;
 		try {
-			m.timed_vmcall(m.address_of("crash"), 2.0f, "Hello World!");
+			m.timed_reentry(m.address_of("crash"), 2.0f, "Hello World!");
 		} catch (...) {}
 		REQUIRE(output_is_hello_world);
 
