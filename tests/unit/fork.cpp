@@ -150,3 +150,212 @@ extern void prints_hello_world() {
 	REQUIRE(output_is_hello_world);
 	//fprintf(stderr, "Banked pages: %zu\n", machine.banked_memory_pages());
 }
+
+TEST_CASE("Fork sanity checks", "[Fork]")
+{
+	const auto binary = build_and_load(R"M(
+#include <assert.h>
+int main() {
+}
+
+static int value = 0;
+extern int get_value() {
+	value ++;
+	return value;
+}
+
+extern void crash() {
+	assert(0);
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	// We need to create a Linux environment for runtimes to work well
+	machine.setup_linux({"fork"}, env);
+
+	// Run for at most 4 seconds before giving up
+	machine.run(4.0f);
+	REQUIRE(machine.banked_memory_pages() == 0);
+
+	// Make machine forkable (with working memory)
+	machine.prepare_copy_on_write(0);
+	REQUIRE(machine.is_forkable());
+	REQUIRE(!machine.is_forked());
+
+	// Create fork
+	auto fork1 = tinykvm::Machine { machine, {
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+	} };
+	auto fork2 = tinykvm::Machine { machine, {
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+	} };
+
+	auto funcaddr = machine.address_of("get_value");
+	REQUIRE(funcaddr != 0x0);
+
+	fork1.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork1.return_value() == 1);
+
+	fork2.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork2.return_value() == 1);
+
+	fork1.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork1.return_value() == 2);
+
+	fork2.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork2.return_value() == 2);
+
+	fork1.reset_to(machine, {
+			.max_mem = MAX_MEMORY,
+			.max_cow_mem = MAX_COWMEM,
+	});
+
+	fork2.reset_to(machine, {
+			.max_mem = MAX_MEMORY,
+			.max_cow_mem = MAX_COWMEM,
+	});
+
+	fork1.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork1.return_value() == 1);
+
+	fork2.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork2.return_value() == 1);
+
+	// The main VM is not executable due to no working memory
+	REQUIRE_THROWS([&] () {
+		machine.timed_vmcall(funcaddr, 4.0f);
+	}());
+}
+
+TEST_CASE("Fork w/working memory sanity checks", "[Fork]")
+{
+	const auto binary = build_and_load(R"M(
+#include <assert.h>
+int main() {
+}
+
+static int value = 0;
+extern int get_value() {
+	value ++;
+	return value;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	// We need to create a Linux environment for runtimes to work well
+	machine.setup_linux({"fork"}, env);
+
+	// Run for at most 4 seconds before giving up
+	machine.run(4.0f);
+	REQUIRE(machine.banked_memory_pages() == 0);
+
+	// Make machine forkable (with working memory)
+	machine.prepare_copy_on_write(65536);
+	REQUIRE(machine.banked_memory_pages() == 4);
+	REQUIRE(machine.is_forkable());
+	REQUIRE(!machine.is_forked());
+
+	// Create fork
+	auto fork1 = tinykvm::Machine { machine, {
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+	} };
+	auto fork2 = tinykvm::Machine { machine, {
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+	} };
+
+	auto funcaddr = machine.address_of("get_value");
+	REQUIRE(funcaddr != 0x0);
+
+	fork1.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork1.return_value() == 1);
+
+	fork2.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork2.return_value() == 1);
+
+	fork1.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork1.return_value() == 2);
+
+	fork2.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork2.return_value() == 2);
+
+	// The main VM is executable due to working memory
+	machine.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(machine.return_value() == 1);
+
+	// Resetting will use the current state of the main VM
+	fork1.reset_to(machine, {
+			.max_mem = MAX_MEMORY,
+			.max_cow_mem = MAX_COWMEM,
+	});
+
+	fork2.reset_to(machine, {
+			.max_mem = MAX_MEMORY,
+			.max_cow_mem = MAX_COWMEM,
+	});
+
+	// Value now starts at 1 due to the change in main VM
+	fork1.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork1.return_value() == 2);
+
+	fork2.timed_vmcall(funcaddr, 4.0f);
+	REQUIRE(fork2.return_value() == 2);
+}
+
+TEST_CASE("Fork sanity checks w/crashes", "[Fork]")
+{
+	const auto binary = build_and_load(R"M(
+#include <assert.h>
+int main() {
+}
+
+extern int normal() {
+	return 42;
+}
+extern void crash() {
+	assert(0);
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	// We need to create a Linux environment for runtimes to work well
+	machine.setup_linux({"fork"}, env);
+
+	// Run for at most 4 seconds before giving up
+	machine.run(4.0f);
+	REQUIRE(machine.banked_memory_pages() == 0);
+
+	// Make machine forkable (with *NO* working memory)
+	machine.prepare_copy_on_write(0);
+	REQUIRE(machine.is_forkable());
+	REQUIRE(!machine.is_forked());
+
+	// Create fork
+	auto fork1 = tinykvm::Machine { machine, {
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+	} };
+
+	auto funcaddr = machine.address_of("crash");
+	REQUIRE(funcaddr != 0x0);
+
+	auto normalfunc = machine.address_of("normal");
+	REQUIRE(normalfunc != 0x0);
+
+	fork1.timed_vmcall(normalfunc, 4.0f);
+	REQUIRE(fork1.return_value() == 42);
+
+	REQUIRE_THROWS([&] () {
+		fork1.timed_vmcall(funcaddr, 4.0f);
+	}());
+
+	for (int i = 0; i < 20; i++)
+	{
+		fork1.reset_to(machine, {
+			.max_mem = MAX_MEMORY,
+			.max_cow_mem = MAX_COWMEM,
+		});
+
+		fork1.timed_vmcall(normalfunc, 4.0f);
+		REQUIRE(fork1.return_value() == 42);
+
+		REQUIRE_THROWS([&] () {
+			fork1.timed_vmcall(funcaddr, 4.0f);
+		}());
+	}
+}
