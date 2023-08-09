@@ -353,15 +353,18 @@ void vCPU::handle_exception(uint8_t intr)
 	try {
 		uint64_t off = (has_code) ? (regs.rsp+8) : (regs.rsp+0);
 		if (intr == 14) off += 8;
-		uint64_t rip, cs = 0x0, rsp, ss;
+		uint64_t rip, rfl, cs = 0x0, rsp, ss;
 		try {
 			machine().unsafe_copy_from_guest(&rip, off+0,  8);
 			machine().unsafe_copy_from_guest(&cs,  off+8,  8);
+			machine().unsafe_copy_from_guest(&rfl, off+16, 8);
 			machine().unsafe_copy_from_guest(&rsp, off+24, 8);
 			machine().unsafe_copy_from_guest(&ss,  off+32, 8);
 
 			PRINTER(printer, buffer,
 				"Failing RIP: 0x%lX\n", rip);
+			PRINTER(printer, buffer,
+				"Fail RFLAGS: 0x%lX\n", rfl);
 			PRINTER(printer, buffer,
 				"Failing CS:  0x%lX\n", cs);
 			PRINTER(printer, buffer,
