@@ -93,28 +93,33 @@ void vCPU::init(int id, Machine& machine)
 		Machine::machine_exception("KVM_SET_CPUID2 failed");
 	}
 
-	machine.cached_sregs = new kvm_sregs;
-	auto& master_sregs = *machine.cached_sregs;
-	if (ioctl(this->fd, KVM_GET_SREGS, &master_sregs) < 0) {
-		Machine::machine_exception("KVM_GET_SREGS failed");
-	}
-	const auto physbase = machine.main_memory().physbase;
+	// Only master VMs need special registers
+	// Forked VMs derive special register from the master VM
+	if (!this->machine().is_forked())
+	{
+		struct kvm_sregs master_sregs;
+		if (ioctl(this->fd, KVM_GET_SREGS, &master_sregs) < 0) {
+			Machine::machine_exception("KVM_GET_SREGS failed");
+		}
+		const auto physbase = machine.main_memory().physbase;
 
-	master_sregs.cr3 = physbase + PT_ADDR;
-	// NOTE: SMEP is not currently possible to due to the usermode
-	// assembly being used in a kernel context. Some writing occurs?
-	// XXX: TODO: Figure out why SMEP causes problems.
-	master_sregs.cr4 =
-		CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
-		CR4_FSGSBASE;
-	master_sregs.cr0 =
-		CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
-	master_sregs.efer =
-		EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
-	setup_amd64_segment_regs(master_sregs, physbase + GDT_ADDR);
-	master_sregs.gs.base = usercode_header().translated_vm_cpuid(machine.main_memory());
-	setup_amd64_tss_regs(master_sregs, physbase + TSS_ADDR);
-	setup_amd64_exception_regs(master_sregs, physbase + IDT_ADDR);
+		master_sregs.cr3 = physbase + PT_ADDR;
+		// NOTE: SMEP is not currently possible to due to the usermode
+		// assembly being used in a kernel context. Some writing occurs?
+		// XXX: TODO: Figure out why SMEP causes problems.
+		master_sregs.cr4 =
+			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
+			CR4_FSGSBASE;
+		master_sregs.cr0 =
+			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
+		master_sregs.efer =
+			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
+		setup_amd64_segment_regs(master_sregs, physbase + GDT_ADDR);
+		master_sregs.gs.base = usercode_header().translated_vm_cpuid(machine.main_memory());
+		setup_amd64_tss_regs(master_sregs, physbase + TSS_ADDR);
+		setup_amd64_exception_regs(master_sregs, physbase + IDT_ADDR);
+		this->set_special_registers(master_sregs);
+	}
 
 	// Avoid loading X-regs more than once
 	static bool minit = false;
@@ -216,11 +221,7 @@ void vCPU::smp_init(int id, Machine& machine)
 
 	auto& sregs = this->get_special_registers();
 	/* XXX: Is this correct? */
-	if (machine.cached_sregs != nullptr)
-		/* Inherit the special registers of the main vCPU */
-		sregs = *machine.cached_sregs;
-	else
-		sregs = machine.vcpu.get_special_registers();
+	sregs = machine.vcpu.get_special_registers();
 	sregs.tr.base = memory.physbase + TSS_SMP_ADDR + (id - 1) * 104; /* AMD64_TSS */
 	sregs.gs.base = usercode_header().translated_vm_cpuid(memory) + 4 * id;
 	/* XXX: Is this correct? */
@@ -327,8 +328,6 @@ void Machine::setup_long_mode(const Machine* other, const MachineOptions& option
 			memory.at(physbase + USER_ASM_ADDR));
 
 		this->m_kernel_end = setup_amd64_paging(memory, m_binary);
-
-		vcpu.set_special_registers(*cached_sregs);
 	}
 	else // Forked VM
 	{
@@ -366,13 +365,6 @@ void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_
 	// relevant user-writable pages have been made read-only and cloneable
 	//print_pagetables(this->memory);
 
-	/* Cache all the special registers, which we will use on forks */
-	if (this->cached_sregs == nullptr) {
-		this->cached_sregs = new kvm_sregs {};
-	}
-	/* Always cache again during prep, because it may contain new FS/GS */
-	*this->cached_sregs = get_special_registers();
-
 	/* Make this machine runnable again using itself
 	   as the master VM. */
 	memory.banks.set_max_pages(max_work_mem / PAGE_SIZE);
@@ -406,12 +398,7 @@ void Machine::setup_cow_mode(const Machine* other)
 	memory.get_writable_page(memory.physbase + IST_ADDR, PDE64_RW, true);
 	//memory.get_writable_page(IST2_ADDR, PDE64_RW, true);
 
-	/* Inherit the special registers of the master machine.
-	   Ensures that special registers can never be corrupted. */
-	if (UNLIKELY(other->cached_sregs == nullptr)) {
-		throw MachineException("SREGS was not cached");
-	}
-	struct kvm_sregs sregs = *other->cached_sregs;
+	struct kvm_sregs sregs = other->get_special_registers();
 
 	/* Page table entry will be cloned at the start */
 	sregs.cr3 = memory.page_tables;

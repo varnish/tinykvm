@@ -240,7 +240,6 @@ private:
 
 	uint64_t m_mm = 0;
 	mutable std::unique_ptr<MultiThreading> m_mt;
-	struct kvm_sregs* cached_sregs = nullptr;
 
 	mutable std::unique_ptr<SMP> m_smp;
 

@@ -95,7 +95,6 @@ __attribute__ ((cold))
 Machine::~Machine()
 {
 	vcpu.deinit();
-	delete cached_sregs;
 	close(this->fd);
 }
 
