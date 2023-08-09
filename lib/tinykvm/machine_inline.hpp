@@ -88,6 +88,11 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 			static_assert(always_false<decltype(args)>, "Unknown vmcall argument type");
 		}
 	}(), ...);
+
+	/* Re-align stack for SSE */
+	regs.rsp &= ~(uint64_t) 0xF;
+	/* Push return value last */
+	stack_push<uint64_t> (regs.rsp, exit_address());
 }
 
 inline void Machine::setup_clone(tinykvm_x86regs& regs, address_t stack)
@@ -141,8 +146,7 @@ void Machine::timed_reentry(uint64_t addr, float timeout, Args&&... args)
 	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr,
 		this->stack_address(), std::forward<Args> (args)...);
-	/// This may jump directly to the guest function if DPL=3
-	regs.rip = this->entry_address_if_usermode();
+	regs.rip = this->reentry_address();
 	vcpu.set_registers(regs);
 	this->run(timeout);
 }
@@ -152,8 +156,7 @@ void Machine::timed_reentry_stack(uint64_t addr, uint64_t stk, float timeout, Ar
 {
 	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr, stk, std::forward<Args> (args)...);
-	/// This may jump directly to the guest function if DPL=3
-	regs.rip = this->entry_address_if_usermode();
+	regs.rip = this->reentry_address();
 	vcpu.set_registers(regs);
 	this->run(timeout);
 }
