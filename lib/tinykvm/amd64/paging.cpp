@@ -507,6 +507,10 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 							for (size_t e = 0; e < 512; e++) {
 								tinykvm::page_duplicate(page.pmem + e * 512, data + e * 512);
 							}
+						} else {
+							for (size_t e = 0; e < 512; e++) {
+								tinykvm::page_memzero(page.pmem + e * 512);
+							}
 						}
 
 						/* Return 4k page offset to new duplicated page. */
@@ -535,7 +539,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 					if (is_copy_on_write(pt[e])) {
 						if (memory.is_forkable_master() && memory.main_memory_writes) {
 							unlock_identity_mapped_entry(pt[e]);
-						} else if (write_zeroes) {
+						} else if (write_zeroes || (pt[e] & PDE64_DIRTY) == 0x0) {
 							zero_and_update_entry(memory, pt[e], data, PDE64_RW);
 						} else {
 							clone_and_update_entry(memory, pt[e], data, PDE64_RW);
