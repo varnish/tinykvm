@@ -504,10 +504,12 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 
 						/* We deliberately use DIRTY bit to know when to duplicate memory. */
 						if (dirty) {
+							//std::memcpy(page.pmem, data, 2ULL << 20);
 							for (size_t e = 0; e < 512; e++) {
 								tinykvm::page_duplicate(page.pmem + e * 512, data + e * 512);
 							}
 						} else {
+							//std::memset(page.pmem, 0, 2ULL << 20); /* 2MB */
 							for (size_t e = 0; e < 512; e++) {
 								tinykvm::page_memzero(page.pmem + e * 512);
 							}

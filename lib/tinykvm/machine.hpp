@@ -142,7 +142,7 @@ struct Machine
 	/// @return Returns the address needed to safely call a guest function
 	address_t entry_address_if_usermode() const noexcept;
 
-	static constexpr uint64_t BRK_MAX = 0x100000;
+	static constexpr uint64_t BRK_MAX = 0x20000;
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t mmap_allocate(size_t bytes);
 	bool mmap_relax(uint64_t addr, size_t size, size_t new_size);
