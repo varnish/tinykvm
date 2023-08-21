@@ -35,6 +35,9 @@ namespace tinykvm
 		   to their own main memory instead of memory banks,
 		   allowing forks to immediately see changes. */
 		bool master_direct_memory_writes = true;
+		/* When enabled, reset_to() will accept a different
+		   master VM than the original, but at a steep cost. */
+		bool allow_reset_to_new_master = false;
 	};
 
 	class MachineException : public std::exception {

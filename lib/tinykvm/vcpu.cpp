@@ -307,32 +307,24 @@ std::string_view vCPU::io_data() const
 	return {&p[kvm_run->io.data_offset], kvm_run->io.size};
 }
 
-void Machine::setup_long_mode(const Machine* other, const MachineOptions& options)
+void Machine::setup_long_mode(const MachineOptions& options)
 {
 	(void)options;
+	const auto physbase = this->memory.physbase;
 
-	if (other == nullptr) // Main VM
-	{
-		const auto physbase = this->memory.physbase;
+	setup_amd64_exceptions(
+		physbase + INTR_ASM_ADDR,
+		memory.at(physbase + IDT_ADDR), memory.at(physbase + INTR_ASM_ADDR));
+	setup_amd64_segments(
+		physbase + GDT_ADDR,
+		memory.at(physbase + GDT_ADDR));
+	setup_amd64_tss(memory);
+	setup_amd64_tss_smp(memory);
+	/* Userspace entry/exit code */
+	setup_vm64_usercode(
+		memory.at(physbase + USER_ASM_ADDR));
 
-		setup_amd64_exceptions(
-			physbase + INTR_ASM_ADDR,
-			memory.at(physbase + IDT_ADDR), memory.at(physbase + INTR_ASM_ADDR));
-		setup_amd64_segments(
-			physbase + GDT_ADDR,
-			memory.at(physbase + GDT_ADDR));
-		setup_amd64_tss(memory);
-		setup_amd64_tss_smp(memory);
-		/* Userspace entry/exit code */
-		setup_vm64_usercode(
-			memory.at(physbase + USER_ASM_ADDR));
-
-		this->m_kernel_end = setup_amd64_paging(memory, m_binary);
-	}
-	else // Forked VM
-	{
-		setup_cow_mode(other);
-	}
+	this->m_kernel_end = setup_amd64_paging(memory, m_binary);
 }
 
 std::pair<__u64, __u64> Machine::get_fsgs() const

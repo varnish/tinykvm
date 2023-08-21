@@ -43,7 +43,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->elf_loader(options);
 
 	this->vcpu.init(0, *this);
-	this->setup_long_mode(nullptr, options);
+	this->setup_long_mode(options);
 	struct tinykvm_regs regs {};
 	/* Store the registers, so that Machine is ready to go */
 	this->setup_registers(regs);
@@ -82,7 +82,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(0, *this);
-	this->setup_long_mode(&other, options);
+	this->setup_cow_mode(&other);
 
 	/* We have to make a copy here, to make sure the fork knows
 	   about the multi-threading state. */
@@ -103,9 +103,13 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 	assert(m_forked && other.m_prepped &&
 		"This machine must be forked, and the source must be prepped");
 
-	if (this->m_binary.begin() != other.m_binary.begin() ||
-		memory.compare(other.memory) == false)
+	if (UNLIKELY(this->m_binary.begin() != other.m_binary.begin() ||
+		memory.compare(other.memory) == false))
 	{
+		if (options.allow_reset_to_new_master == false) {
+			throw MachineException("Swapping main memories not enabled (experimental)");
+		}
+
 		/* This could be dangerous, but we will allow it anyway,
 		   for those who dare to mutate an existing VM in prod. */
 		this->m_binary = other.m_binary;
@@ -117,6 +121,11 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		/* Unfortunately we need to both delete and reinstall main mem */
 		this->delete_memory(0);
 		this->install_memory(0, memory.vmem(), true);
+		/* Swap remote memory, when enabled. */
+		if (this->is_remote_connected()) {
+			this->delete_memory(1);
+			this->install_memory(1, remote().memory.vmem(), true);
+		}
 	} else {
 		memory.fork_reset(options);
 	}
@@ -131,7 +140,7 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		m_mt = nullptr;
 	}
 
-	this->setup_long_mode(&other, options);
+	this->setup_cow_mode(&other);
 }
 
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)

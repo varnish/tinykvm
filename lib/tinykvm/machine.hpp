@@ -217,7 +217,7 @@ private:
 	void elf_loader(const MachineOptions&);
 	void elf_load_ph(const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
-	void setup_long_mode(const Machine* other, const MachineOptions&);
+	void setup_long_mode(const MachineOptions&);
 	void setup_cow_mode(const Machine*); // After prepare_copy_on_write and forking
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
