@@ -9,6 +9,7 @@
 #include <sys/mman.h>
 
 namespace tinykvm {
+static constexpr bool VERBOSE_MEMORY_BANK = false;
 
 MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	: m_machine { machine },
@@ -78,12 +79,18 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 	}
 	/* Allocate new memory bank if we are not maxing out memory */
 	if (m_num_pages < m_max_pages) {
-		//printf("Allocating new bank at 0x%lX with total pages %u\n",
-		//	m_arena_next, m_num_pages + MemoryBank::N_PAGES);
+		if constexpr (VERBOSE_MEMORY_BANK) {
+			printf("Allocating new bank at 0x%lX with total pages %u\n",
+				m_arena_next, m_num_pages + MemoryBank::N_PAGES);
+		}
 		auto& bank = this->allocate_new_bank(m_arena_next);
 		m_num_pages += bank.n_pages;
 		m_arena_next += bank.size();
 		return bank;
+	}
+	if constexpr (VERBOSE_MEMORY_BANK) {
+		fprintf(stderr, "Out of working memory requesting %zu pages, %u vs %u max pages\n",
+			pages, m_num_pages, m_max_pages);
 	}
 	throw MemoryException("Out of working memory",
 		m_num_pages * vMemory::PageSize(), m_max_pages * vMemory::PageSize());

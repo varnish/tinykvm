@@ -62,24 +62,25 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	const uint64_t pdpt_addr = pml4_addr + 0x1000;
 	const uint64_t pd1_addr  = pml4_addr + 0x2000;
 	const uint64_t pd2_addr  = pml4_addr + 0x3000;
-	const uint64_t low1_addr = pml4_addr + 0x4000;
+	const uint64_t pd3_addr  = pml4_addr + 0x4000;
+	const uint64_t low1_addr = pml4_addr + 0x5000;
 
 	// userspace
 	char* pagetable = memory.at(memory.page_tables);
 	auto* pml4 = (uint64_t*) (pagetable + 0x0);
 	auto* pdpt = (uint64_t*) (pagetable + 0x1000);
-	auto* pd   = (uint64_t*) (pagetable + 0x2000);
-	auto* lowpage = (uint64_t*) (pagetable + 0x4000);
+	auto* pd   = (uint64_t*) (pagetable + 0x2000); /* 3x GB pages */
+	auto* lowpage = (uint64_t*) (pagetable + 0x5000);
 
-	const uint64_t vdso_pdpt_addr = pml4_addr + 0x5000;
-	const uint64_t vsyscall_pd_addr = pml4_addr + 0x6000;
-	const uint64_t vsyscall_pt_addr = pml4_addr + 0x7000;
-	auto* vdso_pdpt = (uint64_t*) (pagetable + 0x5000);
-	auto* vsyscall_pd = (uint64_t*) (pagetable + 0x6000);
-	auto* vsyscall_pt = (uint64_t*) (pagetable + 0x7000);
+	const uint64_t vdso_pdpt_addr = pml4_addr + 0x6000;
+	const uint64_t vsyscall_pd_addr = pml4_addr + 0x7000;
+	const uint64_t vsyscall_pt_addr = pml4_addr + 0x8000;
+	auto* vdso_pdpt = (uint64_t*) (pagetable + 0x6000);
+	auto* vsyscall_pd = (uint64_t*) (pagetable + 0x7000);
+	auto* vsyscall_pt = (uint64_t*) (pagetable + 0x8000);
 
 	// next free page for ELF loader
-	uint64_t free_page = pml4_addr + 0x8000;
+	uint64_t free_page = pml4_addr + 0x9000;
 
 	pml4[0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
 	pml4[511] = PDE64_PRESENT | PDE64_USER | vdso_pdpt_addr;
@@ -87,6 +88,7 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 	const auto base_giga_page = (memory.physbase >> 30UL) & 511;
 	pdpt[base_giga_page+0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd1_addr;
 	pdpt[base_giga_page+1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd2_addr;
+	pdpt[base_giga_page+2] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pd3_addr;
 
 	const auto base_2mb_page = (memory.physbase >> 21UL) & 511;
 	pd[base_2mb_page+0] = PDE64_PRESENT | PDE64_USER | PDE64_RW | low1_addr;
@@ -124,8 +126,8 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 		free_page += 0x1000;
 	}
 
-	// Covers 2x 1GB pages with 512x2 2MB user-read-write entries
-	for (uint64_t i = base_2mb_page+2; i < 1024; i++) {
+	// Covers 3x 1GB pages with 512x3 2MB user-read-write entries
+	for (uint64_t i = base_2mb_page+2; i < 512*3; i++) {
 		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX
 			| ((base_giga_page << 30) + (i << 21));
 	}
