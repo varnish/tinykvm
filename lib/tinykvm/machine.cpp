@@ -77,6 +77,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	/* Install remote VM memory too, if enabled. (read-write) */
 	if (other.is_remote_connected()) {
 		this->m_remote = other.m_remote;
+		this->m_remote_base_address = other.m_remote_base_address;
 		this->install_memory(1, remote().memory.vmem(), false);
 	}
 

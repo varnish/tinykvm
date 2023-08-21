@@ -41,6 +41,7 @@ namespace tinykvm
     private:
         struct kvm_run* kvm_run = nullptr;
         Machine* m_machine = nullptr;
+		void handle_remote_call(uint64_t addr);
     };
 
 } // namespace tinykvm

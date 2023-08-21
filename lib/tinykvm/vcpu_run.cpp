@@ -177,8 +177,15 @@ long vCPU::run_once()
 				/* Page fault handling */
 				/* We should be in kernel mode, otherwise it's fishy! */
 				auto& memory = machine().main_memory();
-				if (UNLIKELY(regs.rip >= memory.physbase + INTR_ASM_ADDR+0x1000)) {
+				if (UNLIKELY(regs.rip >= memory.physbase + INTR_ASM_ADDR+0x1000)
+					|| sregs.cs.dpl != 0x0 || sregs.ss.dpl != 0x0) {
 					Machine::machine_exception("Security violation", intr);
+				}
+				/* Remote call handling */
+				if (UNLIKELY(machine().is_remote_access(addr)))
+				{
+					this->handle_remote_call(regs.rdi & ~(uint64_t) 0x8000000000000000);
+					return KVM_EXIT_IO;
 				}
 
 				machine().memory.get_writable_page(addr, PDE64_USER | PDE64_RW, false);

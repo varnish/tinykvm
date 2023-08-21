@@ -83,7 +83,7 @@ int main(int argc, char** argv)
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 	storage_vm.run(5.0f);
 
-	master_vm.remote_connect(storage_vm);
+	master_vm.remote_connect(storage_vm, false);
 
 	auto tdiff = timed_action([&] {
 		try {
@@ -107,8 +107,18 @@ int main(int argc, char** argv)
 
 	/* Call 'do_calculation' with 21 as argument */
 	const auto call_addr = vm.address_of("do_calculation");
+	if (call_addr == 0x0)
+		throw std::runtime_error("Function 'do_calculation' is missing in " + std::string(argv[1]));
 	auto fork_tdiff = timed_action([&] {
-		vm.timed_vmcall(call_addr, 5.0f, 21);
+		try {
+			vm.timed_vmcall(call_addr, 5.0f, 21);
+		} catch (const tinykvm::MachineException& e) {
+			fprintf(stderr, "Exception: %s with data 0x%lX\n",
+				e.what(), e.data());
+		} catch (const tinykvm::MemoryException& e) {
+			fprintf(stderr, "Exception: %s at 0x%lX (size=%lu)\n",
+				e.what(), e.data(), e.size());
+		}
 	});
 	printf("Fork call time: %fms Return value: %ld\n", fork_tdiff*1e3, vm.return_value());
 }

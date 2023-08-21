@@ -14,6 +14,7 @@ var j = %* {
 proc do_calculation() =
     echo "Hello Nim World!\n" & j.pretty()
     echo "Remote calculation of 21 is " & $remote_calc(21)
+    echo "Remote string is " & remote_string()
 
 # Executed by master VM
 echo "Remote calculation of 21 is " & $remote_calc(21)

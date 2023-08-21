@@ -196,8 +196,9 @@ struct Machine
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
 
 	/* Remote VM through address space merging */
-	void remote_connect(Machine& other);
+	void remote_connect(Machine& other, bool mapping = true);
 	bool is_remote_connected() const noexcept { return m_remote != nullptr; };
+	bool is_remote_access(uint64_t addr) const noexcept { return addr >= m_remote_base_address; };
 	const Machine& remote() const;
 	Machine& remote();
 
@@ -222,6 +223,7 @@ private:
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
 	void smp_vcpu_broadcast(std::function<void(vCPU&)>);
+	void remote_memory_mapping(Machine& remote, bool enabled);
 
 	vCPU  vcpu;
 	int   fd = 0;
@@ -244,6 +246,7 @@ private:
 	mutable std::unique_ptr<SMP> m_smp;
 
 	Machine* m_remote = nullptr;
+	uint64_t m_remote_base_address = ~uint64_t(0);
 
 	/* How to print exceptions, register dumps etc. */
 	printer_func m_printer = m_default_printer;

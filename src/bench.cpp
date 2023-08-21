@@ -302,16 +302,19 @@ int main(int argc, char** argv)
 		forktime += nanodiff(ft1, ft2);
 	}
 	tinykvm::Machine cvm {master_vm, options};
+	cvm.vmcall(vmcall_address);
+	cvm.timed_vmcall(vmcall_address, 1.0f);
+
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
 		asm("" : : : "memory");
 		auto ft0 = time_now();
 		asm("" : : : "memory");
-		cvm.vmcall(vmcall_address);
+		cvm.timed_reentry(vmcall_address, 0.0f);
 		asm("" : : : "memory");
 		auto ft1 = time_now();
 		asm("" : : : "memory");
-		cvm.timed_vmcall(vmcall_address, 1.0f);
+		cvm.timed_reentry(vmcall_address, 1.0f);
 		asm("" : : : "memory");
 		auto ft2 = time_now();
 		calltime += nanodiff(ft0, ft1);

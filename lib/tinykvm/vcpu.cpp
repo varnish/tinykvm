@@ -443,8 +443,9 @@ Machine::address_t Machine::entry_address_if_usermode() const noexcept
 	// If we are, we return userfunc which is safe to jump to
 #ifdef TINYKVM_USE_SYNCED_SREGS
 	// WARNING: This shortcut *requires* KVM_SYNC_X86_SREGS
-	if (this->vcpu.get_special_registers().cs.dpl == 0x3)
+	if (this->vcpu.get_special_registers().cs.dpl == 0x3) {
 		return usercode_header().translated_vm_userentry(memory);
+	}
 #endif
 	// If not, return the "dummy syscall" entry address
 	// Returning from a dummy syscall leaves us in usermode
