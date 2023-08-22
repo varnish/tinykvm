@@ -2,6 +2,7 @@
 #include "common.hpp"
 #include "memory.hpp"
 #include "memory_bank.hpp"
+#include "mmap_cache.hpp"
 #include "vcpu.hpp"
 #include <array>
 #include <cassert>
@@ -146,6 +147,7 @@ struct Machine
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t mmap_allocate(size_t bytes);
 	bool mmap_relax(uint64_t addr, size_t size, size_t new_size);
+	auto& mmap_cache() noexcept { return m_mmap_cache; }
 
 	uint64_t address_of(const char*) const;
 	std::string resolve(uint64_t rip) const;
@@ -239,6 +241,7 @@ private:
 	uint64_t m_kernel_end;
 
 	uint64_t m_mm = 0;
+	MMapCache m_mmap_cache;
 	mutable std::unique_ptr<MultiThreading> m_mt;
 
 	mutable std::unique_ptr<SMP> m_smp;

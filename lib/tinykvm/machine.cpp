@@ -61,7 +61,8 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_heap_address  {other.m_heap_address},
 	  m_start_address {other.m_start_address},
 	  m_kernel_end    {other.m_kernel_end},
-	  m_mm     {other.m_mm},
+	  m_mm            {other.m_mm},
+	  m_mmap_cache    {other.m_mmap_cache},
 	  m_mt     {nullptr}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
@@ -131,6 +132,7 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 	}
 
 	this->m_mm = other.m_mm;
+	this->m_mmap_cache = other.m_mmap_cache;
 
 	if (other.has_threads() && has_threads()) {
 		this->m_mt->reset_to(*other.m_mt);

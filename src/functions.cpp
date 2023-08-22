@@ -100,11 +100,21 @@ void setup_kvm_system_calls()
 					regs.rax = regs.rdi;
 				}
 				else {
-					auto& mm = cpu.machine().mmap();
-					regs.rax = mm;
-					// XXX: MAP_ANONYMOUS -->
-					//cpu.machine().memzero(regs.rax, regs.rsi);
-					mm += regs.rsi;
+					auto range = cpu.machine().mmap_cache().find(regs.rsi);
+					// Not found in cache, increment MM base address
+					if (range.empty()) {
+						auto& mm = cpu.machine().mmap();
+						regs.rax = mm;
+						// XXX: MAP_ANONYMOUS -->
+						//cpu.machine().memzero(regs.rax, regs.rsi);
+						mm += regs.rsi;
+					}
+					else
+					{
+						//PRINTMMAP("Found existing range: 0x%lX -> 0x%lX\n",
+						//	range.addr, range.addr + range.size);
+						regs.rax = range.addr;
+					}
 				}
 			}
 			PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
@@ -130,7 +140,14 @@ void setup_kvm_system_calls()
 			const uint64_t old_size = regs.rsi;
 			bool relaxed = cpu.machine().mmap_relax(old_base, old_size, 0u);
 			PRINTMMAP("munmap(0x%lX, %lu, relaxed=%d)\n", old_base, old_size, relaxed);
-			(void)relaxed;
+			if (relaxed)
+			{
+				// If relaxation happened, invalidate intersecting cache entries.
+				cpu.machine().mmap_cache().invalidate(old_base, old_size);
+			} else {
+				// If relaxation didn't happen, put in the cache for later.
+				cpu.machine().mmap_cache().insert(old_base, old_size);
+			}
 			// Because we do not support MMAP fully, we will just return 0 here.
 			regs.rax = 0;
 			cpu.set_registers(regs);
