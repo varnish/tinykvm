@@ -107,7 +107,8 @@ inline ThreadTask::~ThreadTask()
 	m_stop = true;
 	condition_consumers.notify_all();
 	condition_producers.notify_all();
-	condition_consumers.wait(lock, [this]{ return this->worker.joinable(); });
+	condition_consumers.wait(lock); //, [this]{ return this->worker.joinable(); });
+	this->worker.join();
 	assert(in_flight == 0);
 }
 
@@ -149,7 +150,7 @@ inline void ThreadTask::start_worker(
 				if ((this->m_stop && this->tasks.empty()))
 				{
 					// detach this worker, effectively marking it stopped
-					this->worker.detach();
+					//this->worker.detach();
 					this->condition_consumers.notify_all();
 					return;
 				}
