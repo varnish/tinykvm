@@ -30,6 +30,7 @@ struct vMemory {
 	MemoryBanks banks; // fault-in memory banks
 	/* SMP mutex */
 	std::mutex mtx_smp;
+	bool smp_guards_enabled = false;
 
 	/* Unsafe */
 	bool within(uint64_t addr, size_t asize) const noexcept {

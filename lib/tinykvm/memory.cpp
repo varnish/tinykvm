@@ -215,8 +215,11 @@ MemoryBank::Page vMemory::new_hugepage()
 
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)
 {
-//	std::lock_guard<std::mutex> lock (this->mtx_smp);
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
+	if (LIKELY(this->smp_guards_enabled == false))
+		return writable_page_at(*this, addr, flags, zeroes);
+
+	std::lock_guard<std::mutex> lock (this->mtx_smp);
 	char* ret = writable_page_at(*this, addr, flags, zeroes);
 	//printf("-> Translation of 0x%lX: 0x%lX\n",
 	//	addr, machine.translate(addr));

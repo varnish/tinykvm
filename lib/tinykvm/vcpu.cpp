@@ -168,6 +168,7 @@ void vCPU::smp_init(int id, Machine& machine)
 	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
 	this->m_machine = &machine;
 	auto& memory = machine.main_memory();
+	memory.smp_guards_enabled = true; // Enable pagetable locking
 
 	if (UNLIKELY(this->fd < 0)) {
 		Machine::machine_exception("Failed to KVM_CREATE_VCPU");
