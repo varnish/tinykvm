@@ -10,11 +10,12 @@ struct RSP
 	std::unique_ptr<RSPClient> accept(int timeout_secs = 10);
 	int  fd() const noexcept { return server_fd; }
 
+	RSP(vCPU&, uint16_t);
 	RSP(Machine&, uint16_t);
 	~RSP();
 
 private:
-	Machine& m_machine;
+	vCPU& m_cpu;
 	int server_fd;
 };
 
@@ -31,13 +32,14 @@ struct RSPClient
 	void interrupt();
 	void kill();
 
-	auto& machine() { return *m_machine; }
-	void set_machine(Machine& m) { m_machine = &m; }
+	auto& cpu() { return *m_cpu; }
+	auto& machine() { return m_cpu->machine(); }
+	void set_vcpu(vCPU& cpu) { m_cpu = &cpu; }
 	void set_break_limit(uint64_t limit) { m_breaklimit = limit; }
 	void set_verbose(bool v) { m_verbose = v; }
 	void on_stopped(StopFunc f) { m_on_stopped = f; }
 
-	RSPClient(Machine& m, int fd);
+	RSPClient(vCPU& cpu, int fd);
 	~RSPClient();
 
 private:
@@ -62,7 +64,7 @@ private:
 	void report_gprs();
 	void report_status();
 	void close_now();
-	Machine* m_machine;
+	vCPU* m_cpu;
 	uint64_t m_breaklimit = 1'000;
 	int  sockfd;
 	bool m_closed  = false;

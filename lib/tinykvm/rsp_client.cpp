@@ -18,8 +18,8 @@
 
 namespace tinykvm {
 
-RSP::RSP(Machine& m, uint16_t port)
-	: m_machine{m}
+RSP::RSP(vCPU& cpu, uint16_t port)
+	: m_cpu{cpu}
 {
 	this->server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
 
@@ -43,8 +43,11 @@ RSP::RSP(Machine& m, uint16_t port)
 		throw std::runtime_error("GDB listener failed to listen on port");
 	}
 	/* We need to make sure the VM can be stepped through */
-	m_machine.stop(false);
+	m_cpu.machine().stop(false);
 }
+RSP::RSP(Machine& machine, uint16_t port)
+	: RSP(machine.cpu(), port)
+{}
 std::unique_ptr<RSPClient> RSP::accept(int timeout_secs)
 {
 	struct timeval tv {
@@ -82,14 +85,14 @@ std::unique_ptr<RSPClient> RSP::accept(int timeout_secs)
 		close(sockfd);
 		return nullptr;
 	}
-	return std::make_unique<RSPClient>(m_machine, sockfd);
+	return std::make_unique<RSPClient>(m_cpu, sockfd);
 }
 RSP::~RSP() {
 	close(server_fd);
 }
 
-RSPClient::RSPClient(Machine& m, int fd)
-	: m_machine{&m}, sockfd(fd)  {}
+RSPClient::RSPClient(vCPU& cpu, int fd)
+	: m_cpu{&cpu}, sockfd(fd)  {}
 RSPClient::~RSPClient() {
 	if (!is_closed())
 		close(this->sockfd);
@@ -308,7 +311,7 @@ void RSPClient::handle_query()
 }
 void RSPClient::handle_continue()
 {
-	auto regs = m_machine->registers();
+	auto regs = machine().registers();
 	for (const auto bp : m_bp) {
 		if (bp == regs.rip) {
 			send("S05");
@@ -317,8 +320,8 @@ void RSPClient::handle_continue()
 	}
 	try {
 		uint64_t n = m_breaklimit;
-		while (!m_machine->stopped()) {
-			auto reason = m_machine->run_with_breakpoints(m_bp);
+		while (!machine().stopped()) {
+			auto reason = machine().run_with_breakpoints(m_bp);
 			// Hardware breakpoint
 			if (reason == KVM_EXIT_DEBUG)
 				break;
@@ -340,7 +343,7 @@ void RSPClient::handle_continue()
 }
 void RSPClient::handle_step()
 {
-	auto regs = m_machine->registers();
+	auto regs = machine().registers();
 	for (const auto bp : m_bp) {
 		if (bp == regs.rip) {
 			send("S05");
@@ -348,9 +351,9 @@ void RSPClient::handle_step()
 		}
 	}
 	try {
-		if (!m_machine->stopped()) {
-			//m_machine->run_with_breakpoints(m_bp);
-			m_machine->step_one();
+		if (!machine().stopped()) {
+			//machine().run_with_breakpoints(m_bp);
+			machine().step_one();
 		} else {
 			send("S00");
 			return;
@@ -430,7 +433,7 @@ void RSPClient::handle_readmem()
 	try {
 		for (unsigned i = 0; i < len; i++) {
 			uint8_t val;
-			m_machine->unsafe_copy_from_guest(&val, addr + i, 1);
+			machine().unsafe_copy_from_guest(&val, addr + i, 1);
 			*d++ = lut[(val >> 4) & 0xF];
 			*d++ = lut[(val >> 0) & 0xF];
 		}
@@ -465,7 +468,7 @@ void RSPClient::handle_writemem()
 			if (data == '{' && i+1 < rlen) {
 				data = bin[++i] ^ 0x20;
 			}
-			auto* mem = m_machine->rw_memory_at(addr+i, 1);
+			auto* mem = machine().rw_memory_at(addr+i, 1);
 			mem[0] = data;
 		}
 		reply_ok();
@@ -475,7 +478,7 @@ void RSPClient::handle_writemem()
 }
 void RSPClient::report_status()
 {
-	if (!m_machine->stopped())
+	if (!machine().stopped())
 		send("S05"); /* Just send TRAP */
 	else {
 		if (m_on_stopped != nullptr) {
@@ -527,9 +530,9 @@ reg_at(struct tinykvm_x86regs& regs, size_t idx)
 	throw std::runtime_error("Invalid register index");
 }
 static __u32&
-reg32_at(Machine& m, struct tinykvm_x86regs& regs, size_t idx)
+reg32_at(vCPU& cpu, struct tinykvm_x86regs& regs, size_t idx)
 {
-	auto& sregs = m.get_special_registers();
+	auto& sregs = cpu.get_special_registers();
 
 	static __u32 seg = 0x0;
 	static __u32 fs = 0x0, gs = 0x0;
@@ -545,10 +548,10 @@ reg32_at(Machine& m, struct tinykvm_x86regs& regs, size_t idx)
 	case 21:
 		return seg = sregs.es.selector;
 	case 22:
-		fs = m.get_fsgs().first;
+		fs = cpu.machine().get_fsgs().first;
 		return fs;
 	case 23:
-		gs = m.get_fsgs().second;
+		gs = cpu.machine().get_fsgs().second;
 		return gs;
 	}
 	throw std::runtime_error("Invalid register index");
@@ -568,7 +571,7 @@ void RSPClient::handle_readreg()
 
 	if (idx >= 18)
 	{
-		const auto fpu = m_machine->fpu_registers();
+		const auto fpu = machine().fpu_registers();
 		if (idx <= 26) {
 			const auto* fpreg = &fpu.fpr[idx - 18][0];
 			vallen = 16;
@@ -599,7 +602,7 @@ void RSPClient::handle_readreg()
 	}
 	else /* GPRs */
 	{
-		const auto regs = m_machine->registers();
+		const auto regs = machine().registers();
 		const auto* regarray = (__u64 *)&regs;
 		vallen = sizeof(__u64);
 		std::memcpy(valdata, &regarray[idx], vallen);
@@ -627,14 +630,14 @@ void RSPClient::handle_writereg()
 	value = __builtin_bswap64(value);
 
 	if (idx < 17) {
-		auto regs = m_machine->registers();
+		auto regs = machine().registers();
 		reg_at(regs, idx) = value;
-		m_machine->set_registers(regs);
+		machine().set_registers(regs);
 		send("OK");
 	} else if (idx < 24) {
-		auto regs = m_machine->registers();
-		reg32_at(*m_machine, regs, idx) = value;
-		m_machine->set_registers(regs);
+		auto regs = machine().registers();
+		reg32_at(cpu(), regs, idx) = value;
+		machine().set_registers(regs);
 		send("OK");
 	} else {
 		send("E01");
@@ -643,36 +646,39 @@ void RSPClient::handle_writereg()
 
 void RSPClient::report_gprs()
 {
-	auto regs = m_machine->registers();
+	auto regs = machine().registers();
 	char data[1100];
 	const char* end = &data[sizeof(data)];
 	char* d = data;
 	/* GPRs, RIP, RFLAGS, segments */
 	for (size_t i = 0; i < 17; i++) {
 #ifdef HIDE_CPU_EXCEPTIONS
-		/* Machine using the exception/interrupt stack */
-		if ((i == 16) && (regs.rsp >= IST_ADDR && regs.rsp < IST_END_ADDR))
+		/* vCPU on the exception/interrupt stack */
+		if (regs.rsp >= IST_ADDR && regs.rsp < IST_END_ADDR)
 		{
-			char* rip = m_machine->unsafe_memory_at(regs.rsp, 8);
-			putreg(d, end, *(uint64_t *)rip);
-		} else if ((i == 7) && (regs.rsp >= IST_ADDR && regs.rsp < IST_END_ADDR)) {
-			char* rip = m_machine->unsafe_memory_at(regs.rsp+24, 8);
-			putreg(d, end, *(uint64_t *)rip);
-		} else {
-#endif
-			putreg(d, end, (uint64_t) reg_at(regs, i));
-#ifdef HIDE_CPU_EXCEPTIONS
+			const auto offset = cpu().exception_extra_offset(cpu().current_exception);
+			if (i == 16)
+			{
+				char* rip = machine().unsafe_memory_at(regs.rsp+offset, 8);
+				putreg(d, end, *(uint64_t *)rip);
+				continue;
+			} else if (i == 7) {
+				char* rip = machine().unsafe_memory_at(regs.rsp+offset+24, 8);
+				putreg(d, end, *(uint64_t *)rip);
+				continue;
+			}
 		}
 #endif
+		putreg(d, end, (uint64_t) reg_at(regs, i));
 	}
 	/* 7x special/segment registers */
 	for (size_t i = 17; i < 24; i++) {
-		putreg(d, end, (uint32_t) reg32_at(*m_machine, regs, i));
+		putreg(d, end, (uint32_t) reg32_at(cpu(), regs, i));
 	}
 
 	// AMD64 SSE: 17 * 8 + 7 * 4 + 8 * 10 + 8 * 4 + 16 * 16 + 4
 	// AMD64 AVX: 17 * 8 + 7 * 4 + 8 * 10 + 8 * 4 + 16 * 32 + 4
-	const auto fpu = m_machine->fpu_registers();
+	const auto fpu = machine().fpu_registers();
 
 	/* 8x 80-bit FP-registers */
 	for (size_t i = 0; i < 8; i++) {

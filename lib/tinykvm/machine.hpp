@@ -45,6 +45,9 @@ struct Machine
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
 
+	auto& cpu() noexcept { return this->vcpu; }
+	const auto& cpu() const noexcept { return this->vcpu; }
+
 	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
 	bool stopped() const noexcept { return vcpu.stopped; }

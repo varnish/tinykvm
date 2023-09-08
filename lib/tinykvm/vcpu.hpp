@@ -27,6 +27,7 @@ namespace tinykvm
 
         void print_registers() const;
         void handle_exception(uint8_t intr);
+		unsigned exception_extra_offset(uint8_t intr);
         void decrement_smp_count();
 
         auto &machine() { return *m_machine; }
@@ -35,6 +36,7 @@ namespace tinykvm
         int fd = 0;
         int cpu_id = 0;
         bool stopped = true;
+		uint8_t current_exception = 0;
         uint32_t timer_ticks = 0;
         void* timer_id = nullptr;
 

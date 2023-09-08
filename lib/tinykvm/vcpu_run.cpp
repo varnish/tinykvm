@@ -153,6 +153,8 @@ long vCPU::run_once()
 		}
 		else if (kvm_run->io.port >= 0x80 && kvm_run->io.port < 0x100) {
 			auto intr = kvm_run->io.port - 0x80;
+			this->current_exception = intr;
+
 			if (intr == 14) // Page fault
 			{
 				const auto& regs = registers();
@@ -398,6 +400,14 @@ void vCPU::handle_exception(uint8_t intr)
 			}
 		}
 	} catch (...) {}
+}
+unsigned vCPU::exception_extra_offset(uint8_t intr)
+{
+	const bool has_code = amd64_exception_code(intr);
+	unsigned off = (has_code) ? 8u : 0u;
+	if (intr == 14) off += 8u;
+
+	return off;
 }
 
 void Machine::migrate_to_this_thread()

@@ -213,6 +213,43 @@ void Machine::setup_multithreading()
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
+	Machine::install_syscall_handler(
+		435, [] (auto& cpu) { // clone3
+			auto& regs = cpu.registers();
+			struct clone3_args {
+				uint64_t flags;
+				uint64_t pidfd;
+				uint64_t child_tid;
+				uint64_t parent_tid;
+				uint64_t exit_signal;
+				uint64_t stack;
+				uint64_t stack_size;
+				uint64_t tls;
+				uint64_t set_tid;
+				uint64_t set_tid_size;
+				uint64_t cgroup;
+			};
+			clone3_args args;
+			cpu.machine().copy_from_guest(&args, regs.rdi, sizeof(clone3_args));
+			const auto flags = args.flags;
+			const auto stack = args.stack;
+			const auto ptid  = args.parent_tid;
+			const auto ctid  = args.child_tid;
+			const auto tls   = args.tls;
+
+			auto& parent = cpu.machine().threads().get_thread();
+			auto& thread = cpu.machine().threads().create(flags, ctid, ptid, stack, tls);
+			THPRINT(">>> clone(stack=0x%llX, flags=%llX,"
+					" parent=%d, ctid=0x%llX ptid=0x%llX, tls=0x%llX) = %d\n",
+					stack, flags, parent.tid, ctid, ptid, tls, thread.tid);
+			thread.clear_tid = args.set_tid;
+			// store return value for parent: child TID
+			parent.suspend(thread.tid);
+			// activate and return 0 for the child
+			regs = thread.activate();
+			regs.rax = 0;
+			cpu.set_registers(regs);
+		});
 	Machine::install_syscall_handler( // exit
 		60, [] (auto& cpu) {
 			if (cpu.machine().has_threads()) {
