@@ -252,16 +252,19 @@ void Machine::setup_multithreading()
 			THPRINT("Futex on: 0x%llX  val=%d\n", regs.rdi, val);
 			auto* fx = cpu.machine().template rw_memory_at<uint32_t>(addr, 4);
 
-			if ((futex_op & 0xF) == FUTEX_WAIT) {
+			if ((futex_op & 0xF) == FUTEX_WAIT || (futex_op & 0xF) == FUTEX_WAIT_BITSET) {
 				THPRINT("FUTEX: Waiting for unlock... uaddr=%u val=%u\n", *fx, val);
 				if (*fx == val) {
 					if (cpu.machine().threads().suspend_and_yield()) {
 						return;
 					}
-					throw std::runtime_error("DEADLOCK_REACHED");
+					// Spin-waiting solution :)
+					regs.rax = -EAGAIN;
+					//throw std::runtime_error("DEADLOCK_REACHED");
+				} else {
+					regs.rax = 0;
 				}
-				regs.rax = 0;
-			} else if ((futex_op & 0xF) == FUTEX_WAKE) {
+			} else if ((futex_op & 0xF) == FUTEX_WAKE || (futex_op & 0xF) == FUTEX_WAKE_BITSET) {
 				THPRINT("FUTEX: Waking others on uaddr=0x%lX, val=%u\n", (long) addr, val);
 				if (cpu.machine().threads().suspend_and_yield()) {
 					return;
@@ -269,7 +272,7 @@ void Machine::setup_multithreading()
 				regs.rax = 0;
 			}
 			else {
-				throw std::runtime_error("Unimplemented futex op");
+				throw std::runtime_error("Unimplemented futex op: " + std::to_string(futex_op & 0xF));
 			}
 			cpu.set_registers(regs);
 		});

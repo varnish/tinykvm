@@ -60,12 +60,27 @@ void setup_kvm_system_calls()
 				cpu.machine().print(buffer, bytes);
 				regs.rax = bytes;
 			}
+			SYSPRINT("write(%d, 0x%llX, %zu) = %lld\n",
+					 fd, regs.rsi, bytes, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		3, [] (auto& cpu) {
+			/* SYS close */
+			auto& regs = cpu.registers();
+			const int fd = regs.rdi;
+			(void)fd;
+			regs.rax = 0;
+			SYSPRINT("close(%d) = %lld\n",
+					 fd, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		5, [] (auto& cpu) { // FSTAT
 			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
+			SYSPRINT("fstat(...) = %lld\n",
+					 regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -86,6 +101,8 @@ void setup_kvm_system_calls()
 					fds[i].revents = 0;
 			}
 			regs.rax = 0;
+			SYSPRINT("poll(0x%llX, %llu) = %lld\n",
+					 regs.rsi, regs.rdi, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -99,14 +116,12 @@ void setup_kvm_system_calls()
 				if (regs.rdi == 0xC000000000LL) {
 					regs.rax = regs.rdi;
 				}
-				else {
+				else if constexpr (true) {
 					auto range = cpu.machine().mmap_cache().find(regs.rsi);
 					// Not found in cache, increment MM base address
 					if (range.empty()) {
 						auto& mm = cpu.machine().mmap();
 						regs.rax = mm;
-						// XXX: MAP_ANONYMOUS -->
-						//cpu.machine().memzero(regs.rax, regs.rsi);
 						mm += regs.rsi;
 					}
 					else
@@ -114,7 +129,14 @@ void setup_kvm_system_calls()
 						//PRINTMMAP("Found existing range: 0x%lX -> 0x%lX\n",
 						//	range.addr, range.addr + range.size);
 						regs.rax = range.addr;
+						// When re-using a range we need to zero it
+						// TODO: Only zero dirty pages
+						cpu.machine().memzero(range.addr, regs.rsi);
 					}
+				} else {
+					auto& mm = cpu.machine().mmap();
+					regs.rax = mm;
+					mm += regs.rsi;
 				}
 			}
 			PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
@@ -144,7 +166,7 @@ void setup_kvm_system_calls()
 			{
 				// If relaxation happened, invalidate intersecting cache entries.
 				cpu.machine().mmap_cache().invalidate(old_base, old_size);
-			} else {
+			} else if (old_base >= cpu.machine().mmap_start()) {
 				// If relaxation didn't happen, put in the cache for later.
 				cpu.machine().mmap_cache().insert(old_base, old_size);
 			}
@@ -178,9 +200,22 @@ void setup_kvm_system_calls()
 		14, [] (auto& cpu) {
 			/* SYS rt_sigprocmask */
 			auto& regs = cpu.registers();
-			regs.rax = 0;
-			SYSPRINT("rt_sigprocmask(how=%x, set=0x%llX, oldset=0x%llx, size=%llu) = 0x%llX\n",
-					 (int)regs.rdi, regs.rsi, regs.rdx, regs.rcx, regs.rax);
+			const unsigned size = regs.rcx;
+			(void)size;
+
+			struct kernel_sigset_t {
+				unsigned long sig[1];
+			};
+
+			if (regs.rdx != 0x0) {
+				kernel_sigset_t oldset {};
+				__builtin_memset(&oldset, 0xFF, sizeof(oldset));
+				cpu.machine().copy_to_guest(regs.rdx, &oldset, sizeof(oldset));
+			}
+
+			regs.rax = -ENOSYS;
+			SYSPRINT("rt_sigprocmask(how=%x, set=0x%llX, oldset=0x%llx, size=%u) = 0x%llX\n",
+					 (int)regs.rdi, regs.rsi, regs.rdx, size, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -217,7 +252,7 @@ void setup_kvm_system_calls()
 				uint64_t iov_base;
 				size_t   iov_len;
 			};
-			const auto fd    = regs.rdi;
+			const int  fd    = regs.rdi;
 			const auto count = regs.rdx;
 
 			if (count > 64) {
@@ -248,13 +283,16 @@ void setup_kvm_system_calls()
 			} else {
 				regs.rax = -EPERM;
 			}
+			SYSPRINT("writev(%d) = %lld\n",
+					 fd, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		21, [] (auto& cpu) { // ACCESS
 			auto& regs = cpu.registers();
-			SYSPRINT("SYSCALL access 0x%llX 0x%llX\n", regs.rdi, regs.rsi);
 			regs.rax = -1;
+			SYSPRINT("access(0x%llX 0x%llX) = %lld\n",
+				regs.rdi, regs.rsi, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -278,6 +316,8 @@ void setup_kvm_system_calls()
 		28, [] (auto& cpu) { // MADVISE
 			auto& regs = cpu.registers();
 			regs.rax = 0;
+			PRINTMMAP("madvise(0x%llX, %llu, 0x%llx) = %lld\n",
+				regs.rdi, regs.rsi, regs.rdx, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -311,8 +351,7 @@ void setup_kvm_system_calls()
 				cpu.machine().copy_to_guest(regs.rdi, &uts, sizeof(uts));
 				regs.rax = 0;
 			} else {
-				fprintf(stderr,
-					"SYSCALL utsname failed on 0x%llX\n", regs.rdi);
+				SYSPRINT("SYSCALL utsname failed on 0x%llX\n", regs.rdi);
 				regs.rax = -EFAULT;
 			}
 			cpu.set_registers(regs);
@@ -320,14 +359,16 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		72, [] (auto& cpu) { // FCNTL
 			auto& regs = cpu.registers();
-			regs.rax = -ENOSYS;
+			regs.rax = 0;
+			SYSPRINT("fcntl(...) = %lld\n",
+				regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		89, [] (auto& cpu) { // READLINK
 			auto& regs = cpu.registers();
 			regs.rax = -ENOENT;
-			SYSPRINT("READLINK 0x%llX, bufd=0x%llX, size=%llu = %lld\n",
+			SYSPRINT("readlink(0x%llX, bufd=0x%llX, size=%llu) = %lld\n",
 				regs.rdi, regs.rsi, regs.rdx, regs.rax);
 			cpu.set_registers(regs);
 		});
@@ -347,7 +388,19 @@ void setup_kvm_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		157, [] (auto& cpu) {
+			/* SYS prctl */
+			auto& regs = cpu.registers();
+			const int option = regs.rdi;
+			(void)option;
+
+			regs.rax = 0;
+			SYSPRINT("prctl(opt=%d) = %lld\n", option, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		158, [] (auto& cpu) {
+			/* SYS arch_prctl */
 			auto& regs = cpu.registers();
 			[[maybe_unused]] static constexpr long ARCH_SET_GS = 0x1001;
 			[[maybe_unused]] static constexpr long ARCH_SET_FS = 0x1002;
@@ -366,6 +419,14 @@ void setup_kvm_system_calls()
 		201, [] (auto& cpu) { // time
 			auto& regs = cpu.registers();
 			regs.rax = time(NULL);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		204, [] (auto& cpu) { // sched_getaffinity
+			/* SYS sched_getaffinity */
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			SYSPRINT("sched_getaffinity() = %lld\n", regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -392,6 +453,30 @@ void setup_kvm_system_calls()
 			/* SYS set_robust_list */
 			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		290, [] (auto& cpu) {
+			/* SYS eventfd2 */
+			auto& regs = cpu.registers();
+			regs.rax = 42;
+			SYSPRINT("eventfd2(...) = %lld\n", regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		291, [] (auto& cpu) {
+			/* SYS epoll_create1 */
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			SYSPRINT("epoll_create1(...) = %lld\n", regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		233, [] (auto& cpu) {
+			/* SYS epoll_ctl */
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			SYSPRINT("epoll_ctl(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -449,6 +534,8 @@ void setup_kvm_system_calls()
 		334, [] (auto& cpu) { // faccessat
 			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
+			SYSPRINT("faccessat(...) = %lld\n",
+					 regs.rax);
 			cpu.set_registers(regs);
 		});
 
