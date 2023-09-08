@@ -8,7 +8,7 @@
 #endif
 
 #ifndef TINYKVM_MAX_SYSCALLS
-#define TINYKVM_MAX_SYSCALLS  384
+#define TINYKVM_MAX_SYSCALLS  512
 #endif
 
 #define TINYKVM_COLD()   __attribute__ ((cold))
