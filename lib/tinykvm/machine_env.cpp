@@ -125,7 +125,7 @@ void Machine::setup_linux(__u64& rsp,
 	push_aux(argv, {AT_PHNUM, phdr_count});
 
 	// Misc
-	push_aux(argv, {AT_BASE, 0x400000});
+	push_aux(argv, {AT_BASE, binary_ehdr->e_entry & ~0xFFFFFFL}); // XXX: Guesstimate!
 	push_aux(argv, {AT_ENTRY, binary_ehdr->e_entry});
 	push_aux(argv, {AT_HWCAP,  getauxval(AT_HWCAP)});
 	push_aux(argv, {AT_HWCAP2, getauxval(AT_HWCAP2)});
