@@ -104,12 +104,9 @@ void vCPU::init(int id, Machine& machine)
 		const auto physbase = machine.main_memory().physbase;
 
 		master_sregs.cr3 = physbase + PT_ADDR;
-		// NOTE: SMEP is not currently possible to due to the usermode
-		// assembly being used in a kernel context. Some writing occurs?
-		// XXX: TODO: Figure out why SMEP causes problems.
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
-			CR4_FSGSBASE;
+			CR4_FSGSBASE | CR4_SMEP;
 		master_sregs.cr0 =
 			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
 		master_sregs.efer =
@@ -430,18 +427,19 @@ void Machine::print_exception_handlers() const
 	tinykvm::print_exception_handlers(memory.at(sregs.idt.base));
 }
 
-Machine::address_t Machine::entry_address_if_usermode() const noexcept
+void Machine::enter_usermode()
 {
-	// Check if we are already usermode
-	// If we are, we return userfunc which is safe to jump to
-#ifdef TINYKVM_USE_SYNCED_SREGS
 	// WARNING: This shortcut *requires* KVM_SYNC_X86_SREGS
-	if (this->vcpu.get_special_registers().cs.dpl == 0x3)
-		return usercode_header().translated_vm_userentry(memory);
-#endif
-	// If not, return the "dummy syscall" entry address
-	// Returning from a dummy syscall leaves us in usermode
-	return usercode_header().translated_vm_reentry(memory);
+	auto& sregs = this->vcpu.get_special_registers();
+	/* If we are in kernel-mode ... */
+	if (UNLIKELY(sregs.cs.dpl == 0)) {
+		/* Directly enter user-mode. */
+		sregs.cs.selector = 0x2B;
+		sregs.cs.dpl = 3;
+		sregs.ss.selector = 0x23;
+		sregs.ss.dpl = 3;
+		this->vcpu.set_special_registers(sregs);
+	}
 }
 
 Machine::address_t Machine::entry_address() const noexcept {

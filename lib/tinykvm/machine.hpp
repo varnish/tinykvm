@@ -142,10 +142,6 @@ struct Machine
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
 
-	/// @brief Jump to a shorter usermode entry if already in usermode, otherwise reentry_address
-	/// @return Returns the address needed to safely call a guest function
-	address_t entry_address_if_usermode() const noexcept;
-
 	static constexpr uint64_t BRK_MAX = 0x20000;
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t mmap_allocate(size_t bytes);
@@ -227,6 +223,7 @@ private:
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
 	void smp_vcpu_broadcast(std::function<void(vCPU&)>);
+	void enter_usermode();
 
 	vCPU  vcpu;
 	int   fd = 0;
