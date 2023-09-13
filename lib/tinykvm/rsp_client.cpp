@@ -668,6 +668,18 @@ void RSPClient::report_gprs()
 				continue;
 			}
 		}
+		/* vCPU handling a system call */
+		if (regs.rip >= INTR_ASM_ADDR && regs.rip < IST_ADDR)
+		{
+			/* RCX and R11 is clobbered by SYSCALL (these values are *LOST*) */
+			if (i == 16)
+			{
+				/* RCX == old RIP */
+				const auto rip = regs.rcx;
+				putreg(d, end, rip);
+				continue;
+			}
+		}
 #endif
 		putreg(d, end, (uint64_t) reg_at(regs, i));
 	}
