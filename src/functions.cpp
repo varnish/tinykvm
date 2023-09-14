@@ -109,6 +109,10 @@ void setup_kvm_system_calls()
 		9, [] (auto& cpu) { // MMAP
 			auto& regs = cpu.registers();
 			if (UNLIKELY(regs.rdi % vMemory::PageSize() != 0 || regs.rsi == 0)) {
+				// Size not matching a 4K page size
+				regs.rax = ~0LL; /* MAP_FAILED */
+			} else if (UNLIKELY(int(regs.r8) >= 0)) {
+				// mmap to file fd (*NOT* supported)
 				regs.rax = ~0LL; /* MAP_FAILED */
 			} else {
 				// Round up to nearest power-of-two
