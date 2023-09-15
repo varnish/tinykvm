@@ -299,9 +299,9 @@ void Machine::setup_multithreading()
 					if (cpu.machine().threads().suspend_and_yield()) {
 						return;
 					}
-					// Spin-waiting solution :)
-					regs.rax = -EAGAIN;
-					//throw std::runtime_error("DEADLOCK_REACHED");
+					// Avoid spin-waiting solution, let's just end execution for now :)
+					regs.rax = -EINTR;
+					throw std::runtime_error("DEADLOCK_REACHED");
 				} else {
 					regs.rax = 0;
 				}
