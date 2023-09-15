@@ -61,12 +61,15 @@ int main(int argc, char** argv)
 		.hugepages = (getenv("HUGE") != nullptr),
 	};
 	tinykvm::Machine master_vm {binary, options};
-	//master_vm.set_stack_address(0x800000);
 	//master_vm.print_pagetables();
 
+	std::vector<std::string> args;
+	for (int i = 1; i < argc; i++) {
+		args.push_back(argv[i]);
+	}
+
 	master_vm.setup_linux(
-		{"vmod_kvm", "xpizza.com"
-					 "0"},
+		args,
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 
 	const auto rsp = master_vm.stack_address();

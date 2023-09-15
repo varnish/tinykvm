@@ -216,6 +216,10 @@ void Machine::setup_multithreading()
 	Machine::install_syscall_handler(
 		435, [] (auto& cpu) { // clone3
 			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			cpu.set_registers(regs);
+			return;
+
 			struct clone3_args {
 				uint64_t flags;
 				uint64_t pidfd;
