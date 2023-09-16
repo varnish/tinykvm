@@ -10,6 +10,7 @@
 
 namespace tinykvm {
 static constexpr bool VERBOSE_MEMORY_BANK = false;
+static constexpr bool MADVISE_NOT_DELETE  = false;
 
 MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	: m_machine { machine },
@@ -108,12 +109,23 @@ void MemoryBanks::reset(const MachineOptions& options)
 	if (limit_pages > 0)
 	{
 		size_t final_banks = std::max(size_t(1u), limit_pages / MemoryBank::N_PAGES);
-		/* Erase the last N elements after final_banks */
-		while (final_banks < m_mem.size()) {
-			this->m_idx--;
-			this->m_num_pages -= m_mem.back().n_pages;
-			m_machine.delete_memory(this->m_idx);
-			m_mem.pop_back();
+
+		if constexpr (MADVISE_NOT_DELETE)
+		{
+			final_banks = std::min(m_mem.size(), final_banks);
+			size_t offset = m_mem.size() - final_banks;
+
+			for (size_t i = offset; i < m_mem.size(); i++) {
+				madvise(m_mem[i].mem, m_mem[i].size(), MADV_FREE);
+			}
+		} else {
+			/* Erase the last N elements after final_banks */
+			while (final_banks < m_mem.size()) {
+				this->m_idx--;
+				this->m_num_pages -= m_mem.back().n_pages;
+				m_machine.delete_memory(this->m_idx);
+				m_mem.pop_back();
+			}
 		}
 	}
 }
