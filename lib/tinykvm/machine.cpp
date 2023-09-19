@@ -223,6 +223,21 @@ Machine::address_t Machine::mmap_allocate(size_t bytes)
 	this->m_mm += (bytes + PageMask) & ~PageMask;
 	return result;
 }
+bool Machine::mmap_unmap(uint64_t addr, size_t size)
+{
+	const bool relaxed = this->mmap_relax(addr, size, 0u);
+	if (relaxed)
+	{
+		// If relaxation happened, invalidate intersecting cache entries.
+		this->mmap_cache().invalidate(addr, size);
+	}
+	else if (addr >= this->mmap_start())
+	{
+		// If relaxation didn't happen, put in the cache for later.
+		this->mmap_cache().insert(addr, size);
+	}
+	return relaxed;
+}
 bool Machine::mmap_relax(uint64_t addr, size_t size, size_t new_size)
 {
 	if (this->m_mm == addr + size && new_size <= size) {

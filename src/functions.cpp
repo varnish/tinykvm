@@ -164,16 +164,9 @@ void setup_kvm_system_calls()
 			// We don't support MMAP fully, but we can try to relax the mapping.
 			const uint64_t old_base = regs.rdi;
 			const uint64_t old_size = regs.rsi;
-			bool relaxed = cpu.machine().mmap_relax(old_base, old_size, 0u);
+			[[maybe_unused]] bool relaxed =
+				cpu.machine().mmap_unmap(old_base, old_size);
 			PRINTMMAP("munmap(0x%lX, %lu, relaxed=%d)\n", old_base, old_size, relaxed);
-			if (relaxed)
-			{
-				// If relaxation happened, invalidate intersecting cache entries.
-				cpu.machine().mmap_cache().invalidate(old_base, old_size);
-			} else if (old_base >= cpu.machine().mmap_start()) {
-				// If relaxation didn't happen, put in the cache for later.
-				cpu.machine().mmap_cache().insert(old_base, old_size);
-			}
 			// Because we do not support MMAP fully, we will just return 0 here.
 			regs.rax = 0;
 			cpu.set_registers(regs);

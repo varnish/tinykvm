@@ -145,6 +145,7 @@ struct Machine
 	static constexpr uint64_t BRK_MAX = 0x20000;
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t mmap_allocate(size_t bytes);
+	bool      mmap_unmap(uint64_t addr, size_t size);
 	bool mmap_relax(uint64_t addr, size_t size, size_t new_size);
 	auto& mmap_cache() noexcept { return m_mmap_cache; }
 
