@@ -40,12 +40,13 @@ ALIGN 0x10
 	o64 sysret
 
 .vm64_prctl:
+	stac
 	push rsi
 	push rcx
 	push rdx
 	cmp rdi, 0x1002 ;; PRCTL: SET_FS
 	jne .vm64_prctl_get
-	;; SET_FS [rsi]
+	;; SET_FS := rsi
 	mov ecx, 0xC0000100  ;; FSBASE
 	mov eax, esi ;; low-32 FS base
 	shr rsi, 32
@@ -56,11 +57,12 @@ ALIGN 0x10
 	pop rdx
 	pop rcx
 	pop rsi
+	clac
 	o64 sysret
 .vm64_prctl_get:
 	cmp rdi, 0x1003 ;; PRCTL: GET_FS
 	jne .vm64_prctl_trap
-	;; GET_FS [rsi]
+	;; GET_FS [rsi] := FSBASE
 	mov ecx, 0xC0000100  ;; FSBASE
 	rdmsr
 	shl rdx, 32   ;; lift high-32 FS base

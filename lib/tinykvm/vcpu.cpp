@@ -106,7 +106,7 @@ void vCPU::init(int id, Machine& machine)
 		master_sregs.cr3 = physbase + PT_ADDR;
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
-			CR4_FSGSBASE | CR4_SMEP;
+			CR4_FSGSBASE | CR4_SMEP | CR4_SMAP;
 		master_sregs.cr0 =
 			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
 		master_sregs.efer =
