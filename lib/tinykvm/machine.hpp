@@ -37,11 +37,6 @@ struct Machine
 	void timed_vmcall(address_t, float timeout, Args&&...);
 	template <typename... Args> constexpr
 	void timed_vmcall_stack(address_t, address_t stk, float timeout, Args&&...);
-	/* SYSV function call with timeout, no cache flushing */
-	template <typename... Args> constexpr
-	void timed_reentry(address_t, float timeout, Args&&...);
-	template <typename... Args> constexpr
-	void timed_reentry_stack(address_t, address_t stk, float timeout, Args&&...);
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
 
@@ -230,6 +225,7 @@ private:
 	int   fd = 0;
 	bool  m_prepped = false;
 	bool  m_forked = false;
+	bool  m_just_reset = false;
 	void* m_userdata = nullptr;
 
 	std::string_view m_binary;

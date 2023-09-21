@@ -114,12 +114,12 @@ int main(int argc, char** argv)
 			printf("set_registers() average time: %lu nanos\n", set_registers_time);
 
 			auto fastest_call_time = micro_benchmark([&] {
-				master_vm.timed_reentry(vmcall_address, 0.0f);
+				master_vm.timed_vmcall(vmcall_address, 0.0f);
 			});
 			printf("Fastest possible vmcall time: %lu ns\n", fastest_call_time);
 
 			auto fastest_timed_call_time = micro_benchmark([&] {
-				master_vm.timed_reentry(vmcall_address, 4.0f);
+				master_vm.timed_vmcall(vmcall_address, 4.0f);
 			});
 			printf("Fastest possible timed vmcall time: %lu ns\n", fastest_timed_call_time);
 
@@ -504,7 +504,7 @@ void benchmark_multiple_vms(tinykvm::Machine& master_vm, size_t NUM, size_t RESE
 		if constexpr (FULL_RESET) {
 			fvm[counter].timed_vmcall(vmcall_address, 4.0f);
 		} else {
-			fvm[counter].timed_reentry(vmcall_address, 4.0f);
+			fvm[counter].timed_vmcall(vmcall_address, 4.0f);
 		}
 		asm("" : : : "memory");
 		auto frt2 = time_now();
@@ -574,7 +574,7 @@ void benchmark_multiple_pooled_vms(tinykvm::Machine& master_vm, size_t NUM, size
 		if constexpr (FULL_RESET) {
 			fvm->timed_vmcall(data.addr, 4.0f);
 		} else {
-			fvm->timed_reentry(data.addr, 4.0f);
+			fvm->timed_vmcall(data.addr, 4.0f);
 		}
 		asm("" : : : "memory");
 		auto frt2 = time_now();

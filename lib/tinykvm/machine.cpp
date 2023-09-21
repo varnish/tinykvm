@@ -28,6 +28,7 @@ namespace tinykvm {
 __attribute__ ((cold))
 Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_forked {false},
+	  m_just_reset {false},
 	  m_binary {binary},
 	  memory { vMemory::New(*this, options,
 	  	options.vmem_base_address, options.vmem_base_address + 0x100000, options.max_mem)
@@ -55,6 +56,7 @@ Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_prepped {false},
 	  m_forked  {true},
+	  m_just_reset {true},
 	  m_binary {options.binary.empty() ? other.m_binary : options.binary},
 	  memory   {*this, options, other.memory},
 	  m_stack_address {other.m_stack_address},
@@ -131,6 +133,7 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		memory.fork_reset(options);
 	}
 
+	this->m_just_reset = true;
 	this->m_mm = other.m_mm;
 	this->m_mmap_cache = other.m_mmap_cache;
 

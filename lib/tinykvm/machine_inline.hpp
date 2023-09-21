@@ -52,8 +52,13 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 	regs = {};
 	/* Set IOPL=3 to allow I/O instructions in usermode */
 	regs.rflags = 2 | (3 << 12);
-	regs.r15 = addr;
-	regs.rip = this->entry_address();
+	if (this->m_just_reset) {
+		this->m_just_reset = false;
+		regs.r15 = addr;
+		regs.rip = this->entry_address();
+	} else {
+		regs.rip = addr;
+	}
 	regs.rsp = rsp;
 	[[maybe_unused]] unsigned iargs = 0;
 	([&] {
@@ -138,29 +143,6 @@ void Machine::timed_vmcall_stack(uint64_t addr, uint64_t stk, float timeout, Arg
 {
 	auto& regs = vcpu.registers();
 	this->setup_call(regs, addr, stk, std::forward<Args> (args)...);
-	vcpu.set_registers(regs);
-	this->run(timeout);
-}
-
-template <typename... Args> inline constexpr
-void Machine::timed_reentry(uint64_t addr, float timeout, Args&&... args)
-{
-	auto& regs = vcpu.registers();
-	this->setup_call(regs, addr,
-		this->stack_address(), std::forward<Args> (args)...);
-	/// This may jump directly to the guest function if DPL=3
-	regs.rip = this->reentry_address();
-	vcpu.set_registers(regs);
-	this->run(timeout);
-}
-
-template <typename... Args> inline constexpr
-void Machine::timed_reentry_stack(uint64_t addr, uint64_t stk, float timeout, Args&&... args)
-{
-	auto& regs = vcpu.registers();
-	this->setup_call(regs, addr, stk, std::forward<Args> (args)...);
-	/// This may jump directly to the guest function if DPL=3
-	regs.rip = this->reentry_address();
 	vcpu.set_registers(regs);
 	this->run(timeout);
 }
