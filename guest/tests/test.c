@@ -106,3 +106,16 @@ int test_loop()
 {
 	while(1);
 }
+
+asm(".global vcpuid\n"
+	".type vcpuid, @function\n"
+	"vcpuid:\n"
+	"	mov %gs:(0x0), %eax\n"
+	"   ret\n");
+extern int vcpuid();
+
+__attribute__((used))
+int test_vcpu()
+{
+	return vcpuid();
+}

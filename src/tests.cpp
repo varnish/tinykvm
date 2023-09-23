@@ -13,6 +13,7 @@ std::vector<uint8_t> load_file(const std::string& filename);
 static void test_master_vm(tinykvm::Machine&);
 static void test_forking(tinykvm::Machine&);
 static void test_copy_on_write(tinykvm::Machine&);
+static void test_vcpu(tinykvm::Machine&);
 
 static void verify_exists(tinykvm::Machine& vm, const char* name)
 {
@@ -53,6 +54,7 @@ int main(int argc, char** argv)
 	verify_exists(master_vm, "write_value");
 	verify_exists(master_vm, "test_is_value");
 	verify_exists(master_vm, "test_loop");
+	verify_exists(master_vm, "test_vcpu");
 
 	/* Remote debugger session */
 	if (getenv("DEBUG"))
@@ -105,6 +107,12 @@ int main(int argc, char** argv)
 	printf("--- Beginning Master VM tests ---\n");
 	test_master_vm(master_vm);
 	printf("*** Master VM OK\n");
+
+	printf("--- Beginning VM vCPU tests ---\n");
+	for (size_t i = 0; i < 100; i++) {
+		test_vcpu(master_vm);
+	}
+	printf("*** VM vCPU OK\n");
 
 	/* Make the master VM able to mass-produce copies.
 	   Make room for 16 CoW-pages enabling usage afterwards. */
@@ -308,5 +316,21 @@ void test_copy_on_write(tinykvm::Machine& master_vm)
 		/* We have to acknowledge that the parent VM for 'vm'
 		   falls out-of-scope here, which is dangerous, but
 		   *must* be supported. */
+	}
+}
+
+void test_vcpu(tinykvm::Machine& master_vm)
+{
+	for (size_t i = 0; i < 10; i++)
+	{
+		try {
+			master_vm.cpu().set_vcpu_table_at(0, i);
+			master_vm.vmcall("test_vcpu");
+			KASSERT(master_vm.return_value() == i);
+		} catch (...) {
+			//master_vm.print_pagetables();
+			master_vm.print_registers();
+			throw;
+		}
 	}
 }

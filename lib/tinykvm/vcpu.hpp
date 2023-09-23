@@ -30,8 +30,10 @@ namespace tinykvm
 		unsigned exception_extra_offset(uint8_t intr);
         void decrement_smp_count();
 
-        auto &machine() { return *m_machine; }
-        const auto &machine() const { return *m_machine; }
+        auto& machine() { return *m_machine; }
+        const auto& machine() const { return *m_machine; }
+
+		void set_vcpu_table_at(unsigned index, int value);
 
         int fd = 0;
         int cpu_id = 0;
@@ -43,6 +45,8 @@ namespace tinykvm
     private:
         struct kvm_run* kvm_run = nullptr;
         Machine* m_machine = nullptr;
+
+		uint64_t vcpu_table_addr() const noexcept;
     };
 
 } // namespace tinykvm

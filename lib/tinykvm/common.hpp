@@ -83,4 +83,11 @@ namespace tinykvm
 
 	template<class T>
 	struct is_stdstring : public std::is_same<T, std::basic_string<char>> {};
+
+	struct PerVCPUTable {
+		int cpuid;
+		int userval1;
+		int userval2;
+		int userval3;
+	};
 }

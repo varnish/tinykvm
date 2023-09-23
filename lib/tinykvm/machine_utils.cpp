@@ -1,7 +1,7 @@
 #include "machine.hpp"
 
 #include <cstring>
-#define USERMODE_FLAGS (3UL << 1 | 1UL << 63) /* USER, READ/WRITE, NX */
+#define USERMODE_FLAGS (0x7 | 1UL << 63) /* USER, READ/WRITE, PRESENT, NX */
 
 namespace tinykvm {
 static constexpr uint64_t PageMask() {

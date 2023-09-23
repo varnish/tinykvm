@@ -285,6 +285,10 @@ void vCPU::print_registers() const
 		"SS: 0x%X  CS: 0x%X  DS: 0x%X  FS: 0x%X  GS: 0x%X\n",
 		sregs.ss.selector, sregs.cs.selector, sregs.ds.selector, sregs.fs.selector, sregs.gs.selector);
 
+	PRINTER(printer, buffer,
+		"FS BASE: 0x%llX  GS BASE: 0x%llX\n",
+		sregs.fs.base, sregs.gs.base);
+
 #if 0
 	PRINTER(printer, buffer,
 		"CR0 PE=%llu MP=%llu EM=%llu\n",

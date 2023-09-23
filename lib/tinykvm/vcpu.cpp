@@ -112,7 +112,7 @@ void vCPU::init(int id, Machine& machine)
 		master_sregs.efer =
 			EFER_SCE | EFER_LME | EFER_LMA | EFER_NXE;
 		setup_amd64_segment_regs(master_sregs, physbase + GDT_ADDR);
-		master_sregs.gs.base = usercode_header().translated_vm_cpuid(machine.main_memory());
+		master_sregs.gs.base = this->vcpu_table_addr();
 		setup_amd64_tss_regs(master_sregs, physbase + TSS_ADDR);
 		setup_amd64_exception_regs(master_sregs, physbase + IDT_ADDR);
 		this->set_special_registers(master_sregs);
@@ -221,7 +221,7 @@ void vCPU::smp_init(int id, Machine& machine)
 	/* XXX: Is this correct? */
 	sregs = machine.vcpu.get_special_registers();
 	sregs.tr.base = memory.physbase + TSS_SMP_ADDR + (id - 1) * 104; /* AMD64_TSS */
-	sregs.gs.base = usercode_header().translated_vm_cpuid(memory) + 4 * id;
+	sregs.gs.base = this->vcpu_table_addr();
 	/* XXX: Is this correct? */
 	sregs.cr3 = memory.page_tables;
 	sregs.cr0 &= ~CR0_WP; // XXX: Fix me!
@@ -338,6 +338,24 @@ void Machine::set_tls_base(__u64 baseaddr)
 	sregs.fs.base = baseaddr;
 
 	vcpu.set_special_registers(sregs);
+}
+
+uint64_t vCPU::vcpu_table_addr() const noexcept
+{
+	return usercode_header().translated_vm_cpuid(machine().memory)
+		+ sizeof(PerVCPUTable) * this->cpu_id;
+}
+void vCPU::set_vcpu_table_at(unsigned index, int value)
+{
+	if (index >= 4)
+		throw MachineException("Invalid vCPU table index", index);
+	/* The per-vCPU data area is in the usercode area. */
+	const auto addr = this->vcpu_table_addr() + index * 4;
+	auto* page = machine().main_memory().get_userpage_at(addr & ~0xFFFL);
+	if (page != nullptr) {
+		auto offset = addr & 0xFFFL;
+		*((int *)&page[offset]) = value;
+	}
 }
 
 void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_boundary)
