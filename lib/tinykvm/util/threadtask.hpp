@@ -25,6 +25,11 @@ public:
 	void set_low_prio(bool low_prio) { m_prio_low = low_prio; }
 	~ThreadTask();
 
+	size_t racy_queue_size() {
+		std::unique_lock<std::mutex> lock(queue_mutex);
+		return tasks.size();
+	}
+
 private:
 	void start_worker(std::unique_lock<std::mutex> const& lock);
 
