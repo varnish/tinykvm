@@ -322,7 +322,7 @@ void Machine::setup_long_mode(const MachineOptions& options)
 	setup_vm64_usercode(
 		memory.at(physbase + USER_ASM_ADDR));
 
-	this->m_kernel_end = setup_amd64_paging(memory, m_binary);
+	this->m_kernel_end = setup_amd64_paging(memory, m_binary, options.remappings);
 }
 
 std::pair<__u64, __u64> Machine::get_fsgs() const

@@ -179,3 +179,8 @@ inline bool Machine::memory_safe_at(uint64_t a, size_t s) const
 {
 	return memory.safely_within(a, s);
 }
+
+inline Signals& Machine::signals() {
+	if (m_signals == nullptr) m_signals.reset(new Signals);
+	return *m_signals;
+}

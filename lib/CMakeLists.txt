@@ -22,6 +22,7 @@ set (SOURCES
 	tinykvm/memory_bank.cpp
 	tinykvm/page_streaming.cpp
 	tinykvm/remote.cpp
+	tinykvm/signals.cpp
 	tinykvm/smp.cpp
 	tinykvm/threads.cpp
 	tinykvm/vcpu.cpp

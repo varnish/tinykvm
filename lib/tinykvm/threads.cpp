@@ -332,12 +332,26 @@ void Machine::setup_multithreading()
 		});
 	Machine::install_syscall_handler(
 		234, [] (auto& cpu) { // TGKILL
+			auto& regs = cpu.registers();
 			int tid = 0;
 			if (cpu.machine().has_threads()) {
 				tid = cpu.machine().threads().get_thread().tid;
 			}
+
+			const int sig = regs.rdx;
+			if (sig == 0) {
+				THPRINT("tgkill(sig=0) called from tid=%d\n", tid);
+				regs.rax = 0;
+				cpu.set_registers(regs);
+				return;
+			} else {
+				THPRINT("tgkill(sig=%d) called from tid=%d\n", sig, tid);
+				cpu.machine().signals().enter(cpu, sig);
+				return;
+			}
+
 			fprintf(stderr, "ERROR: tgkill called from tid=%d\n", tid);
-			throw MachineException("tgkill called");
+			throw MachineException("tgkill called (signal)", sig);
 		});
 } // setup_multithreading
 

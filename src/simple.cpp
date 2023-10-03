@@ -5,7 +5,7 @@
 #include "load_file.hpp"
 
 #include <tinykvm/rsp_client.hpp>
-#define GUEST_MEMORY   0x40000000  /* 1024MB memory */
+#define GUEST_MEMORY   0x80000000  /* 2GB memory */
 #define GUEST_WORK_MEM 1024UL * 1024*1024 /* MB working mem */
 
 static uint64_t verify_exists(tinykvm::Machine& vm, const char* name)
@@ -57,6 +57,11 @@ int main(int argc, char** argv)
 		.max_cow_mem = GUEST_WORK_MEM,
 		.reset_free_work_mem = 0,
 		.vmem_base_address = uint64_t(getenv("UPPER") != nullptr ? 0x40000000 : 0x0),
+		.remappings {{
+			.phys = 0x0,
+			.virt = 0xC000000000,
+			.size = 512ULL << 20,
+		}},
 		.verbose_loader = false,
 		.hugepages = (getenv("HUGE") != nullptr),
 	};
@@ -123,6 +128,10 @@ int main(int argc, char** argv)
 	/* Normal execution of _start -> main() */
 	try {
 		master_vm.run();
+	} catch (const tinykvm::MachineException& me) {
+		master_vm.print_registers();
+		fprintf(stderr, "Machine exception: %s  Data: 0x%lX\n", me.what(), me.data());
+		throw;
 	} catch (...) {
 		master_vm.print_registers();
 		throw;
