@@ -272,29 +272,6 @@ char* vMemory::get_userpage_at(uint64_t addr) const
 #endif
 }
 
-bool vMemory::create_mirror_range(uint64_t phys, uint64_t virt, size_t size)
-{
-	foreach_page(*this,
-		[&] (uint64_t addr, uint64_t& entry, size_t page_size)
-		{
-			static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
-			const auto vaddr = entry & PDE64_ADDR_MASK;
-			//printf("Addr: 0x%lX  Phys: 0x%lX\n", vaddr, phys);
-
-			if (addr >= phys && addr < phys + size)
-			{
-				if ((entry & PDE64_PS) == 0)
-					return;
-
-				const uint64_t offset = addr - phys;
-
-				entry &= PDE64_ADDR_MASK;
-				entry |= virt + offset;
-			}
-		});
-	return true;
-}
-
 size_t Machine::banked_memory_pages() const noexcept
 {
 	size_t count = 0;
