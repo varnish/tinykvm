@@ -29,6 +29,7 @@ __attribute__ ((cold))
 Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_forked {false},
 	  m_just_reset {false},
+	  m_allow_fixed_mmap {options.allow_fixed_mmap},
 	  m_binary {binary},
 	  memory { vMemory::New(*this, options,
 	  	options.vmem_base_address, options.vmem_base_address + 0x100000, options.max_mem)
@@ -57,6 +58,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_prepped {false},
 	  m_forked  {true},
 	  m_just_reset {true},
+	  m_allow_fixed_mmap {options.allow_fixed_mmap},
 	  m_binary {options.binary.empty() ? other.m_binary : options.binary},
 	  memory   {*this, options, other.memory},
 	  m_stack_address {other.m_stack_address},

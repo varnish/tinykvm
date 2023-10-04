@@ -51,19 +51,24 @@ int main(int argc, char** argv)
 		}
 	});
 
+	const std::vector<tinykvm::VirtualRemapping> remappings {
+		{
+			.phys = 0x0,
+			.virt = 0xC000000000,
+			.size = 512ULL << 20,
+		}
+	};
+
 	/* Setup */
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_WORK_MEM,
 		.reset_free_work_mem = 0,
 		.vmem_base_address = uint64_t(getenv("UPPER") != nullptr ? 0x40000000 : 0x0),
-		.remappings {{
-			.phys = 0x0,
-			.virt = 0xC000000000,
-			.size = 512ULL << 20,
-		}},
+		.remappings {remappings},
 		.verbose_loader = false,
 		.hugepages = (getenv("HUGE") != nullptr),
+		.allow_fixed_mmap = (getenv("GO") != nullptr),
 	};
 	tinykvm::Machine master_vm {binary, options};
 	//master_vm.print_pagetables();

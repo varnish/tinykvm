@@ -46,6 +46,8 @@ namespace tinykvm
 		/* When enabled, reset_to() will accept a different
 		   master VM than the original, but at a steep cost. */
 		bool allow_reset_to_new_master = false;
+		/* Allow fixed addresses with mmap(). */
+		bool allow_fixed_mmap = false;
 	};
 
 	class MachineException : public std::exception {

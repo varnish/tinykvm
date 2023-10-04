@@ -116,7 +116,7 @@ void setup_kvm_system_calls()
 			} else if (UNLIKELY(int(regs.r8) >= 0)) {
 				// mmap to file fd (*NOT* supported)
 				regs.rax = ~0LL; /* MAP_FAILED */
-			} else if (regs.rdi != 0x0) {
+			} else if (regs.rdi != 0x0 && cpu.machine().allow_fixed_mmap()) {
 				regs.rax = regs.rdi;
 			} else {
 				// Round up to nearest power-of-two
@@ -216,7 +216,7 @@ void setup_kvm_system_calls()
 			if (regs.rsi != 0x0) {
 				cpu.machine().copy_from_guest(&sa, regs.rsi, sizeof(sa));
 				SYSPRINT("rt_sigaction(action handler=0x%lX  flags=0x%lX  mask=0x%lX)\n",
-					sa.handler, sa.sa_flags, sa.sa_mask);
+					sa.handler, sa.flags, sa.mask);
 				sigact.handler  = sa.handler;
 				sigact.altstack = (sa.flags & SA_ONSTACK) != 0;
 				sigact.mask     = sa.mask;
@@ -258,7 +258,7 @@ void setup_kvm_system_calls()
 				cpu.machine().copy_from_guest(&ss, regs.rdi, sizeof(ss));
 
 				SYSPRINT("sigaltstack(altstack SP=0x%lX  flags=0x%X  size=0x%lX)\n",
-					ss.sp, ss.flags, ss.size);
+					ss.ss_sp, ss.ss_flags, ss.ss_size);
 			}
 
 			regs.rax = 0;
