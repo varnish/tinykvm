@@ -329,9 +329,17 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		21, [] (auto& cpu) { // ACCESS
 			auto& regs = cpu.registers();
-			regs.rax = -1;
+			regs.rax = -EPERM;
 			SYSPRINT("access(0x%llX 0x%llX) = %lld\n",
 				regs.rdi, regs.rsi, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		293, [] (auto& cpu) { // PIPE2
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			SYSPRINT("pipe(0x%llX, 0x%X) = %lld\n",
+				regs.rdi, int(regs.rsi), regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
