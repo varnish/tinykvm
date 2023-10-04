@@ -10,7 +10,7 @@ static constexpr uint64_t PageMask() {
 
 void Machine::memzero(address_t addr, size_t len)
 {
-	if (uses_cow_memory())
+	if (uses_cow_memory() || !memory.safely_within(addr, len))
 	{
 		while (len != 0)
 		{
@@ -31,7 +31,7 @@ void Machine::memzero(address_t addr, size_t len)
 
 void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool zeroes)
 {
-	if (uses_cow_memory())
+	if (uses_cow_memory() || !memory.safely_within(addr, len))
 	{
 		auto* src = (const uint8_t *)vsrc;
 		while (len != 0)
@@ -54,7 +54,7 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 
 void Machine::copy_from_guest(void* vdst, address_t addr, size_t len) const
 {
-	if (uses_cow_memory())
+	if (uses_cow_memory() || !memory.safely_within(addr, len))
 	{
 		auto* dst = (uint8_t *)vdst;
 		while (len != 0)
@@ -77,7 +77,7 @@ void Machine::copy_from_guest(void* vdst, address_t addr, size_t len) const
 
 void Machine::unsafe_copy_from_guest(void* vdst, address_t addr, size_t len) const
 {
-	if (uses_cow_memory())
+	if (uses_cow_memory() || !memory.safely_within(addr, len))
 	{
 		auto* dst = (uint8_t *)vdst;
 		while (len != 0)

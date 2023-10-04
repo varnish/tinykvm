@@ -17,15 +17,23 @@
 #include <exception>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace tinykvm
 {
+	struct VirtualRemapping {
+		uint64_t phys;
+		uint64_t virt;
+		size_t   size;
+	};
+
 	struct MachineOptions {
 		uint64_t max_mem;
 		uint32_t max_cow_mem = 0;
 		uint32_t reset_free_work_mem = 0; /* reset_to() */
 		uint64_t vmem_base_address = 0;
 		std::string_view binary = {};
+		std::vector<VirtualRemapping> remappings;
 
 		bool verbose_loader = false;
 		bool short_lived = false;

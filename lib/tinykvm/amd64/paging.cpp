@@ -3,6 +3,7 @@
 #include "amd64.hpp"
 #include "memory_layout.hpp"
 #include "vdso.hpp"
+#include "../machine.hpp"
 #include "../page_streaming.hpp"
 #include "../util/elf.h"
 #include <cassert>
@@ -55,7 +56,8 @@ inline bool is_flagged_page(uint64_t flags, uint64_t entry) {
 	return (entry & flags) == flags;
 }
 
-uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
+uint64_t setup_amd64_paging(vMemory& memory,
+	std::string_view binary, const std::vector<VirtualRemapping>& remappings)
 {
 	static constexpr uint64_t PD_MASK = (1ULL << 30) - 1;
 	const size_t PD_PAGES = (memory.size + PD_MASK) >> 30;
@@ -222,6 +224,54 @@ uint64_t setup_amd64_paging(vMemory& memory, std::string_view binary)
 				if (!write) ptentry &= ~PDE64_RW;
 				addr += 0x1000;
 			}
+		}
+	}
+
+	/* Virtual memory remappings (up to 1GB each, for now) */
+	for (const auto& vmem : remappings)
+	{
+		if (vmem.virt <= free_page)
+			throw MachineException("Invalid remapping address", vmem.virt);
+		const auto virt_tera_page = (vmem.virt >> 39UL) & 511;
+		const auto virt_giga_page = (vmem.virt >> 30UL) & 511;
+		const auto virt_2mb_page  = (vmem.virt >> 21UL) & 511;
+
+		uint64_t paddr_base = vmem.phys;
+		if (paddr_base == 0x0) {
+			constexpr auto PD_ALIGN_MASK = (1ULL << 21U) - 1;
+			paddr_base = memory.machine.mmap_allocate(vmem.size + PD_ALIGN_MASK);
+			paddr_base = (paddr_base + PD_ALIGN_MASK) & ~PD_ALIGN_MASK;
+		}
+
+		if (pml4[virt_tera_page] == 0) {
+			const auto pdpt_addr = free_page;
+			free_page += 0x1000;
+
+			pml4[virt_tera_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
+		}
+
+		auto  pdpt_addr = pml4[virt_tera_page] & PDE64_ADDR_MASK;
+		auto* pdpt = memory.page_at(pdpt_addr);
+
+		// Allocate the gigapage with 512x 2MB entries
+		if (pdpt[virt_giga_page] == 0) {
+			const auto giga_page = free_page;
+			free_page += 0x1000;
+			pdpt[virt_giga_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | giga_page;
+		}
+
+		auto  pd_addr = pdpt[virt_giga_page] & PDE64_ADDR_MASK;
+		auto* pd = memory.page_at(pd_addr);
+
+		// Create 2MB entries for remapping size
+		const auto n_2mb_pages = (vmem.size >> 21UL) & 511;
+		for (uint64_t i = 0; i < 512; i++)
+		{
+			const auto paddr = paddr_base + (i << 21UL);
+			if (i < n_2mb_pages)
+				pd[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | PDE64_PS | paddr;
+			else
+				pd[i] = 0;
 		}
 	}
 

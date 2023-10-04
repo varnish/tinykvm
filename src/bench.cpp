@@ -543,7 +543,7 @@ void benchmark_multiple_pooled_vms(tinykvm::Machine& master_vm, size_t NUM, size
 		int tid = gettid();
 		thread_local tinykvm::Machine* fvm = nullptr;
 
-		constexpr tinykvm::MachineOptions options {
+		const tinykvm::MachineOptions options {
 			.max_mem = GUEST_MEMORY,
 			.max_cow_mem = GUEST_COW_MEM,
 		};

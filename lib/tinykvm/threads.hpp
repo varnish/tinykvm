@@ -27,6 +27,7 @@ struct Thread {
 struct MultiThreading {
 	Thread& get_thread();
 	Thread* get_thread(int tid); /* or nullptr */
+	int gettid() { return get_thread().tid; }
 
 	Thread& create(int flags, uint64_t ctid, uint64_t ptid,
 		uint64_t stack, uint64_t tls);

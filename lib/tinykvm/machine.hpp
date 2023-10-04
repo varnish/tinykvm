@@ -3,6 +3,7 @@
 #include "memory.hpp"
 #include "memory_bank.hpp"
 #include "mmap_cache.hpp"
+#include "signals.hpp"
 #include "vcpu.hpp"
 #include <array>
 #include <cassert>
@@ -153,14 +154,19 @@ struct Machine
 	const struct SMP& smp() const;
 	struct SMP& smp();
 
+	/* Multi-threading */
 	bool has_threads() const noexcept { return m_mt != nullptr; }
 	const struct MultiThreading& threads() const;
 	struct MultiThreading& threads();
 	static void setup_multithreading();
 
-
+	/* Memory maps */
 	const auto& mmap() const { return m_mm; }
 	auto& mmap() { return m_mm; }
+
+	/* Signal structure, lazily created */
+	Signals& signals();
+	SignalAction& sigaction(int sig) { return signals().get(sig); }
 
 	void set_printer(printer_func pf = m_default_printer) { m_printer = std::move(pf); }
 	void print(const char*, size_t);
@@ -242,6 +248,7 @@ private:
 	mutable std::unique_ptr<MultiThreading> m_mt;
 
 	mutable std::unique_ptr<SMP> m_smp;
+	std::unique_ptr<Signals> m_signals = nullptr;
 
 	Machine* m_remote = nullptr;
 

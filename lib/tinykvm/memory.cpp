@@ -14,6 +14,10 @@
 #endif
 
 namespace tinykvm {
+#define USERMODE_FLAGS (0x7 | 1UL << 63) /* USER, READ/WRITE, PRESENT, NX */
+static constexpr uint64_t PageMask() {
+	return vMemory::PageSize() - 1UL;
+}
 
 vMemory::vMemory(Machine& m, const MachineOptions& options,
 	uint64_t ph, uint64_t sf, char* p, size_t s, bool own)
@@ -100,19 +104,30 @@ uint64_t* vMemory::page_at(uint64_t addr) const
 }
 char* vMemory::safely_at(uint64_t addr, size_t asize)
 {
-	if (safely_within(addr, asize))
-		return &ptr[addr - physbase];
 	/* XXX: Security checks */
 	for (auto& bank : banks) {
 		if (bank.within(addr, asize)) {
 			return bank.at(addr);
 		}
 	}
+
+	if (safely_within(addr, asize))
+		return &ptr[addr - physbase];
 	/* Remote machine always last resort */
 	if (machine.is_remote_connected())
 	{
 		return machine.remote().main_memory().safely_at(addr, asize);
 	}
+
+	/* Slow-path page walk */
+	const auto pagebase = addr & ~PageMask();
+	const auto offset   = addr & PageMask();
+	if (offset + asize <= vMemory::PageSize())
+	{
+		auto* page = this->get_writable_page(pagebase, USERMODE_FLAGS, false);
+		return &page[offset];
+	}
+
 	memory_exception("Memory::safely_at() invalid region", addr, asize);
 }
 const char* vMemory::safely_at(uint64_t addr, size_t asize) const
@@ -130,6 +145,16 @@ const char* vMemory::safely_at(uint64_t addr, size_t asize) const
 	{
 		return machine.remote().main_memory().safely_at(addr, asize);
 	}
+
+	/* Slow-path page walk */
+	const auto pagebase = addr & ~PageMask();
+	const auto offset   = addr & PageMask();
+	if (offset + asize <= vMemory::PageSize())
+	{
+		auto* page = this->get_userpage_at(pagebase);
+		return &page[offset];
+	}
+
 	memory_exception("Memory::safely_at() invalid region", addr, asize);
 }
 std::string_view vMemory::view(uint64_t addr, size_t asize) const {
@@ -245,6 +270,29 @@ char* vMemory::get_userpage_at(uint64_t addr) const
 #else
 #error "Implement me!"
 #endif
+}
+
+bool vMemory::create_mirror_range(uint64_t phys, uint64_t virt, size_t size)
+{
+	foreach_page(*this,
+		[&] (uint64_t addr, uint64_t& entry, size_t page_size)
+		{
+			static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
+			const auto vaddr = entry & PDE64_ADDR_MASK;
+			//printf("Addr: 0x%lX  Phys: 0x%lX\n", vaddr, phys);
+
+			if (addr >= phys && addr < phys + size)
+			{
+				if ((entry & PDE64_PS) == 0)
+					return;
+
+				const uint64_t offset = addr - phys;
+
+				entry &= PDE64_ADDR_MASK;
+				entry |= virt + offset;
+			}
+		});
+	return true;
 }
 
 size_t Machine::banked_memory_pages() const noexcept

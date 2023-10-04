@@ -1,5 +1,7 @@
 #include <tinykvm/machine.hpp>
+#include <tinykvm/threads.hpp>
 #include <cstring>
+#include <signal.h>
 #include <sys/random.h>
 #include <sys/time.h>
 #include <sys/uio.h>
@@ -114,13 +116,12 @@ void setup_kvm_system_calls()
 			} else if (UNLIKELY(int(regs.r8) >= 0)) {
 				// mmap to file fd (*NOT* supported)
 				regs.rax = ~0LL; /* MAP_FAILED */
+			} else if (regs.rdi != 0x0) {
+				regs.rax = regs.rdi;
 			} else {
 				// Round up to nearest power-of-two
 				regs.rsi = (regs.rsi + PageMask) & ~PageMask;
-				if (regs.rdi == 0xC000000000LL) {
-					regs.rax = regs.rdi;
-				}
-				else if constexpr (true) {
+				if constexpr (true) {
 					auto range = cpu.machine().mmap_cache().find(regs.rsi);
 					// Not found in cache, increment MM base address
 					if (range.empty()) {
@@ -188,9 +189,41 @@ void setup_kvm_system_calls()
 		13, [] (auto& cpu) {
 			/* SYS rt_sigaction */
 			auto& regs = cpu.registers();
+			const int sig = regs.rdi;
+
+			/* Silently ignore signal 0 */
+			if (sig == 0) {
+				regs.rax = 0;
+				cpu.set_registers(regs);
+				return;
+			}
+
+			auto& sigact = cpu.machine().sigaction(sig);
+
+			struct kernel_sigaction {
+				uint64_t handler;
+				uint64_t flags;
+				uint64_t mask;
+			} sa {};
+			/* Old action */
+			if (regs.rdx != 0x0) {
+				sa.handler = sigact.handler & ~0xFLL;
+				sa.flags   = (sigact.altstack ? SA_ONSTACK : 0x0);
+				sa.mask    = sigact.mask;
+				cpu.machine().copy_to_guest(regs.rdx, &sa, sizeof(sa));
+			}
+			/* New action */
+			if (regs.rsi != 0x0) {
+				cpu.machine().copy_from_guest(&sa, regs.rsi, sizeof(sa));
+				SYSPRINT("rt_sigaction(action handler=0x%lX  flags=0x%lX  mask=0x%lX)\n",
+					sa.handler, sa.sa_flags, sa.sa_mask);
+				sigact.handler  = sa.handler;
+				sigact.altstack = (sa.flags & SA_ONSTACK) != 0;
+				sigact.mask     = sa.mask;
+			}
 			regs.rax = 0;
 			SYSPRINT("rt_sigaction(signum=%x, act=0x%llX, oldact=0x%llx) = 0x%llX\n",
-				(int) regs.rdi, regs.rsi, regs.rdx, regs.rax);
+				sig, regs.rsi, regs.rdx, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -210,7 +243,7 @@ void setup_kvm_system_calls()
 				cpu.machine().copy_to_guest(regs.rdx, &oldset, sizeof(oldset));
 			}
 
-			regs.rax = -ENOSYS;
+			regs.rax = 0;
 			SYSPRINT("rt_sigprocmask(how=%x, set=0x%llX, oldset=0x%llx, size=%u) = 0x%llX\n",
 					 (int)regs.rdi, regs.rsi, regs.rdx, size, regs.rax);
 			cpu.set_registers(regs);
@@ -219,6 +252,15 @@ void setup_kvm_system_calls()
 		131, [] (auto& cpu) {
 			/* SYS sigaltstack */
 			auto& regs = cpu.registers();
+
+			if (regs.rdi != 0x0) {
+				auto& ss = cpu.machine().signals().per_thread(cpu.machine().threads().gettid()).stack;
+				cpu.machine().copy_from_guest(&ss, regs.rdi, sizeof(ss));
+
+				SYSPRINT("sigaltstack(altstack SP=0x%lX  flags=0x%X  size=0x%lX)\n",
+					ss.sp, ss.flags, ss.size);
+			}
+
 			regs.rax = 0;
 			SYSPRINT("sigaltstack(ss=0x%llX, old_ss=0x%llx) = 0x%llX\n",
 				regs.rdi, regs.rsi, regs.rax);
@@ -287,9 +329,17 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		21, [] (auto& cpu) { // ACCESS
 			auto& regs = cpu.registers();
-			regs.rax = -1;
+			regs.rax = -EPERM;
 			SYSPRINT("access(0x%llX 0x%llX) = %lld\n",
 				regs.rdi, regs.rsi, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		293, [] (auto& cpu) { // PIPE2
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			SYSPRINT("pipe(0x%llX, 0x%X) = %lld\n",
+				regs.rdi, int(regs.rsi), regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -416,6 +466,7 @@ void setup_kvm_system_calls()
 		201, [] (auto& cpu) { // time
 			auto& regs = cpu.registers();
 			regs.rax = time(NULL);
+			SYSPRINT("time(NULL) = %lld\n", regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -431,9 +482,12 @@ void setup_kvm_system_calls()
 			auto& regs = cpu.registers();
 			struct timespec ts;
 			regs.rax = clock_gettime(CLOCK_MONOTONIC, &ts);
-			cpu.machine().copy_to_guest(regs.rsi, &ts, sizeof(ts));
 			if (regs.rax < 0)
 				regs.rax = -errno;
+			else
+				cpu.machine().copy_to_guest(regs.rsi, &ts, sizeof(ts));
+			SYSPRINT("clock_gettime(clk=%lld, buf=0x%llX) = %lld\n",
+				regs.rdi, regs.rsi, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
