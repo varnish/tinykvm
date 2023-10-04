@@ -22,7 +22,10 @@ void Signals::enter(vCPU& cpu, int sig)
 		const int tid = cpu.machine().threads().gettid();
 		// Change to alternate per-thread stack
 		auto& stack = per_thread(tid).stack;
-		regs.rsp = stack.ss_sp + stack.ss_size;
+		// But only if non-zero
+		if (stack.ss_sp != 0x0) {
+			regs.rsp = stack.ss_sp + stack.ss_size;
+		}
 	}
 
 	//cpu.machine().enter_usermode();
