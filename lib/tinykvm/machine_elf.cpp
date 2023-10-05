@@ -21,6 +21,9 @@ void Machine::elf_loader(const MachineOptions& options)
 	if (UNLIKELY(!validate_header(elf))) {
 		throw std::runtime_error("Invalid ELF header! Not a 64-bit program?");
 	}
+	if (UNLIKELY(elf->e_type != ET_EXEC)) {
+		throw std::runtime_error("Invalid ELF type: Not an executable!");
+	}
 
 	// enumerate & load loadable segments
 	const auto program_headers = elf->e_phnum;
