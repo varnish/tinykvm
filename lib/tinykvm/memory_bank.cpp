@@ -99,33 +99,32 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 void MemoryBanks::reset(const MachineOptions& options)
 {
 	/* New maximum pages total in banks. */
-	m_max_pages = options.max_cow_mem / vMemory::PageSize();
+	this->m_max_pages = options.max_cow_mem / vMemory::PageSize();
 
-	/* The limit feature is off when reset_free_work_mem == 0. */
+	/* Free memory belonging to banks after the free limit. */
 	size_t limit_pages = options.reset_free_work_mem / vMemory::PageSize();
-	if (limit_pages > 0)
+	/* Avoid freeing memory from the first bank, which always has 4k pages. */
+	size_t final_banks = std::max(size_t(1u), limit_pages / MemoryBank::N_PAGES);
+
+	if constexpr (MADVISE_NOT_DELETE)
 	{
-		size_t final_banks = std::max(size_t(1u), limit_pages / MemoryBank::N_PAGES);
+		/* Instead of removing the banks, give memory back to kernel */
+		final_banks = std::min(m_mem.size(), final_banks);
+		size_t offset = m_mem.size() - final_banks;
 
-		if constexpr (MADVISE_NOT_DELETE)
-		{
-			/* Instead of removing the banks, give memory back to kernel */
-			final_banks = std::min(m_mem.size(), final_banks);
-			size_t offset = m_mem.size() - final_banks;
-
-			for (size_t i = offset; i < m_mem.size(); i++) {
-				if (m_mem[i].used_size() > 0)
-					madvise(m_mem[i].mem, m_mem[i].used_size(), MADV_FREE);
-				m_mem[i].n_dirty = 0;
-			}
-		} else {
-			/* Erase the last N elements after final_banks */
-			while (final_banks < m_mem.size()) {
-				this->m_idx--;
-				this->m_num_pages -= m_mem.back().n_pages;
-				m_machine.delete_memory(this->m_idx);
-				m_mem.pop_back();
-			}
+		for (size_t i = offset; i < m_mem.size(); i++) {
+			if (m_mem[i].dirty_size() > 0)
+				madvise(m_mem[i].mem, m_mem[i].dirty_size(), MADV_FREE);
+			/* WARNING: MADV_FREE does not immediately free, so we can *not* consider them reclaimed. :( */
+			//m_mem[i].n_dirty = 0;
+		}
+	} else {
+		/* Erase the last N elements after final_banks */
+		while (final_banks < m_mem.size()) {
+			this->m_idx--;
+			this->m_num_pages -= m_mem.back().n_pages;
+			m_machine.delete_memory(this->m_idx);
+			m_mem.pop_back();
 		}
 	}
 
@@ -149,7 +148,7 @@ MemoryBank::Page MemoryBank::get_next_page(size_t pages)
 	const uint64_t offset = vMemory::PageSize() * this->n_used;
 	const bool dirty = this->n_used < this->n_dirty;
 	this->n_used += pages;
-	this->n_dirty += pages;
+	this->n_dirty = std::max(this->n_used, this->n_dirty);
 	return {(uint64_t *)&mem[offset], addr + offset, pages * vMemory::PageSize(), dirty};
 }
 
