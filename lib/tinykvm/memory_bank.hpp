@@ -16,6 +16,7 @@ struct MemoryBank {
 	char*    mem;
 	uint64_t addr;
 	uint16_t       n_used = 0;
+	uint16_t       n_dirty = 0;
 	const uint16_t n_pages;
 	const uint16_t idx;
 	MemoryBanks& banks;
@@ -30,12 +31,14 @@ struct MemoryBank {
 		return &mem[paddr - this->addr];
 	}
 	uint64_t size() const noexcept { return n_pages * 4096; }
+	uint64_t used_size() const noexcept { return n_used * 4096; }
 	bool empty() const noexcept { return n_used == n_pages; }
 	bool room_for(size_t pages) const noexcept { return n_used + pages <= n_pages; }
 	struct Page {
 		uint64_t* pmem;
 		uint64_t  addr;
 		size_t    size;
+		bool      dirty;
 	};
 	Page get_next_page(size_t n_pages);
 

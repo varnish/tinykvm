@@ -505,8 +505,10 @@ static void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& d
 	/* Allocate new page, pass old vaddr to memory banks */
 	auto page = memory.new_page();
 	assert((page.addr & 0x8000000000000FFF) == 0x0);
-	/* Zero all entries from old page */
-	tinykvm::page_memzero(page.pmem);
+	/* Zero all entries from old page, if it's dirty */
+	if (page.dirty) {
+		tinykvm::page_memzero(page.pmem);
+	}
 	/* Set new entry, copy flags and set as cloned */
 	entry = page.addr | (entry & PDE64_CLONED_MASK) | flags;
 	data = page.pmem;
@@ -563,11 +565,13 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 
 						/* We deliberately use DIRTY bit to know when to duplicate memory. */
 						if (dirty) {
+							/* The source page needs to be duplicated, always duplicate */
 							//std::memcpy(page.pmem, data, 2ULL << 20);
 							for (size_t e = 0; e < 512; e++) {
 								tinykvm::page_duplicate(page.pmem + e * 512, data + e * 512);
 							}
-						} else {
+						} else if (page.dirty) {
+							/* The new page needs to be zeroed, because it's dirty */
 							//std::memset(page.pmem, 0, 2ULL << 20); /* 2MB */
 							for (size_t e = 0; e < 512; e++) {
 								tinykvm::page_memzero(page.pmem + e * 512);

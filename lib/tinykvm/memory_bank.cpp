@@ -10,7 +10,7 @@
 
 namespace tinykvm {
 static constexpr bool VERBOSE_MEMORY_BANK = false;
-static constexpr bool MADVISE_NOT_DELETE  = false;
+static constexpr bool MADVISE_NOT_DELETE  = true;
 
 MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	: m_machine { machine },
@@ -98,10 +98,7 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 }
 void MemoryBanks::reset(const MachineOptions& options)
 {
-	/* Reset page usage, but keep banks */
-	for (auto& bank : m_mem) {
-		bank.n_used = 0;
-	}
+	/* New maximum pages total in banks. */
 	m_max_pages = options.max_cow_mem / vMemory::PageSize();
 
 	/* The limit feature is off when reset_free_work_mem == 0. */
@@ -112,11 +109,14 @@ void MemoryBanks::reset(const MachineOptions& options)
 
 		if constexpr (MADVISE_NOT_DELETE)
 		{
+			/* Instead of removing the banks, give memory back to kernel */
 			final_banks = std::min(m_mem.size(), final_banks);
 			size_t offset = m_mem.size() - final_banks;
 
 			for (size_t i = offset; i < m_mem.size(); i++) {
-				madvise(m_mem[i].mem, m_mem[i].size(), MADV_FREE);
+				if (m_mem[i].used_size() > 0)
+					madvise(m_mem[i].mem, m_mem[i].used_size(), MADV_FREE);
+				m_mem[i].n_dirty = 0;
 			}
 		} else {
 			/* Erase the last N elements after final_banks */
@@ -127,6 +127,11 @@ void MemoryBanks::reset(const MachineOptions& options)
 				m_mem.pop_back();
 			}
 		}
+	}
+
+	/* Reset page usage for remaining banks */
+	for (auto& bank : m_mem) {
+		bank.n_used = 0;
 	}
 }
 
@@ -140,10 +145,12 @@ MemoryBank::~MemoryBank()
 
 MemoryBank::Page MemoryBank::get_next_page(size_t pages)
 {
-	assert(n_used + pages <= n_pages);
-	uint64_t offset = vMemory::PageSize() * n_used;
-	n_used += pages;
-	return {(uint64_t *)&mem[offset], addr + offset, pages * vMemory::PageSize()};
+	assert(this->n_used + pages <= this->n_pages);
+	const uint64_t offset = vMemory::PageSize() * this->n_used;
+	const bool dirty = this->n_used < this->n_dirty;
+	this->n_used += pages;
+	this->n_dirty += pages;
+	return {(uint64_t *)&mem[offset], addr + offset, pages * vMemory::PageSize(), dirty};
 }
 
 VirtualMem MemoryBank::to_vmem() const noexcept
