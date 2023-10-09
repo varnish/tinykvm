@@ -109,10 +109,7 @@ void MemoryBanks::reset(const MachineOptions& options)
 	if constexpr (MADVISE_NOT_DELETE)
 	{
 		/* Instead of removing the banks, give memory back to kernel */
-		final_banks = std::min(m_mem.size(), final_banks);
-		size_t offset = m_mem.size() - final_banks;
-
-		for (size_t i = offset; i < m_mem.size(); i++) {
+		for (size_t i = final_banks; i < m_mem.size(); i++) {
 			if (m_mem[i].dirty_size() > 0)
 				madvise(m_mem[i].mem, m_mem[i].dirty_size(), MADV_FREE);
 			/* WARNING: MADV_FREE does not immediately free, so we can *not* consider them reclaimed. :( */
