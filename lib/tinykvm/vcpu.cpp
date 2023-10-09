@@ -25,14 +25,6 @@ extern "C" void tinykvm_timer_signal_handler(int);
 #endif
 #define gettid() ((pid_t)syscall(SYS_gettid))
 
-// XXX: Hacky, but works. Considered ABI?
-static inline int gettid_fast()
-{
-    int result;
-    asm("mov %%fs:0x2D0, %0\n" : "=r" (result));
-    return result;
-}
-
 struct ksigevent
 {
 	union sigval sigev_value;
@@ -72,7 +64,7 @@ void* Machine::create_vcpu_timer()
 	struct ksigevent sigev {};
 	sigev.sigev_notify = SIGEV_SIGNAL | SIGEV_THREAD_ID;
 	sigev.sigev_signo = SIGUSR2;
-	sigev.sigev_tid = gettid_fast();
+	sigev.sigev_tid = gettid();
 
 	timer_t timer_id;
 	if (timer_create(CLOCK_MONOTONIC, (struct sigevent *)&sigev, &timer_id) < 0)
