@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include "page_streaming.hpp"
 #include "amd64/amd64.hpp"
 #include "amd64/idt.hpp"
@@ -15,10 +16,22 @@
 #include "amd64/paging.hpp"
 #include "amd64/memory_layout.hpp"
 #include "amd64/usercode.hpp"
-extern "C" int gettid();
 extern "C" int close(int);
 extern "C" void tinykvm_timer_signal_handler(int);
 #define TINYKVM_USE_SYNCED_SREGS 1
+
+#ifndef SYS_gettid
+#error "SYS_gettid unavailable on this system"
+#endif
+#define gettid() ((pid_t)syscall(SYS_gettid))
+
+// XXX: Hacky, but works. Considered ABI?
+static inline int gettid_fast()
+{
+    int result;
+    asm("mov %%fs:0x2D0, %0\n" : "=r" (result));
+    return result;
+}
 
 struct ksigevent
 {
@@ -59,7 +72,7 @@ void* Machine::create_vcpu_timer()
 	struct ksigevent sigev {};
 	sigev.sigev_notify = SIGEV_SIGNAL | SIGEV_THREAD_ID;
 	sigev.sigev_signo = SIGUSR2;
-	sigev.sigev_tid = gettid();
+	sigev.sigev_tid = gettid_fast();
 
 	timer_t timer_id;
 	if (timer_create(CLOCK_MONOTONIC, (struct sigevent *)&sigev, &timer_id) < 0)
