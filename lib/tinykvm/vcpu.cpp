@@ -1,5 +1,6 @@
 #include "machine.hpp"
 
+#define _GNU_SOURCE 1
 #include <cassert>
 #include <cstring>
 #include <linux/kvm.h>
@@ -7,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 #include "page_streaming.hpp"
 #include "amd64/amd64.hpp"
 #include "amd64/idt.hpp"
