@@ -3,22 +3,23 @@
 #include <atomic>
 #include <cassert>
 #include <condition_variable>
-#include <functional>
 #include <future>
 #include <mutex>
 #include <queue>
 #include <stdexcept>
 #include <thread>
+#include "function.hpp"
 
 namespace tinykvm {
 
 /**
  * Task queue for single thread
 */
+template <typename Function = std::function<long()>>
 class ThreadTask {
 public:
 	explicit ThreadTask(int nice, bool low_prio);
-	auto enqueue(std::function<long()>) -> std::future<long>;
+	auto enqueue(Function&&) -> std::future<long>;
 	void wait_until_empty();
 	void wait_until_nothing_in_flight();
 	void set_nice(int nice) { m_nice = nice; }
@@ -75,7 +76,8 @@ private:
 };
 
 // the constructor just launches some amount of workers
-inline ThreadTask::ThreadTask(int nice, bool low_prio)
+template <typename Function>
+inline ThreadTask<Function>::ThreadTask(int nice, bool low_prio)
 	: m_prio_low { low_prio },
 	  m_nice { nice },
 	  in_flight(0)
@@ -85,7 +87,8 @@ inline ThreadTask::ThreadTask(int nice, bool low_prio)
 }
 
 // add new work item to the pool
-inline auto ThreadTask::enqueue(std::function<long()> func) -> std::future<long>
+template <typename Function>
+inline auto ThreadTask<Function>::enqueue(Function&& func) -> std::future<long>
 {
 	auto task = std::packaged_task<long()>(std::move(func));
 	std::future<long> res = task.get_future();
@@ -106,7 +109,8 @@ inline auto ThreadTask::enqueue(std::function<long()> func) -> std::future<long>
 
 
 // the destructor joins all threads
-inline ThreadTask::~ThreadTask()
+template <typename Function>
+inline ThreadTask<Function>::~ThreadTask()
 {
 	std::unique_lock<std::mutex> lock(queue_mutex);
 	m_stop = true;
@@ -117,21 +121,24 @@ inline ThreadTask::~ThreadTask()
 	assert(in_flight == 0);
 }
 
-inline void ThreadTask::wait_until_empty()
+template <typename Function>
+inline void ThreadTask<Function>::wait_until_empty()
 {
 	std::unique_lock<std::mutex> lock(this->queue_mutex);
 	this->condition_producers.wait(lock,
 		[this]{ return this->tasks.empty(); });
 }
 
-inline void ThreadTask::wait_until_nothing_in_flight()
+template <typename Function>
+inline void ThreadTask<Function>::wait_until_nothing_in_flight()
 {
 	std::unique_lock<std::mutex> lock(this->in_flight_mutex);
 	this->in_flight_condition.wait(lock,
 		[this]{ return this->in_flight == 0; });
 }
 
-inline void ThreadTask::start_worker(
+template <typename Function>
+inline void ThreadTask<Function>::start_worker(
 	std::unique_lock<std::mutex> const &lock)
 {
 	assert(lock.owns_lock() && lock.mutex() == &this->queue_mutex);
