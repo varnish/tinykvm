@@ -143,7 +143,8 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 	if (other.has_threads() && has_threads()) {
 		this->m_mt->reset_to(*other.m_mt);
 	} else if (other.has_threads()) {
-		this->m_mt.reset(new MultiThreading{*other.m_mt});
+		this->m_mt.reset(new MultiThreading{*this});
+		this->m_mt->reset_to(*other.m_mt);
 	} else {
 		m_mt = nullptr;
 	}

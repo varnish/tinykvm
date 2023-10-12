@@ -88,6 +88,9 @@ MultiThreading::MultiThreading(Machine& m)
 
 void MultiThreading::reset_to(const MultiThreading& other)
 {
+	m_threads.clear();
+	m_suspended.clear();
+
 	/* Copy each thread, new MT ref */
 	for (const auto& it : other.m_threads) {
 		const int tid = it.first;
@@ -95,11 +98,10 @@ void MultiThreading::reset_to(const MultiThreading& other)
 		m_threads.try_emplace(tid, *this, thread);
 	}
 	/* Copy each suspended by pointer lookup */
-	m_suspended.reserve(other.m_suspended.size());
 	for (const auto* t : other.m_suspended) {
 		m_suspended.push_back(get_thread(t->tid));
 	}
-	/* Copy current thread */
+	/* Translate current thread */
 	m_current = get_thread(other.m_current->tid);
 
 	thread_counter = other.thread_counter;
