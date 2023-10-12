@@ -92,7 +92,8 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	/* We have to make a copy here, to make sure the fork knows
 	   about the multi-threading state. */
 	if (other.m_mt != nullptr) {
-		m_mt.reset(new MultiThreading{*other.m_mt});
+		m_mt.reset(new MultiThreading{*this});
+		m_mt->reset_to(*other.m_mt);
 	}
 }
 
