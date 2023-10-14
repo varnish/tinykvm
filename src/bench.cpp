@@ -9,12 +9,13 @@
 
 #include <tinykvm/rsp_client.hpp>
 
-#define NUM_GUESTS   300
+#define NUM_GUESTS   100
 #define NUM_RESETS   40000
 #define GUEST_MEMORY  0x40000000  /* 1024MB memory */
 #define GUEST_COW_MEM 65536  /* 64KB memory */
 static constexpr size_t BENCH_SAMPLES = 100u;
 static constexpr bool   BENCH_BASICS  = false;
+static constexpr bool   BENCH_STARTUP = false;
 static constexpr bool   FULL_RESET    = true;
 
 inline timespec time_now();
@@ -195,71 +196,74 @@ int main(int argc, char** argv)
 		} // BENCH_BASICS
 	}
 
-	asm("" : : : "memory");
-	auto t0 = time_now();
-	asm("" : : : "memory");
-
-	for (unsigned i = 0; i < NUM_GUESTS; i++)
+	if constexpr (BENCH_STARTUP)
 	{
-		tinykvm::MachineOptions options {
-			.max_mem = GUEST_MEMORY,
-			.max_cow_mem = GUEST_COW_MEM,
-			.verbose_loader = false,
-			.short_lived = true,
-		};
-		vms.push_back(new tinykvm::Machine {binary, options});
-		auto& vm = *vms.back();
-		vm.setup_linux(
-			{"kvmtest", "Hello World!\n"},
-			{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+		asm("" : : : "memory");
+		auto t0 = time_now();
+		asm("" : : : "memory");
+
+		for (unsigned i = 0; i < NUM_GUESTS; i++)
+		{
+			tinykvm::MachineOptions options {
+				.max_mem = GUEST_MEMORY,
+				.max_cow_mem = GUEST_COW_MEM,
+				.verbose_loader = false,
+				.short_lived = true,
+			};
+			vms.push_back(new tinykvm::Machine {binary, options});
+			auto& vm = *vms.back();
+			vm.setup_linux(
+				{"kvmtest", "Hello World!\n"},
+				{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+		}
+
+		asm("" : : : "memory");
+		auto t1 = time_now();
+		asm("" : : : "memory");
+
+		for (auto* vm : vms)
+		{
+			vm->set_printer(
+				[] (const char*, size_t) {
+				});
+
+			/* Normal execution of _start -> main() */
+			vm->run();
+
+			vm->set_printer();
+		}
+
+		asm("" : : : "memory");
+		auto t2 = time_now();
+		asm("" : : : "memory");
+
+		for (auto* vm : vms)
+		{
+			/* One function call into the VM */
+			vm->vmcall(vmcall_address);
+		}
+
+		asm("" : : : "memory");
+		auto t3 = time_now();
+		asm("" : : : "memory");
+
+		for (auto* vm : vms) {
+			delete vm;
+		}
+
+		asm("" : : : "memory");
+		auto t4 = time_now();
+		asm("" : : : "memory");
+
+		auto nanos_per_gc = nanodiff(t0, t1) / NUM_GUESTS;
+		auto nanos_per_gr = nanodiff(t1, t2) / NUM_GUESTS;
+		auto nanos_per_call = nanodiff(t2, t3) / NUM_GUESTS;
+		auto nanos_per_gd = nanodiff(t3, t4) / NUM_GUESTS;
+		printf("Construct: %ldns (%ld micros)\n", nanos_per_gc, nanos_per_gc / 1000);
+		printf("Runtime: %ldns (%ld micros)\n", nanos_per_gr, nanos_per_gr / 1000);
+		printf("vmcall(test): %ldns (%ld micros)\n", nanos_per_call, nanos_per_call / 1000);
+		printf("Destruct: %ldns (%ld micros)\n", nanos_per_gd, nanos_per_gd / 1000);
 	}
-
-	asm("" : : : "memory");
-	auto t1 = time_now();
-	asm("" : : : "memory");
-
-	for (auto* vm : vms)
-	{
-		vm->set_printer(
-			[] (const char*, size_t) {
-			});
-
-		/* Normal execution of _start -> main() */
-		vm->run();
-
-		vm->set_printer();
-	}
-
-	asm("" : : : "memory");
-	auto t2 = time_now();
-	asm("" : : : "memory");
-
-	for (auto* vm : vms)
-	{
-		/* One function call into the VM */
-		vm->vmcall(vmcall_address);
-	}
-
-	asm("" : : : "memory");
-	auto t3 = time_now();
-	asm("" : : : "memory");
-
-	for (auto* vm : vms) {
-		delete vm;
-	}
-
-	asm("" : : : "memory");
-	auto t4 = time_now();
-	asm("" : : : "memory");
-
-	auto nanos_per_gc = nanodiff(t0, t1) / NUM_GUESTS;
-	auto nanos_per_gr = nanodiff(t1, t2) / NUM_GUESTS;
-	auto nanos_per_call = nanodiff(t2, t3) / NUM_GUESTS;
-	auto nanos_per_gd = nanodiff(t3, t4) / NUM_GUESTS;
-	printf("Construct: %ldns (%ld micros)\n", nanos_per_gc, nanos_per_gc / 1000);
-	printf("Runtime: %ldns (%ld micros)\n", nanos_per_gr, nanos_per_gr / 1000);
-	printf("vmcall(test): %ldns (%ld micros)\n", nanos_per_call, nanos_per_call / 1000);
-	printf("Destruct: %ldns (%ld micros)\n", nanos_per_gd, nanos_per_gd / 1000);
 
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
@@ -302,6 +306,10 @@ int main(int argc, char** argv)
 		forktime += nanodiff(ft1, ft2);
 	}
 	tinykvm::Machine cvm {master_vm, options};
+	for (unsigned i = 0; i < NUM_GUESTS; i++)
+	{
+		cvm.vmcall(vmcall_address);
+	}
 	for (unsigned i = 0; i < NUM_GUESTS; i++)
 	{
 		asm("" : : : "memory");
