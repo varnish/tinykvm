@@ -1,3 +1,4 @@
+set debuginfod enabled on
 file musl
 layout next
 layout next

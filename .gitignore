@@ -5,6 +5,7 @@ guest/interrupts
 guest/guest.elf
 guest/musl/musl
 guest/musl/glibc
+guest/musl/simple
 guest/glibc/glibc
 guest/glibc/float
 guest/go/go

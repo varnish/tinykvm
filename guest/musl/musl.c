@@ -13,10 +13,7 @@ void test_ud2()
 
 int main(int argc, char** argv)
 {
-	char* test = (char *)malloc(14);
-	strcpy(test, argv[1]);
-	printf("%.*s\n", 13, test);
-	free(test);
+	printf("Hello musl World!\n");
 
 	static const int N = 1000000;
 	char prime[N];
@@ -30,7 +27,7 @@ int main(int argc, char** argv)
 		}
 	}
 
-	//test_threads();
+	test_threads();
 	//test_ud2();
 	return 0;
 }
@@ -72,11 +69,12 @@ void bench_vmexits(int count)
 
 static void* thread_function1(void* data)
 {
-/*	printf("Inside thread function1, x = %d\n", *(int*) data);
-	thread_local int test = 2021;
+	printf("Inside thread function1, x = %d\n", *(int*) data);
+	static __thread int test = 2021;
 	printf("test @ %p, test = %d\n", &test, test);
-	assert(test == 2021);*/
-	return NULL;
+	assert(test == 2021);
+	fflush(stdout);
+	pthread_exit(NULL);
 }
 static void* thread_function2(void* data)
 {
@@ -104,7 +102,6 @@ void test_threads()
 		printf("Failed to create thread!\n");
 		return;
 	}
-	return;
 	pthread_join(t1, NULL);
 
 	res = pthread_create(&t2, NULL, thread_function2, &x);
