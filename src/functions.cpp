@@ -118,6 +118,8 @@ void setup_kvm_system_calls()
 				regs.rax = ~0LL; /* MAP_FAILED */
 			} else if (regs.rdi != 0x0 && cpu.machine().allow_fixed_mmap()) {
 				regs.rax = regs.rdi;
+			} else if (regs.rdi != 0x0 && regs.rdi >= cpu.machine().heap_address() && regs.rdi < cpu.machine().mmap_start()) {
+				regs.rax = regs.rdi;
 			} else {
 				// Round up to nearest power-of-two
 				regs.rsi = (regs.rsi + PageMask) & ~PageMask;
@@ -506,6 +508,7 @@ void setup_kvm_system_calls()
 			/* SYS set_robust_list */
 			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
+			SYSPRINT("set_robust_list(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -542,7 +545,6 @@ void setup_kvm_system_calls()
 			} lim;
 			const auto oldptr = regs.rdx;
 
-			SYSPRINT("prlimit64(res=%lld old=0x%llX) = 0\n", regs.rsi, oldptr);
 			switch (regs.rsi) {
 			case 0: // RLIMIT_CPU
 				regs.rax = -ENOSYS;
@@ -559,6 +561,7 @@ void setup_kvm_system_calls()
 			default:
 				regs.rax = -ENOSYS;
 			}
+			SYSPRINT("prlimit64(res=%lld old=0x%llX) = %lld\n", regs.rsi, oldptr, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
