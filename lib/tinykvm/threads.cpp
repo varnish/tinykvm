@@ -188,13 +188,13 @@ struct MultiThreading& Machine::threads() {
 void Machine::setup_multithreading()
 {
 	Machine::install_syscall_handler(
-		24, [] (auto& cpu) { // sched_yield
+		24, [] (vCPU& cpu) { // sched_yield
 			THPRINT("sched_yield on tid=%d\n",
 				cpu.machine().threads().get_thread().tid);
 			cpu.machine().threads().suspend_and_yield();
 		});
 	Machine::install_syscall_handler(
-		56, [] (auto& cpu) { // clone
+		56, [] (vCPU& cpu) { // clone
 			auto& regs = cpu.registers();
 			const auto flags = regs.rdi;
 			const auto stack = regs.rsi;
@@ -216,11 +216,8 @@ void Machine::setup_multithreading()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		435, [] (auto& cpu) { // clone3
+		435, [] (vCPU& cpu) { // clone3
 			auto& regs = cpu.registers();
-			regs.rax = -ENOSYS;
-			cpu.set_registers(regs);
-			return;
 
 			struct clone3_args {
 				uint64_t flags;
@@ -231,24 +228,33 @@ void Machine::setup_multithreading()
 				uint64_t stack;
 				uint64_t stack_size;
 				uint64_t tls;
-				uint64_t set_tid;
-				uint64_t set_tid_size;
+				uint64_t set_tid_array;
+				uint64_t set_tid_count;
 				uint64_t cgroup;
-			};
-			clone3_args args;
+			} args;
+			if (regs.rsi < sizeof(clone3_args)) {
+				regs.rax = -ENOSPC;
+				return;
+			}
 			cpu.machine().copy_from_guest(&args, regs.rdi, sizeof(clone3_args));
+
 			const auto flags = args.flags;
-			const auto stack = args.stack;
+			const auto stack = args.stack + args.stack_size;
 			const auto ptid  = args.parent_tid;
 			const auto ctid  = args.child_tid;
 			const auto tls   = args.tls;
 
-			auto& parent = cpu.machine().threads().get_thread();
-			auto& thread = cpu.machine().threads().create(flags, ctid, ptid, stack, tls);
-			THPRINT(">>> clone(stack=0x%llX, flags=%llX,"
+			Thread& parent = cpu.machine().threads().get_thread();
+			Thread& thread = cpu.machine().threads().create(flags, ctid, ptid, stack, tls);
+			THPRINT(">>> clone3(stack=0x%llX, flags=%llX,"
 					" parent=%d, ctid=0x%llX ptid=0x%llX, tls=0x%llX) = %d\n",
 					stack, flags, parent.tid, ctid, ptid, tls, thread.tid);
-			thread.clear_tid = args.set_tid;
+			if (args.set_tid_count > 0) {
+				uint64_t set_tid = 0;
+				cpu.machine().copy_from_guest(&set_tid, args.set_tid_array, sizeof(set_tid));
+				thread.clear_tid = set_tid;
+			}
+
 			// store return value for parent: child TID
 			parent.suspend(thread.tid);
 			// activate and return 0 for the child
@@ -257,7 +263,7 @@ void Machine::setup_multithreading()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler( // exit
-		60, [] (auto& cpu) {
+		60, [] (vCPU& cpu) {
 			if (cpu.machine().has_threads()) {
 				auto& regs = cpu.registers();
 				[[maybe_unused]] const uint32_t status = regs.rdi;
@@ -274,7 +280,7 @@ void Machine::setup_multithreading()
 	Machine::install_syscall_handler( // exit_group
 		231, Machine::get_syscall_handler(60));
 	Machine::install_syscall_handler(
-		186, [] (auto& cpu) {
+		186, [] (vCPU& cpu) {
 			/* SYS gettid */
 			auto& regs = cpu.registers();
 			if (cpu.machine().has_threads()) {
@@ -286,7 +292,7 @@ void Machine::setup_multithreading()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		202, [] (auto& cpu) {
+		202, [] (vCPU& cpu) {
 			/* SYS futex */
 			auto& regs = cpu.registers();
 			const auto addr = regs.rdi;
@@ -320,7 +326,7 @@ void Machine::setup_multithreading()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		218, [] (auto& cpu) {
+		218, [] (vCPU& cpu) {
 			/* SYS set_tid_address */
 			auto& regs = cpu.registers();
 #ifdef ENABLE_GUEST_VERBOSE
@@ -333,7 +339,7 @@ void Machine::setup_multithreading()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		234, [] (auto& cpu) { // TGKILL
+		234, [] (vCPU& cpu) { // TGKILL
 			auto& regs = cpu.registers();
 			int tid = 0;
 			if (cpu.machine().has_threads()) {
