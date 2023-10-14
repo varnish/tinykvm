@@ -470,9 +470,6 @@ void Machine::enter_usermode()
 Machine::address_t Machine::entry_address() const noexcept {
 	return usercode_header().translated_vm_entry(memory);
 }
-Machine::address_t Machine::reentry_address() const noexcept {
-	return usercode_header().translated_vm_userentry(memory);
-}
 Machine::address_t Machine::exit_address() const noexcept {
 	return usercode_header().translated_vm_rexit(memory);
 }

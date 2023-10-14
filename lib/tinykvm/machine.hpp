@@ -132,7 +132,6 @@ struct Machine
 	address_t stack_address() const noexcept { return this->m_stack_address; }
 	address_t heap_address() const noexcept { return this->m_heap_address; }
 	address_t entry_address() const noexcept;
-	address_t reentry_address() const noexcept;
 	address_t exit_address() const noexcept;
 	void set_stack_address(address_t addr) { this->m_stack_address = addr; }
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
