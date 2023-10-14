@@ -232,15 +232,19 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	{
 		if (vmem.virt <= free_page)
 			throw MachineException("Invalid remapping address", vmem.virt);
+		if (vmem.size % vMemory::PageSize() != 0)
+			throw MachineException("Invalid remapping size", vmem.size);
 		const auto virt_tera_page = (vmem.virt >> 39UL) & 511;
 		const auto virt_giga_page = (vmem.virt >> 30UL) & 511;
-		const auto virt_2mb_page  = (vmem.virt >> 21UL) & 511;
 
 		uint64_t paddr_base = vmem.phys;
 		if (paddr_base == 0x0) {
 			constexpr auto PD_ALIGN_MASK = (1ULL << 21U) - 1;
+			// Over-allocate rounding up to nearest 2MB
 			paddr_base = memory.machine.mmap_allocate(vmem.size + PD_ALIGN_MASK);
 			paddr_base = (paddr_base + PD_ALIGN_MASK) & ~PD_ALIGN_MASK;
+			// Relax allocation down to size
+			memory.machine.mmap() = paddr_base + vmem.size;
 		}
 
 		if (pml4[virt_tera_page] == 0) {
