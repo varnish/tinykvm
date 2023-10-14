@@ -432,6 +432,7 @@ void benchmark_alternate_tenant_resets(tinykvm::Machine& master_vm, const size_t
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_COW_MEM,
+		.allow_reset_to_new_master = true,
 	};
 
 	// Forked VM that can be reset to any other VM
