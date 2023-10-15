@@ -117,10 +117,18 @@ long vCPU::run_once()
 		sregs.cr3 != machine().memory.page_tables
 		|| sregs.gdt.base != memory.physbase + GDT_ADDR
 		|| sregs.idt.base != memory.physbase + IDT_ADDR
-		// Doesn't work on other vCPUs: || sregs.tr.base != TSS_ADDR
+		|| (this->cpu_id == 0 && sregs.tr.base != memory.physbase + TSS_ADDR)
 		)) {
 		this->print_registers();
-		Machine::machine_exception("Kernel integrity loss detected");
+		if (sregs.cr3 != machine().memory.page_tables)
+			Machine::machine_exception("Kernel integrity loss detected: Page tables are wrong", sregs.cr3);
+		if (sregs.gdt.base != memory.physbase + GDT_ADDR)
+			Machine::machine_exception("Kernel integrity loss detected: GDT base address is wrong", sregs.gdt.base);
+		if (sregs.idt.base != memory.physbase + IDT_ADDR)
+			Machine::machine_exception("Kernel integrity loss detected: IDT base address is wrong", sregs.idt.base);
+		if (sregs.tr.base != memory.physbase + TSS_ADDR)
+			Machine::machine_exception("Kernel integrity loss detected: TSS base address is wrong", sregs.tr.base);
+		Machine::machine_exception("Kernel integrity loss detected: Unhandled integrity check");
 	}
 
 	// Handle the KVM guest exit reason

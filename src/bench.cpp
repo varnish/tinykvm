@@ -487,6 +487,7 @@ void benchmark_multiple_vms(tinykvm::Machine& master_vm, size_t NUM, size_t RESE
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_COW_MEM,
+		.reset_free_work_mem = 128UL * 1024 * 1024,
 	};
 
 	tinykvm::Machine* fvm =
@@ -555,6 +556,7 @@ void benchmark_multiple_pooled_vms(tinykvm::Machine& master_vm, size_t NUM, size
 		const tinykvm::MachineOptions options {
 			.max_mem = GUEST_MEMORY,
 			.max_cow_mem = GUEST_COW_MEM,
+			.reset_free_work_mem = 128UL * 1024 * 1024,
 		};
 
 		if (fvm == nullptr) {
