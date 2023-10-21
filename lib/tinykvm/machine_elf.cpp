@@ -10,7 +10,7 @@
 
 namespace tinykvm {
 static constexpr bool VERBOSE_LOADER = false;
-static const int MAX_LOADABLE_SEGMENTS = 8;
+static constexpr int MAX_LOADABLE_SEGMENTS = 8;
 
 void Machine::elf_loader(const MachineOptions& options)
 {
@@ -90,9 +90,9 @@ void Machine::elf_loader(const MachineOptions& options)
 	this->m_mm = this->mmap_start();
 
 	/* If there is not enough room for stack, move it */
-	static constexpr size_t ALTSTACK_SIZE = 0x200000;
-	if (this->m_stack_address < ALTSTACK_SIZE) {
-		this->m_stack_address = this->mmap_allocate(ALTSTACK_SIZE) + ALTSTACK_SIZE;
+	const uint32_t STACK_SIZE = options.stack_size & ~0xFFFLL;
+	if (this->m_stack_address < STACK_SIZE) {
+		this->m_stack_address = this->mmap_allocate(STACK_SIZE) + STACK_SIZE;
 	}
 
 	//this->relocate_section(".rela.plt", ".symtab");

@@ -30,6 +30,7 @@ namespace tinykvm
 	struct MachineOptions {
 		uint64_t max_mem = 16ULL << 20; /* 16MB */
 		uint32_t max_cow_mem = 0;
+		uint32_t stack_size = 2UL << 20; /* 2MB */
 		uint32_t reset_free_work_mem = 0; /* reset_to() */
 		uint64_t vmem_base_address = 0;
 		std::string_view binary = {};
