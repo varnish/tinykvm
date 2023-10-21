@@ -12,12 +12,12 @@ namespace tinykvm {
 static constexpr bool VERBOSE_LOADER = false;
 static constexpr int MAX_LOADABLE_SEGMENTS = 8;
 
-void Machine::elf_loader(const MachineOptions& options)
+void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 {
-	if (UNLIKELY(m_binary.size() < sizeof(Elf64_Ehdr))) {
+	if (UNLIKELY(binary.size() < sizeof(Elf64_Ehdr))) {
 		throw MachineException("ELF binary too short");
 	}
-	const auto* elf = (Elf64_Ehdr*) m_binary.data();
+	const auto* elf = (Elf64_Ehdr*) binary.data();
 	if (UNLIKELY(!validate_header(elf))) {
 		throw MachineException("Invalid ELF header! Not a 64-bit program?");
 	}
@@ -33,11 +33,14 @@ void Machine::elf_loader(const MachineOptions& options)
 	if (UNLIKELY(program_headers >= 16)) {
 		throw MachineException("ELF with too many program-headers. Dynamic?");
 	}
-	if (UNLIKELY(elf->e_phoff + program_headers * sizeof(Elf64_Phdr) > m_binary.size())) {
+	if (UNLIKELY(elf->e_phoff + program_headers * sizeof(Elf64_Phdr) > binary.size())) {
 		throw MachineException("ELF program-headers are outside the binary");
 	}
 
-	const auto* phdr = (Elf64_Phdr*) (m_binary.data() + elf->e_phoff);
+	/* Any old binary no longer relevant, just set new one. */
+	this->m_binary = binary;
+
+	const auto* phdr = (Elf64_Phdr*) (binary.data() + elf->e_phoff);
 	const auto program_begin = phdr->p_vaddr;
 	this->m_start_address = elf->e_entry;
 	this->m_stack_address = program_begin;
@@ -69,7 +72,7 @@ void Machine::elf_loader(const MachineOptions& options)
 				if (seg > MAX_LOADABLE_SEGMENTS)
 					throw MachineException("Too many loadable segments");
 				// loadable program segments
-				this->elf_load_ph(options, hdr);
+				this->elf_load_ph(binary, options, hdr);
 				break;
 			case PT_GNU_STACK:
 				//printf("GNU_STACK: 0x%lX\n", hdr->p_vaddr);
@@ -103,7 +106,7 @@ void Machine::elf_loader(const MachineOptions& options)
 	}
 }
 
-void Machine::elf_load_ph(const MachineOptions& options, const void* vphdr)
+void Machine::elf_load_ph(std::string_view binary, const MachineOptions& options, const void* vphdr)
 {
 	const auto* hdr = (const Elf64_Phdr*) vphdr;
 

@@ -30,7 +30,6 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	: m_forked {false},
 	  m_just_reset {false},
 	  m_allow_fixed_mmap {options.allow_fixed_mmap},
-	  m_binary {binary},
 	  memory { vMemory::New(*this, options,
 	  	options.vmem_base_address, options.vmem_base_address + 0x100000, options.max_mem)
 	  },
@@ -43,7 +42,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	install_memory(0, memory.vmem(), false);
 
 	if (!binary.empty()) {
-		this->elf_loader(options);
+		this->elf_loader(binary, options);
 	}
 
 	this->vcpu.init(0, *this);
@@ -111,9 +110,11 @@ void Machine::reset_to(std::string_view binary, const MachineOptions& options)
 	if (UNLIKELY(this->is_forked() || this->is_forkable())) {
 		throw MachineException("Machine is forked or forkable, cannot be reset");
 	}
-	this->m_binary = binary;
+	this->m_mmap_cache = {};
+	this->m_mt.reset(nullptr);
+	this->m_signals.reset(nullptr);
 
-	this->elf_loader(options);
+	this->elf_loader(binary, options);
 
 	this->vcpu.init(0, *this);
 	this->setup_long_mode(options);

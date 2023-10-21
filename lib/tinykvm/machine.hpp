@@ -218,8 +218,8 @@ private:
 	void setup_registers(tinykvm_x86regs &);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
-	void elf_loader(const MachineOptions&);
-	void elf_load_ph(const MachineOptions&, const void*);
+	void elf_loader(std::string_view binary, const MachineOptions&);
+	void elf_load_ph(std::string_view binary, const MachineOptions&, const void*);
 	void relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const MachineOptions&);
 	void setup_cow_mode(const Machine*); // After prepare_copy_on_write and forking

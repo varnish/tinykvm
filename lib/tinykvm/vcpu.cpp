@@ -68,7 +68,7 @@ void* Machine::create_vcpu_timer()
 	sigev.sigev_signo = SIGUSR2;
 	sigev.sigev_tid = gettid();
 
-	timer_t timer_id;
+	timer_t timer_id {};
 	if (timer_create(CLOCK_MONOTONIC, (struct sigevent *)&sigev, &timer_id) < 0)
 		throw MachineException("Unable to create timeout timer");
 	return timer_id;
