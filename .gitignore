@@ -1,5 +1,6 @@
 **/build_*
 **/build
+**/.build
 .vscode/
 guest/interrupts
 guest/guest.elf
@@ -15,3 +16,5 @@ guest/tests/musl_test
 guest/tests/cxx_test
 guest/mini/mini.o
 guest/mini/mini
+
+crash-*
