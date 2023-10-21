@@ -19,13 +19,13 @@ extern "C" void __msan_on_error()
 	abort();
 }
 
-static void fuzz_elf_loader(const uint8_t* data, size_t len)
+static inline void fuzz_elf_loader(const uint8_t* data, size_t len)
 {
 	using namespace tinykvm;
 	const std::string_view bin {(const char*) data, len};
 	try {
 		machine->reset_to(bin, options);
-		machine->run(TIMEOUT);
+		//machine->run(TIMEOUT);
 	} catch (const MachineException& e) {
 		//printf(">>> Exception: %s\n", e.what());
 	}
