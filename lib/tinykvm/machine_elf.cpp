@@ -15,26 +15,26 @@ static const int MAX_LOADABLE_SEGMENTS = 8;
 void Machine::elf_loader(const MachineOptions& options)
 {
 	if (UNLIKELY(m_binary.size() < sizeof(Elf64_Ehdr))) {
-		throw std::runtime_error("ELF binary too short");
+		throw MachineException("ELF binary too short");
 	}
 	const auto* elf = (Elf64_Ehdr*) m_binary.data();
 	if (UNLIKELY(!validate_header(elf))) {
-		throw std::runtime_error("Invalid ELF header! Not a 64-bit program?");
+		throw MachineException("Invalid ELF header! Not a 64-bit program?");
 	}
 	if (UNLIKELY(elf->e_type != ET_EXEC)) {
-		throw std::runtime_error("Invalid ELF type: Not an executable!");
+		throw MachineException("Invalid ELF type: Not an executable!");
 	}
 
 	// enumerate & load loadable segments
 	const auto program_headers = elf->e_phnum;
 	if (UNLIKELY(program_headers <= 0)) {
-		throw std::runtime_error("ELF with no program-headers");
+		throw MachineException("ELF with no program-headers");
 	}
 	if (UNLIKELY(program_headers >= 16)) {
-		throw std::runtime_error("ELF with too many program-headers. Dynamic?");
+		throw MachineException("ELF with too many program-headers. Dynamic?");
 	}
 	if (UNLIKELY(elf->e_phoff + program_headers * sizeof(Elf64_Phdr) > m_binary.size())) {
-		throw std::runtime_error("ELF program-headers are outside the binary");
+		throw MachineException("ELF program-headers are outside the binary");
 	}
 
 	const auto* phdr = (Elf64_Phdr*) (m_binary.data() + elf->e_phoff);
@@ -58,7 +58,7 @@ void Machine::elf_loader(const MachineOptions& options)
 				ph->p_vaddr + ph->p_filesz >= hdr->p_vaddr) {
 				// Normally we would not care, but no normal ELF
 				// has overlapping segments, so treat as bogus.
-				throw std::runtime_error("Overlapping ELF segments");
+				throw MachineException("Overlapping ELF segments");
 			}
 		}
 
@@ -67,7 +67,7 @@ void Machine::elf_loader(const MachineOptions& options)
 			case PT_LOAD:
 				seg++;
 				if (seg > MAX_LOADABLE_SEGMENTS)
-					throw std::runtime_error("Too many loadable segments");
+					throw MachineException("Too many loadable segments");
 				// loadable program segments
 				this->elf_load_ph(options, hdr);
 				break;
@@ -75,7 +75,7 @@ void Machine::elf_loader(const MachineOptions& options)
 				//printf("GNU_STACK: 0x%lX\n", hdr->p_vaddr);
 				break;
 			case PT_GNU_RELRO:
-				//throw std::runtime_error(
+				//throw MachineException(
 				//	"Dynamically linked ELF binaries are not supported");
 				break;
 		}
@@ -113,13 +113,13 @@ void Machine::elf_load_ph(const MachineOptions& options, const void* vphdr)
 		hdr->p_offset + len <= hdr->p_offset)
 	{
 		if (len == 0) return; /* Let's just pretend empty segments are OK. */
-		throw std::runtime_error("Bogus ELF program segment offset");
+		throw MachineException("Bogus ELF program segment offset", hdr->p_offset);
 	}
 	if (m_binary.size() < hdr->p_offset + len) {
-		throw std::runtime_error("Not enough room for ELF program segment");
+		throw MachineException("Not enough room for ELF program segment", len);
 	}
 	if (hdr->p_vaddr + len < hdr->p_vaddr) {
-		throw std::runtime_error("Bogus ELF segment virtual base");
+		throw MachineException("Bogus ELF segment virtual base", hdr->p_vaddr);
 	}
 
 	if (options.verbose_loader) {
@@ -130,7 +130,7 @@ void Machine::elf_load_ph(const MachineOptions& options, const void* vphdr)
 	if (memory.safely_within(hdr->p_vaddr, len)) {
 		std::memcpy(memory.at(hdr->p_vaddr), src, len);
 	} else {
-		throw std::runtime_error("Unsafe PT_LOAD segment or executable too big");
+		throw MachineException("Unsafe PT_LOAD segment or executable too big", hdr->p_vaddr);
 	}
 }
 

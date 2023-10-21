@@ -142,90 +142,93 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	}
 
 	/* ELF executable area */
-	const auto* elf = (Elf64_Ehdr*) binary.data();
-	const auto program_headers = elf->e_phnum;
-	const auto* phdr = (Elf64_Phdr*) (binary.data() + elf->e_phoff);
-
-	for (const auto* hdr = phdr; hdr < phdr + program_headers; hdr++)
+	if (!binary.empty())
 	{
-		if (hdr->p_type == PT_LOAD)
+		const auto* elf = (Elf64_Ehdr*) binary.data();
+		const auto program_headers = elf->e_phnum;
+		const auto* phdr = (Elf64_Phdr*) (binary.data() + elf->e_phoff);
+
+		for (const auto* hdr = phdr; hdr < phdr + program_headers; hdr++)
 		{
-			const size_t len = hdr->p_filesz;
-			if (!memory.safely_within(hdr->p_vaddr, len)) {
-				throw std::runtime_error("Unsafe PT_LOAD segment or executable too big");
-			}
-			const bool read  = (hdr->p_flags & PF_R) != 0;
-			const bool write = (hdr->p_flags & PF_W) != 0;
-			const bool exec  = (hdr->p_flags & PF_X) != 0;
-
-			/* TODO: Prevent extremely high addresses */
-			/* XXX: Prevent crossing gigabyte boundries */
-			auto base = hdr->p_vaddr & ~0xFFFLL;
-			auto end  = ((hdr->p_vaddr + len) + 0xFFFLL) & ~0xFFFLL;
-#if 0
-			printf("0x%lX->0x%lX --> 0x%lX:0x%lX\n",
-				hdr->p_vaddr, hdr->p_vaddr + len, base, end);
-#endif
-			for (size_t addr = base; addr < end;)
+			if (hdr->p_type == PT_LOAD)
 			{
-				auto pdidx = (addr >> 21) & 511;
-				// Look for *complete* 2MB pages within segment
-				if ((addr & ~0xFFFFFFFFFFE00FFFLL) == 0)
+				const size_t len = hdr->p_filesz;
+				if (!memory.safely_within(hdr->p_vaddr, len)) {
+					throw MachineException("Unsafe PT_LOAD segment or executable too big");
+				}
+				const bool read  = (hdr->p_flags & PF_R) != 0;
+				const bool write = (hdr->p_flags & PF_W) != 0;
+				const bool exec  = (hdr->p_flags & PF_X) != 0;
+
+				/* TODO: Prevent extremely high addresses */
+				/* XXX: Prevent crossing gigabyte boundries */
+				auto base = hdr->p_vaddr & ~0xFFFLL;
+				auto end  = ((hdr->p_vaddr + len) + 0xFFFLL) & ~0xFFFLL;
+	#if 0
+				printf("0x%lX->0x%lX --> 0x%lX:0x%lX\n",
+					hdr->p_vaddr, hdr->p_vaddr + len, base, end);
+	#endif
+				for (size_t addr = base; addr < end;)
 				{
-					if (addr + (1UL << 21) <= end) {
-						// This is a 2MB-aligned ELF segment
-#if 0
-						printf("Found 2MB segment at 0x%lX -> 0x%lX\n", addr, end);
-#endif
-						auto& ptentry = pd[pdidx];
-						const uint64_t addr2m = (base_giga_page << 30) | (pdidx << 21);
-						ptentry = PDE64_PRESENT | PDE64_USER | PDE64_NX | PDE64_PS | addr2m;
-						if (!read) ptentry &= ~PDE64_PRESENT; // A weird one, but... AMD64.
-						if (write) ptentry |= PDE64_RW;
-						if (exec) ptentry &= ~PDE64_NX;
-						// Increment whole 2MB page
-						addr += (1UL << 21);
-						continue;
+					auto pdidx = (addr >> 21) & 511;
+					// Look for *complete* 2MB pages within segment
+					if ((addr & ~0xFFFFFFFFFFE00FFFLL) == 0)
+					{
+						if (addr + (1UL << 21) <= end) {
+							// This is a 2MB-aligned ELF segment
+	#if 0
+							printf("Found 2MB segment at 0x%lX -> 0x%lX\n", addr, end);
+	#endif
+							auto& ptentry = pd[pdidx];
+							const uint64_t addr2m = (base_giga_page << 30) | (pdidx << 21);
+							ptentry = PDE64_PRESENT | PDE64_USER | PDE64_NX | PDE64_PS | addr2m;
+							if (!read) ptentry &= ~PDE64_PRESENT; // A weird one, but... AMD64.
+							if (write) ptentry |= PDE64_RW;
+							if (exec) ptentry &= ~PDE64_NX;
+							// Increment whole 2MB page
+							addr += (1UL << 21);
+							continue;
+						}
 					}
-				}
 
-				// Un-aligned 2MB pages must be split into 4k array
-				if (pd[pdidx] & PDE64_PS) {
-					// Set default attributes + free PTE page
-					pd[pdidx] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
-					// Fill new page with default attributes
-					auto* pagetable = (uint64_t*) memory.at(free_page);
-					for (uint64_t i = 0; i < 512; i++) {
-						// Set writable 4k attributes
-						uint64_t addr4k = (base_giga_page << 30) | (pdidx << 21) | (i << 12);
-						pagetable[i] =
-							PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | addr4k;
+					// Un-aligned 2MB pages must be split into 4k array
+					if (pd[pdidx] & PDE64_PS) {
+						// Set default attributes + free PTE page
+						pd[pdidx] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
+						// Fill new page with default attributes
+						auto* pagetable = (uint64_t*) memory.at(free_page);
+						for (uint64_t i = 0; i < 512; i++) {
+							// Set writable 4k attributes
+							uint64_t addr4k = (base_giga_page << 30) | (pdidx << 21) | (i << 12);
+							pagetable[i] =
+								PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | addr4k;
+						}
+						free_page += 0x1000;
 					}
-					free_page += 0x1000;
-				}
 
-				// Get the pagetable array (NB: mask out NX)
-				auto ptaddr = pd[pdidx] & PDE64_ADDR_MASK;
-				auto* pagetable = (uint64_t*) memory.at(ptaddr);
-				// Set read-only 4k attributes
-				auto entry = (addr >> 12) & 511;
-				auto& ptentry = pagetable[entry];
-/*				if ((ptentry & PDE64_NX) && exec) {
-					printf("NX-bit before on 0x%lX, but exec now\n", addr);
+					// Get the pagetable array (NB: mask out NX)
+					auto ptaddr = pd[pdidx] & PDE64_ADDR_MASK;
+					auto* pagetable = (uint64_t*) memory.at(ptaddr);
+					// Set read-only 4k attributes
+					auto entry = (addr >> 12) & 511;
+					auto& ptentry = pagetable[entry];
+	/*				if ((ptentry & PDE64_NX) && exec) {
+						printf("NX-bit before on 0x%lX, but exec now\n", addr);
+					}
+					if (!(ptentry & PDE64_NX) && !exec) {
+						printf("Execute on 0x%lX, but not exec now\n", addr);
+					}*/
+					if (exec)
+						ptentry &= ~PDE64_NX;
+					else
+						ptentry |= PDE64_NX;
+					if (!read) ptentry &= ~PDE64_PRESENT;
+					if (!write) ptentry &= ~PDE64_RW;
+					addr += 0x1000;
 				}
-				if (!(ptentry & PDE64_NX) && !exec) {
-					printf("Execute on 0x%lX, but not exec now\n", addr);
-				}*/
-				if (exec)
-					ptentry &= ~PDE64_NX;
-				else
-					ptentry |= PDE64_NX;
-				if (!read) ptentry &= ~PDE64_PRESENT;
-				if (!write) ptentry &= ~PDE64_RW;
-				addr += 0x1000;
 			}
 		}
-	}
+	} // Valid ELF binary
 
 	/* Virtual memory remappings (up to 1GB each, for now) */
 	for (const auto& vmem : remappings)

@@ -42,7 +42,9 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	install_memory(0, memory.vmem(), false);
 
-	this->elf_loader(options);
+	if (!binary.empty()) {
+		this->elf_loader(options);
+	}
 
 	this->vcpu.init(0, *this);
 	this->setup_long_mode(options);
@@ -102,6 +104,23 @@ Machine::~Machine()
 {
 	vcpu.deinit();
 	close(this->fd);
+}
+
+void Machine::reset_to(std::string_view binary, const MachineOptions& options)
+{
+	if (UNLIKELY(this->is_forked() || this->is_forkable())) {
+		throw MachineException("Machine is forked or forkable, cannot be reset");
+	}
+	this->m_binary = binary;
+
+	this->elf_loader(options);
+
+	this->vcpu.init(0, *this);
+	this->setup_long_mode(options);
+	struct tinykvm_regs regs {};
+	/* Store the registers, so that Machine is ready to go */
+	this->setup_registers(regs);
+	this->set_registers(regs);
 }
 
 void Machine::reset_to(const Machine& other, const MachineOptions& options)
@@ -316,12 +335,12 @@ int Machine::create_kvm_vm()
 	}
 
 	/*if (ioctl(fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
-		throw std::runtime_error("Failed to KVM_SET_TSS_ADDR");
+		throw MachineException("Failed to KVM_SET_TSS_ADDR");
 	}*/
 
 	/*__u64 map_addr = 0xffffc000;
 	if (ioctl(fd, KVM_SET_IDENTITY_MAP_ADDR, &map_addr) < 0) {
-		throw std::runtime_error("Failed KVM_SET_IDENTITY_MAP_ADDR");
+		throw MachineException("Failed KVM_SET_IDENTITY_MAP_ADDR");
 	}*/
 
 	return fd;

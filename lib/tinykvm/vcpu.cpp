@@ -77,37 +77,41 @@ void* Machine::create_vcpu_timer()
 void vCPU::init(int id, Machine& machine)
 {
 	this->cpu_id = id;
-	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
 	this->m_machine = &machine;
-	if (UNLIKELY(this->fd < 0)) {
-		Machine::machine_exception("Failed to KVM_CREATE_VCPU");
+	if (this->fd < 0) {
+		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
+		if (UNLIKELY(this->fd < 0)) {
+			Machine::machine_exception("Failed to KVM_CREATE_VCPU");
+		}
 	}
-	this->timer_id = Machine::create_vcpu_timer();
+	if (this->timer_id == nullptr) {
+		this->timer_id = Machine::create_vcpu_timer();
+	}
+	if (this->kvm_run == nullptr) {
+		kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
+			PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
+		if (UNLIKELY(kvm_run == MAP_FAILED)) {
+			Machine::machine_exception("Failed to create KVM run-time mapped memory");
+		}
 
-	kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
-		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
-	if (UNLIKELY(kvm_run == MAP_FAILED)) {
-		Machine::machine_exception("Failed to create KVM run-time mapped memory");
-	}
-	/* We only want GPRs and SREGS for now. */
-	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
+		/* We only want GPRs and SREGS for now. */
+		kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
 #ifdef TINYKVM_USE_SYNCED_SREGS
-	kvm_run->kvm_valid_regs |= KVM_SYNC_X86_SREGS;
+		kvm_run->kvm_valid_regs |= KVM_SYNC_X86_SREGS;
 #endif
 
-	/* Assign CPUID features to guest */
-	if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
-		Machine::machine_exception("KVM_SET_CPUID2 failed");
+		/* Assign CPUID features to guest. I don't believe the guest
+		   can change of this, so we will only set it once. */
+		if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
+			Machine::machine_exception("KVM_SET_CPUID2 failed");
+		}
 	}
 
 	// Only master VMs need special registers
 	// Forked VMs derive special register from the master VM
 	if (!this->machine().is_forked())
 	{
-		struct kvm_sregs master_sregs;
-		if (ioctl(this->fd, KVM_GET_SREGS, &master_sregs) < 0) {
-			Machine::machine_exception("KVM_GET_SREGS failed");
-		}
+		struct kvm_sregs master_sregs {};
 		const auto physbase = machine.main_memory().physbase;
 
 		master_sregs.cr3 = physbase + PT_ADDR;

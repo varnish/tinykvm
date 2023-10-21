@@ -48,6 +48,7 @@ struct Machine
 	void stop(bool = true);
 	bool stopped() const noexcept { return vcpu.stopped; }
 	void reset_to(const Machine&, const MachineOptions&);
+	void reset_to(std::string_view binary, const MachineOptions&);
 
 	/* When zeroes == true, new pages will be zeroed instead of duplicated */
 	void copy_to_guest(address_t addr, const void*, size_t, bool zeroes = false);

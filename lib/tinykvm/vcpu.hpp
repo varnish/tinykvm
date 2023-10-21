@@ -35,7 +35,7 @@ namespace tinykvm
 
 		void set_vcpu_table_at(unsigned index, int value);
 
-        int fd = 0;
+        int fd = -1;
         int cpu_id = 0;
         bool stopped = true;
 		uint8_t current_exception = 0;
