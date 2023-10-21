@@ -36,6 +36,12 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	if (UNLIKELY(elf->e_phoff + program_headers * sizeof(Elf64_Phdr) > binary.size())) {
 		throw MachineException("ELF program-headers are outside the binary");
 	}
+	if (UNLIKELY(elf->e_phoff + program_headers * sizeof(Elf64_Phdr) < elf->e_phoff)) {
+		throw MachineException("ELF program-header location is bogus");
+	}
+	if (UNLIKELY(elf->e_phoff % 8 != 0)) {
+		throw MachineException("ELF program-headers are misaligned");
+	}
 
 	/* Any old binary no longer relevant, just set new one. */
 	this->m_binary = binary;
@@ -110,15 +116,15 @@ void Machine::elf_load_ph(std::string_view binary, const MachineOptions& options
 {
 	const auto* hdr = (const Elf64_Phdr*) vphdr;
 
-	const auto*  src = m_binary.data() + hdr->p_offset;
+	const auto*  src = binary.data() + hdr->p_offset;
 	const size_t len = hdr->p_filesz;
-	if (m_binary.size() <= hdr->p_offset ||
+	if (binary.size() <= hdr->p_offset ||
 		hdr->p_offset + len <= hdr->p_offset)
 	{
 		if (len == 0) return; /* Let's just pretend empty segments are OK. */
 		throw MachineException("Bogus ELF program segment offset", hdr->p_offset);
 	}
-	if (m_binary.size() < hdr->p_offset + len) {
+	if (binary.size() < hdr->p_offset + len) {
 		throw MachineException("Not enough room for ELF program segment", len);
 	}
 	if (hdr->p_vaddr + len < hdr->p_vaddr) {
