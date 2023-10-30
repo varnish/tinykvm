@@ -22,7 +22,7 @@ struct MemoryBank {
 	MemoryBanks& banks;
 
 	bool within(uint64_t a, uint64_t s) const noexcept {
-		return (a >= addr) && (a + s <= addr + this->size());
+		return (a >= addr) && (a + s <= addr + this->size()) && (a <= a + s);
 	}
 	char* at(uint64_t paddr) {
 		return &mem[paddr - this->addr];

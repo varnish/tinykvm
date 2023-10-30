@@ -551,7 +551,28 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 				/* Make copy of page if needed (not likely) */
 				if (UNLIKELY(is_copy_on_write(pd[k]))) {
 					/* Copy-on-write 2MB page */
-					if ((pd[k] & PDE64_PS)) {
+
+					/* NOTE: Make sure we are re-reading pd[k] */
+					if (memory.split_hugepages && (pd[k] & PDE64_PS)) { // 2MB page
+						CLPRINT("-> Splitting a 2MB page, addr=0x%lX rw=%lu cloneable=%lu\n",
+							addr, pd[k] & PDE64_RW, pd[k] & PDE64_CLONEABLE);
+						/* Remove PS flag */
+						pd[k] &= ~(uint64_t)PDE64_PS;
+						/* Copy flags from 2MB page, except read-write */
+						uint64_t flags = pd[k] & PDE64_PD_SPLIT_MASK;
+						uint64_t branch_flags = flags | PDE64_CLONEABLE;
+						/* Allocate pagetable page and fill 4k entries.
+						NOTE: new_page() makes page not a candidate for
+						sequentialization for eg. vmcommit() later on. */
+						auto page = memory.new_page();
+						for (size_t e = 0; e < 512; e++) {
+							page.pmem[e] = pt_base | (e << 12) | branch_flags;
+						}
+						/* Update 2MB entry, add read-write */
+						pd[k] = page.addr | flags | PDE64_RW;
+						pt = page.pmem;
+					}
+					else if ((pd[k] & PDE64_PS)) {
 						CLPRINT("Duplicating 2MB page, addr=0x%lX rw=%lu cloneable=%lu\n",
 							addr, pd[k] & PDE64_RW, pd[k] & PDE64_CLONEABLE);
 

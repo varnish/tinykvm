@@ -25,6 +25,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	  // Over-allocate in order to avoid trouble with 2MB-aligned operations
 	  ptr(p), size(overaligned_memsize(s)), owned(own),
 	  main_memory_writes(options.master_direct_memory_writes),
+	  split_hugepages(options.split_hugepages),
 	  banks(m, options)
 {
 	// Main memory is not always starting at 0x0
