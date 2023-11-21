@@ -1,80 +1,30 @@
-Tiny KVM virtual machine
+TinyKVM userspace emulator library
 ==============
 
-This repository is hosting a tiny KVM virtual machine.
-It implements a subset of the Linux system ABI.
+TinyKVM is a simple, slim and highly specialized userspace emulator with _native performance_. It is highly embeddable and with only 10k LOC, has an unbelievably tiny attack surface.
 
-```
-0x1600   - GDT
-0x1700   - TSS
-0x1800   - IDT
-0x2000   - Interrupt assembly
-0x3000   - 4k IST stack
-0x4000   - VSYSCALL page
-0x5000   - Page tables
-0x100000 - Stack
-0x200000 - Binary, heap
-```
+TinyKVM is designed to execute request-based workloads in high-performance HTTP caches and web servers.
 
-Static -O2 musl - Hello World
-==============
-
-The time it takes to create the master VM:
-```
-Construct: 349313ns (349 micros)
-```
-
-Run-time to initialize the master VM:
-```
-Runtime: 2926952ns (2926 micros)
-```
-
-Time to call the `test` function in the master VM:
-```
-vmcall(test): 6947ns (6 micros)
-```
-
-Time to destroy the master VM:
-```
-Destruct: 308352ns (308 micros)
-```
-
-VM fast-forking
-==============
-
-Time to create a copy-on-write fork of the master VM:
-```
-VM fork: 220743ns (220 micros)
-```
-
-Time to call the `test` function in the forked VM:
-```
-Subsequent vmcalls: 1983ns (1 micro)
-```
-
-Time to create, call into and destroy the fork:
-```
-VM fork totals: 306539ns (306 micros)
-```
-
-These benchmarks are based on 300 tinyKVM guest VMs with no warmup.
+KVM is the most robust, battle-hardened virtualization API that exists right now. It is only 60k LOC in the kernel, and it is the foundation of the modern public cloud. TinyKVM does not exercise the full KVM API, as it does not use any virtualized devices.
 
 
-VM fork resetting
-==============
+## Userspace Emulation
 
-By reusing each fork, and just resetting them between usage, keeping some of the most costly things to re-initialize, we can save a bunch of time, and in the end we will initialize faster than competitors WASM implementations.
+Userspace emulation means running userspace programs. You can take a regular Linux program that you just built in your terminal and run it in TinyKVM. It will have the same exact run-time, the same exact CPU features and so on.
 
-Time to do a function call into a forked VM:
-```
-Fast vmcall: 5546ns (5 micros)
-```
+The rule-of-thumb is thus: If you can run it locally on your machine, you can run it in TinyKVM, at the same speed.
 
-Time needed to reset a fork to initial forked state:
-```
-Fast reset: 3581ns (3 micros)
-```
+But there are some differences:
 
-For a total reset+call time of 9 microseconds, which is much less than the official 60 microseconds for a Lucet WASM request. We don't have any destruction cost for this mode of operation. However, the context switching itself seems to be lower on Lucet.
+- TinyKVM has an execution timeout feature, allowing automatic stopping of stuck programs
+- TinyKVM has memory limits
+- TinyKVM can fork an initialized program into hundreds of pre-initialized VMs
+- TinyKVM can load programs while preferring hugepages, leading to performance gains
 
-Also, we can start processing after only 5 microseconds, and immediately deliver the result to the client. The reset cost can be deferred until after delivery. This lowers the time to first byte, which is an important number in HTTP caches.
+
+## Home-field Advantage
+
+A very understated feature of running directly on the CPU using hardware virtualization is that you don't need fancy toolchains to build programs. This is a most surprising and welcome feature as building and working with other architectures is often a struggle.
+
+Secondly, as CPUs evolve, so does TinyKVM. It never has to be updated, yet it will continue to run at native speeds on your CPU.
+
