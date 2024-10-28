@@ -219,6 +219,7 @@ void Machine::setup_multithreading()
 		435, [] (vCPU& cpu) { // clone3
 			auto& regs = cpu.registers();
 
+			static constexpr uint32_t SETTLS = 0x00080000;
 			struct clone3_args {
 				uint64_t flags;
 				uint64_t pidfd;
@@ -242,7 +243,11 @@ void Machine::setup_multithreading()
 			const auto stack = args.stack + args.stack_size;
 			const auto ptid  = args.parent_tid;
 			const auto ctid  = args.child_tid;
-			const auto tls   = args.tls;
+			auto tls   = args.tls;
+			if ((flags & SETTLS) == 0) {
+				// Don't set TLS if not requested
+				tls = cpu.get_special_registers().fs.base;
+			}
 
 			Thread& parent = cpu.machine().threads().get_thread();
 			Thread& thread = cpu.machine().threads().create(flags, ctid, ptid, stack, tls);
