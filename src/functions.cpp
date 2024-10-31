@@ -49,7 +49,7 @@ void setup_kvm_system_calls()
 			auto& regs = cpu.registers();
 			const int    fd = regs.rdi;
 			const size_t bytes = regs.rdx;
-			if (bytes > 4096) {
+			if (bytes > 8192) {
 				/* Ignore too big a write */
 				regs.rax = -1;
 			} else if (fd != 1 && fd != 2) {
@@ -57,7 +57,7 @@ void setup_kvm_system_calls()
 				regs.rax = -1;
 			}
 			else {
-				char buffer[bytes];
+				char buffer[8192];
 				cpu.machine().copy_from_guest(buffer, regs.rsi, bytes);
 				cpu.machine().print(buffer, bytes);
 				regs.rax = bytes;
@@ -310,12 +310,12 @@ void setup_kvm_system_calls()
 					// Ignore empty writes? Max 4k writes.
 					if (vec.iov_len == 0)
 						continue;
-					if (vec.iov_len > 4096) {
+					if (vec.iov_len > 8192) {
 						written = -ENOMEM;
 						break;
 					}
 					const size_t bytes = vec.iov_len;
-					char buffer[bytes];
+					char buffer[8192];
 					cpu.machine().copy_from_guest(buffer, vec.iov_base, bytes);
 					cpu.machine().print(buffer, bytes);
 					written += bytes;
@@ -572,9 +572,9 @@ void setup_kvm_system_calls()
 			const int      flags = regs.rdx;
 			(void) flags;
 
-			/* Max 64kb randomness. */
-			if (bytes <= 0x10000) {
-				char buffer[bytes];
+			/* Max 256b randomness. */
+			if (bytes <= 256) {
+				char buffer[256];
 				ssize_t actual = getrandom(buffer, bytes, 0);
 				if (actual > 0)
 					cpu.machine().copy_to_guest(g_buf, buffer, actual);
