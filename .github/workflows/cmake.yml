@@ -14,10 +14,13 @@ jobs:
 
     strategy:
       matrix:
-        compiler: [g++-10, clang++-12]
+        compiler: [g++, clang++]
         buildtype: [Debug, Release]
     steps:
     - uses: actions/checkout@v2
+
+    - name: Install dependencies
+      run: sudo apt-get install -y cmake g++ clang
 
     - name: Emulator configuration
       working-directory: ${{github.workspace}}
