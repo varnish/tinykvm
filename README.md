@@ -1,11 +1,11 @@
 TinyKVM userspace emulator library
 ==============
 
-TinyKVM is a simple, slim and highly specialized userspace emulator with _native performance_. It is highly embeddable and with only 10k LOC, has an unbelievably tiny attack surface.
+TinyKVM is a simple, slim and specialized userspace emulator library with _native performance_.
 
-TinyKVM is designed to execute request-based workloads in high-performance HTTP caches and web servers.
+TinyKVM is designed to execute regular Linux programs and also excels at request-based workloads in high-performance HTTP caches and web servers.
 
-KVM is the most robust, battle-hardened virtualization API that exists right now. It is only 60k LOC in the kernel, and it is the foundation of the modern public cloud. TinyKVM does not exercise the full KVM API, as it does not use any virtualized devices.
+KVM is the most robust, battle-hardened virtualization API that exists right now. It is only 40k LOC in the kernel, and it is the foundation of the modern public cloud. TinyKVM uses only a fraction of the KVM API.
 
 
 ## Userspace Emulation
@@ -22,7 +22,7 @@ But there are some differences:
 - TinyKVM can load programs while preferring hugepages, leading to performance gains
 
 
-## Home-field Advantage
+## Hardware Virtualization
 
 A very understated feature of running directly on the CPU using hardware virtualization is that you don't need fancy toolchains to build programs. This is a most surprising and welcome feature as building and working with other architectures is often a struggle.
 
