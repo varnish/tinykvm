@@ -125,8 +125,10 @@ void Machine::setup_linux(__u64& rsp,
 	push_aux(argv, {AT_PHNUM, phdr_count});
 
 	// Misc
-	push_aux(argv, {AT_BASE, binary_ehdr->e_entry & ~0xFFFFFFL}); // XXX: Guesstimate!
-	push_aux(argv, {AT_ENTRY, binary_ehdr->e_entry});
+	const address_t base_address = (this->m_image_base + binary_ehdr->e_entry) & ~0xFFFFFFL; // XXX: Guesstimate!
+	const address_t entry_address = this->m_image_base + binary_ehdr->e_entry;
+	push_aux(argv, {AT_BASE, base_address});
+	push_aux(argv, {AT_ENTRY, entry_address});
 	push_aux(argv, {AT_HWCAP,  getauxval(AT_HWCAP)});
 	push_aux(argv, {AT_HWCAP2, getauxval(AT_HWCAP2)});
 	push_aux(argv, {AT_UID, 1000});

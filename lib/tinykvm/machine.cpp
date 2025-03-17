@@ -62,6 +62,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_allow_fixed_mmap {options.allow_fixed_mmap},
 	  m_binary {options.binary.empty() ? other.m_binary : options.binary},
 	  memory   {*this, options, other.memory},
+	  m_image_base    {other.m_image_base},
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address  {other.m_heap_address},
 	  m_start_address {other.m_start_address},
@@ -139,6 +140,7 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		/* This could be dangerous, but we will allow it anyway,
 		   for those who dare to mutate an existing VM in prod. */
 		this->m_binary = other.m_binary;
+		this->m_image_base    = other.m_image_base;
 		this->m_stack_address = other.m_stack_address;
 		this->m_heap_address  = other.m_heap_address;
 		this->m_start_address = other.m_start_address;

@@ -20,6 +20,7 @@ struct Machine
 	using numbered_syscall_t = void(*)(vCPU&, unsigned);
 	using io_callback_t = void(*)(vCPU&, unsigned, unsigned);
 	using printer_func = std::function<void(const char*, size_t)>;
+	static constexpr address_t DYLINK_BASE  = 0x200000; // Dynamic link base address
 
 	/* Setup Linux env and run through main */
 	void setup_argv(const std::vector<std::string>& args,
@@ -129,6 +130,8 @@ struct Machine
 	char* unsafe_memory_at(uint64_t a, size_t s) { return memory.at(a, s); }
 	uint64_t translate(uint64_t virt) const;
 
+	bool is_dynamic() const noexcept { return m_image_base != 0x0; }
+	address_t image_base() const noexcept { return this->m_image_base; }
 	address_t start_address() const noexcept { return this->m_start_address; }
 	address_t stack_address() const noexcept { return this->m_stack_address; }
 	address_t heap_address() const noexcept { return this->m_heap_address; }
@@ -220,7 +223,8 @@ private:
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void elf_loader(std::string_view binary, const MachineOptions&);
 	void elf_load_ph(std::string_view binary, const MachineOptions&, const void*);
-	void relocate_section(const char* section_name, const char* sym_section);
+	void dynamic_linking(std::string_view binary, const MachineOptions&);
+	bool relocate_section(const char* section_name, const char* sym_section);
 	void setup_long_mode(const MachineOptions&);
 	void setup_cow_mode(const Machine*); // After prepare_copy_on_write and forking
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
@@ -240,12 +244,13 @@ private:
 
 	vMemory memory;  // guest memory
 
-	uint64_t m_stack_address;
-	uint64_t m_heap_address;
-	uint64_t m_start_address;
-	uint64_t m_kernel_end;
+	address_t m_image_base = 0x0;
+	address_t m_stack_address;
+	address_t m_heap_address;
+	address_t m_start_address;
+	address_t m_kernel_end;
 
-	uint64_t m_mm = 0;
+	address_t m_mm = 0;
 	MMapCache m_mmap_cache;
 	mutable std::unique_ptr<MultiThreading> m_mt;
 

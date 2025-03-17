@@ -153,7 +153,8 @@ uint64_t setup_amd64_paging(vMemory& memory,
 			if (hdr->p_type == PT_LOAD)
 			{
 				const size_t len = hdr->p_filesz;
-				if (!memory.safely_within(hdr->p_vaddr, len)) {
+				const uint64_t load_address = memory.machine.image_base() + hdr->p_vaddr;
+				if (!memory.safely_within(load_address, len)) {
 					throw MachineException("Unsafe PT_LOAD segment or executable too big");
 				}
 				const bool read  = (hdr->p_flags & PF_R) != 0;
@@ -162,11 +163,11 @@ uint64_t setup_amd64_paging(vMemory& memory,
 
 				/* TODO: Prevent extremely high addresses */
 				/* XXX: Prevent crossing gigabyte boundries */
-				auto base = hdr->p_vaddr & ~0xFFFLL;
-				auto end  = ((hdr->p_vaddr + len) + 0xFFFLL) & ~0xFFFLL;
+				auto base = load_address & ~0xFFFLL;
+				auto end  = ((load_address + len) + 0xFFFLL) & ~0xFFFLL;
 	#if 0
 				printf("0x%lX->0x%lX --> 0x%lX:0x%lX\n",
-					hdr->p_vaddr, hdr->p_vaddr + len, base, end);
+					load_address, load_address + len, base, end);
 	#endif
 				for (size_t addr = base; addr < end;)
 				{

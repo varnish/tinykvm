@@ -21,8 +21,15 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	if (UNLIKELY(!validate_header(elf))) {
 		throw MachineException("Invalid ELF header! Not a 64-bit program?");
 	}
-	if (UNLIKELY(elf->e_type != ET_EXEC)) {
-		throw MachineException("Invalid ELF type: Not an executable!");
+	bool is_dynamic = false;
+	if (elf->e_type == ET_DYN) {
+		is_dynamic = true;
+		this->m_image_base = DYLINK_BASE;
+	}
+	else if (elf->e_type == ET_EXEC) {
+		this->m_image_base = 0x0;
+	} else {
+		throw MachineException("Invalid ELF type: Not a static or dynamic executable!");
 	}
 
 	// enumerate & load loadable segments
@@ -30,8 +37,8 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	if (UNLIKELY(program_headers <= 0)) {
 		throw MachineException("ELF with no program-headers");
 	}
-	if (UNLIKELY(program_headers >= 16)) {
-		throw MachineException("ELF with too many program-headers. Dynamic?");
+	if (UNLIKELY(program_headers >= 64)) {
+		throw MachineException("ELF with too many program-headers");
 	}
 	if (UNLIKELY(elf->e_phoff + program_headers * sizeof(Elf64_Phdr) > binary.size())) {
 		throw MachineException("ELF program-headers are outside the binary");
@@ -48,8 +55,8 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 
 	const auto* phdr = (Elf64_Phdr*) (binary.data() + elf->e_phoff);
 	const auto program_begin = phdr->p_vaddr;
-	this->m_start_address = elf->e_entry;
-	this->m_stack_address = program_begin;
+	this->m_start_address = this->m_image_base + elf->e_entry;
+	this->m_stack_address = this->m_image_base + program_begin;
 	this->m_heap_address = 0x0;
 
 	int seg = 0;
@@ -61,13 +68,15 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 		}
 
 		// Detect overlapping segments
-		for (const auto* ph = phdr; ph < hdr; ph++) {
-			if (hdr->p_type == PT_LOAD && ph->p_type == PT_LOAD)
-			if (ph->p_vaddr < hdr->p_vaddr + hdr->p_filesz &&
-				ph->p_vaddr + ph->p_filesz >= hdr->p_vaddr) {
-				// Normally we would not care, but no normal ELF
-				// has overlapping segments, so treat as bogus.
-				throw MachineException("Overlapping ELF segments");
+		if (hdr->p_type == PT_LOAD) {
+			for (const auto* ph = phdr; ph < hdr; ph++) {
+				if (ph->p_type == PT_LOAD &&
+					ph->p_vaddr < hdr->p_vaddr + hdr->p_filesz &&
+					ph->p_vaddr + ph->p_filesz >= hdr->p_vaddr) {
+					// Normally we would not care, but no normal ELF
+					// has overlapping segments, so treat as bogus.
+					throw MachineException("Overlapping ELF segments", hdr->p_vaddr);
+				}
 			}
 		}
 
@@ -96,6 +105,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	}
 
 	/* Make sure mmap starts at a sane offset */
+	this->m_heap_address += this->m_image_base;
 	this->m_mm = this->mmap_start();
 
 	/* If there is not enough room for stack, move it */
@@ -104,7 +114,10 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 		this->m_stack_address = this->mmap_allocate(STACK_SIZE) + STACK_SIZE;
 	}
 
-	//this->relocate_section(".rela.plt", ".symtab");
+	/* Dynamic executables require some extra work, like relocation */
+	if (is_dynamic) {
+		this->dynamic_linking(binary, options);
+	}
 
 	if (options.verbose_loader) {
 	printf("* Entry is at %p\n", (void*) m_start_address);
@@ -127,19 +140,28 @@ void Machine::elf_load_ph(std::string_view binary, const MachineOptions& options
 	if (binary.size() < hdr->p_offset + len) {
 		throw MachineException("Not enough room for ELF program segment", len);
 	}
-	if (hdr->p_vaddr + len < hdr->p_vaddr) {
+	const address_t load_address = this->m_image_base + hdr->p_vaddr;
+	if (load_address + len < load_address) {
 		throw MachineException("Bogus ELF segment virtual base", hdr->p_vaddr);
 	}
 
 	if (options.verbose_loader) {
 	printf("* Loading segment of size %zu from %p to virtual %p\n",
-			len, src, (void*) hdr->p_vaddr);
+			len, src, (void*) load_address);
 	}
 
-	if (memory.safely_within(hdr->p_vaddr, len)) {
-		std::memcpy(memory.at(hdr->p_vaddr), src, len);
+	if (UNLIKELY(load_address < this->m_image_base)) {
+		throw MachineException("Bogus ELF segment virtual base", hdr->p_vaddr);
+	}
+	if (memory.safely_within(load_address, len)) {
+		std::memcpy(memory.at(load_address), src, len);
 	} else {
-		throw MachineException("Unsafe PT_LOAD segment or executable too big", hdr->p_vaddr);
+		if (options.verbose_loader) {
+			printf("Segment at %p is too large or not safely within physical base at %p. Size: %zu vs %p\n",
+				(void*)load_address, (void*)memory.safebase, len, (void*)(memory.physbase + memory.size));
+			fflush(stdout);
+		}
+		throw MachineException("Unsafe PT_LOAD segment or executable too big", load_address);
 	}
 }
 
@@ -190,7 +212,7 @@ static const Elf64_Sym* resolve_symbol(std::string_view binary, const char* name
 uint64_t Machine::address_of(const char* name) const
 {
 	const auto* sym = resolve_symbol(m_binary, name);
-	return (sym) ? sym->st_value : 0x0;
+	return (sym) ? this->m_image_base + sym->st_value : 0x0;
 }
 std::string Machine::resolve(uint64_t rip) const
 {
@@ -199,6 +221,9 @@ std::string Machine::resolve(uint64_t rip) const
 	if (UNLIKELY(sym_hdr == nullptr)) return "";
 	const auto* str_hdr = section_by_name(m_binary, ".strtab");
 	if (UNLIKELY(str_hdr == nullptr)) return "";
+
+	if (UNLIKELY(rip < this->m_image_base)) return "";
+	const address_t relative_rip = rip - this->m_image_base;
 
 	const auto* symtab = elf_sym_index(m_binary, sym_hdr, 0);
 	const size_t symtab_ents = sym_hdr->sh_size / sizeof(Elf64_Sym);
@@ -209,9 +234,9 @@ std::string Machine::resolve(uint64_t rip) const
 		/* Only look at functions (for now). Old-style symbols have no FUNC. */
 		if (symtab[i].st_info & STT_FUNC) {
 			/* Direct matches only (for now) */
-			if (rip >= symtab[i].st_value && rip < symtab[i].st_value + symtab[i].st_size)
+			if (relative_rip >= symtab[i].st_value && relative_rip < symtab[i].st_value + symtab[i].st_size)
 			{
-				const uint64_t offset = rip - symtab[i].st_value;
+				const uint64_t offset = relative_rip - symtab[i].st_value;
 				char result[2048];
 				int len = snprintf(result, sizeof(result),
 					"%s + 0x%lX", &strtab[symtab[i].st_name], offset);
@@ -225,49 +250,55 @@ std::string Machine::resolve(uint64_t rip) const
 	return "(unknown)";
 }
 
-void Machine::relocate_section(const char* section_name, const char* sym_section)
+bool Machine::relocate_section(const char* section_name, const char* sym_section)
 {
 	const auto* rela = section_by_name(m_binary, section_name);
 	if (rela == nullptr) {
 		printf("No such section: %s\n", section_name);
-		return;
+		return false;
 	}
 	const auto* dyn_hdr = section_by_name(m_binary, sym_section);
 	if (dyn_hdr == nullptr) {
 		printf("No such symbol section: %s\n", sym_section);
-		return;
+		return false;
 	}
-	const size_t rela_ents = rela->sh_size / rela->sh_entsize;
-	printf("Rela ents: %zu\n", rela_ents);
+	const size_t rela_ents = rela->sh_size / sizeof(Elf64_Rela);
+	if (rela_ents > 16384) {
+		throw MachineException("Too many relocations", rela_ents);
+	}
 
-	auto* rela_addr = elf_offset<Elf64_Rela>(m_binary, rela->sh_offset);
+	auto* rela_addr = elf_offset_array<Elf64_Rela>(m_binary, rela->sh_offset, rela_ents);
 	for (size_t i = 0; i < rela_ents; i++)
 	{
-		const uint8_t type = ELF64_R_TYPE(rela_addr[i].r_info);
-		if (type == R_X86_64_IRELATIVE)
-		{
-			const uint32_t symidx = ELF64_R_SYM(rela_addr[i].r_info);
-			//auto* sym = elf_sym_index(m_binary, dyn_hdr, symidx);
-			const int32_t  addend = rela_addr[i].r_addend;
-			const uint64_t addr = rela_addr[i].r_offset;
-			printf("Rela ent %zu with addend 0x%X = 0x%lX\n", i, addend, addr);
-			auto* entry = (address_t*) memory.at(addend, 8);
-#ifdef TINYKVM_ARCH_AMD64
-			*entry = interrupt_header().vm64_dso;
-#endif
+		const auto symidx = ELF64_R_SYM(rela_addr[i].r_info);
+		const Elf64_Sym* sym = elf_sym_index(m_binary, dyn_hdr, symidx);
 
-/*			auto* entry = elf_offset<address_t> (m_binary, rela_addr[i].r_offset);
-			auto* final = elf_offset<address_t> (m_binary, sym->st_value);
-			if constexpr (true)
-			{
-				printf("Relocating rela %zu with sym idx %u where 0x%lX -> 0x%lX\n",
-						i, symidx, rela_addr[i].r_offset, sym->st_value);
+		const auto rtype = ELF64_R_TYPE(rela_addr[i].r_info);
+		if (rtype != R_X86_64_RELATIVE) {
+			if constexpr (VERBOSE_LOADER) {
+				printf("Skipping non-relative relocation: %s\n", &m_binary[sym->st_name]);
 			}
-			// *(address_t*) entry = (address_t) (uintptr_t) final;
-			*(address_t*) entry = interrupt_header().vm64_gettimeofday;
-			*/
+			continue;
+		}
+
+		const address_t addr = this->m_image_base + rela_addr[i].r_offset;
+		if (memory.safely_within(addr, sizeof(address_t))) {
+			*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + sym->st_value;
+		} else if (false) {
+			if constexpr (VERBOSE_LOADER) {
+				printf("Relocation failed: %s\n", &m_binary[sym->st_name]);
+			}
 		}
 	}
+	return true;
+}
+
+void Machine::dynamic_linking(std::string_view binary, const MachineOptions& options)
+{
+	(void)binary;
+	(void)options;
+	this->relocate_section(".rela.dyn", ".dynsym");
+	//this->relocate_section(".rela.plt", ".dynsym");
 }
 
 }
