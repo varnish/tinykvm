@@ -66,7 +66,7 @@ int main(int argc, char** argv)
 		.reset_free_work_mem = 0,
 		.vmem_base_address = uint64_t(getenv("UPPER") != nullptr ? 0x40000000 : 0x0),
 		.remappings {remappings},
-		.verbose_loader = false,
+		.verbose_loader = (getenv("VERBOSE") != nullptr),
 		.hugepages = (getenv("HUGE") != nullptr),
 		.allow_fixed_mmap = (getenv("GO") != nullptr),
 	};
