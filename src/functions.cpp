@@ -86,6 +86,14 @@ void setup_kvm_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		262, [] (auto& cpu) { // NEW_FSTATAT
+			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			SYSPRINT("new_fstatat(...) = %lld\n",
+					 regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		7, [] (auto& cpu) { // POLL
 			auto& regs = cpu.registers();
 			struct pollfd {
