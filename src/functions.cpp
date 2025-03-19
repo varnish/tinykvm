@@ -446,6 +446,20 @@ void setup_kvm_system_calls()
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
+	Machine::install_syscall_handler( // sched_getparam
+		143, [] (auto& cpu) {
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			SYSPRINT("sched_getparam(...) = %lld\n", regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler( // sched_getscheduler
+		145, [] (auto& cpu) {
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			SYSPRINT("sched_getscheduler(...) = %lld\n", regs.rax);
+			cpu.set_registers(regs);
+		});
 	Machine::install_syscall_handler(
 		157, [] (auto& cpu) {
 			/* SYS prctl */
