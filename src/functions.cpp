@@ -118,15 +118,26 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		9, [] (auto& cpu) { // MMAP
 			auto& regs = cpu.registers();
+			const auto flags = regs.r10;
 			if (UNLIKELY(regs.rdi % vMemory::PageSize() != 0 || regs.rsi == 0)) {
 				// Size not matching a 4K page size
 				regs.rax = ~0LL; /* MAP_FAILED */
 			} else if (UNLIKELY(int(regs.r8) >= 0)) {
 				// mmap to file fd (*NOT* supported)
 				regs.rax = ~0LL; /* MAP_FAILED */
+			} else if ((flags & 0x4) != 0) {
+				// Executable mappings are supported if there is an execute-range in vMemory
+				auto& memory = cpu.machine().main_memory();
+				if (memory.vmem_exec_begin != 0x0) {
+					regs.rax = memory.vmem_exec_begin;
+					memory.vmem_exec_begin += regs.rsi;
+				} else {
+					regs.rax = ~0LL; /* MAP_FAILED */
+				}
 			} else if (regs.rdi != 0x0 && cpu.machine().allow_fixed_mmap()) {
 				regs.rax = regs.rdi;
 			} else if (regs.rdi != 0x0 && regs.rdi >= cpu.machine().heap_address() && regs.rdi < cpu.machine().mmap_start()) {
+				// Existing range already mmap'ed
 				regs.rax = regs.rdi;
 			} else {
 				// Round up to nearest power-of-two

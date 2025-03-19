@@ -19,6 +19,9 @@ struct vMemory {
 	uint64_t physbase;
 	uint64_t safebase;
 	uint64_t page_tables;
+	/* Optional executable memory range */
+	uint64_t vmem_exec_begin = 0;
+	uint64_t vmem_exec_end   = 0;
 	/* Linear memory */
 	char*  ptr;
 	size_t size;
@@ -28,6 +31,8 @@ struct vMemory {
 	bool   main_memory_writes = false;
 	/* Split into small pages (4K) when reaching a leaf hugepage. */
 	bool   split_hugepages = true;
+	/* Executable heap */
+	bool   executable_heap = false;
 	/* Dynamic page memory */
 	MemoryBanks banks; // fault-in memory banks
 	/* SMP mutex */
@@ -66,6 +71,8 @@ struct vMemory {
 	/* Returns true when this VM uses banking only to make page tables writable
 	   again in order to support itself. It has already been made forkable. */
 	bool is_forkable_master() const noexcept;
+
+	uint64_t expectedUsermodeFlags() const noexcept;
 
 	/* Create new identity-mapped memory regions */
 	vMemory(Machine&, const MachineOptions&, uint64_t, uint64_t, char*, size_t, bool = true);

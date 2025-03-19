@@ -56,8 +56,72 @@ inline bool is_flagged_page(uint64_t flags, uint64_t entry) {
 	return (entry & flags) == flags;
 }
 
+static void add_remappings(vMemory& memory,
+	const VirtualRemapping& remapping,
+	uint64_t* pml4,
+	uint64_t flags,
+	uint64_t& free_page)
+{
+	if (remapping.virt <= free_page)
+		throw MachineException("Invalid remapping address", remapping.virt);
+	if (remapping.size % vMemory::PageSize() != 0)
+		throw MachineException("Invalid remapping size", remapping.size);
+	const auto virt_tera_page = (remapping.virt >> 39UL) & 511;
+	const auto virt_giga_page = (remapping.virt >> 30UL) & 511;
+
+	uint64_t paddr_base = remapping.phys;
+	if (paddr_base == 0x0) {
+		constexpr auto PD_ALIGN_MASK = (1ULL << 21U) - 1;
+		// Over-allocate rounding up to nearest 2MB
+		paddr_base = memory.machine.mmap_allocate(remapping.size + PD_ALIGN_MASK);
+		paddr_base = (paddr_base + PD_ALIGN_MASK) & ~PD_ALIGN_MASK;
+		// Relax allocation down to size
+		memory.machine.mmap() = paddr_base + remapping.size;
+	}
+
+	if (pml4[virt_tera_page] == 0) {
+		const auto pdpt_addr = free_page;
+		free_page += 0x1000;
+
+		pml4[virt_tera_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
+	}
+
+	auto  pdpt_addr = pml4[virt_tera_page] & PDE64_ADDR_MASK;
+	auto* pdpt = memory.page_at(pdpt_addr);
+
+	// Allocate the gigapage with 512x 2MB entries
+	if (pdpt[virt_giga_page] == 0) {
+		const auto giga_page = free_page;
+		free_page += 0x1000;
+		pdpt[virt_giga_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | giga_page;
+	}
+
+	auto  pd_addr = pdpt[virt_giga_page] & PDE64_ADDR_MASK;
+	auto* pd = memory.page_at(pd_addr);
+
+	// Create 2MB entries for remapping size
+	const auto n_2mb_pages = (remapping.size >> 21UL) & 511;
+	for (uint64_t i = 0; i < 512; i++)
+	{
+		const auto paddr = paddr_base + (i << 21UL);
+		if (i < n_2mb_pages)
+			pd[i] = PDE64_PRESENT | flags | PDE64_PS | paddr;
+		else
+			pd[i] = 0;
+	}
+
+	// Track the first seen executable mapping, allowing mmap to use it for
+	// JIT segments.
+	if (remapping.executable && memory.vmem_exec_begin == 0)
+	{
+		memory.vmem_exec_begin = remapping.virt;
+		memory.vmem_exec_end = remapping.virt + remapping.size;
+	}
+}
+
 uint64_t setup_amd64_paging(vMemory& memory,
-	std::string_view binary, const std::vector<VirtualRemapping>& remappings)
+	std::string_view binary,
+	const std::vector<VirtualRemapping>& remappings)
 {
 	static constexpr uint64_t PD_MASK = (1ULL << 30) - 1;
 	const size_t PD_PAGES = (memory.size + PD_MASK) >> 30;
@@ -136,10 +200,16 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	}
 
 	// Covers 1GB pages with 512x 2MB user-read-write entries
+	// NOTE: Even with executable heap, the ELF loader will still correctly
+	// apply the NX-bit to its own segments.
+	uint64_t heap_flags = PDE64_USER | PDE64_RW;
+	if (!memory.executable_heap)
+		heap_flags |= PDE64_NX;
 	for (uint64_t i = base_2mb_page+2; i < 512*PD_PAGES; i++) {
-		pd[i] = PDE64_PRESENT | PDE64_PS | PDE64_USER | PDE64_RW | PDE64_NX
+		pd[i] = PDE64_PRESENT | PDE64_PS | heap_flags
 			| ((base_giga_page << 30) + (i << 21));
 	}
+	printf("Heap is executable: %d\n", memory.executable_heap);
 
 	/* ELF executable area */
 	if (!binary.empty())
@@ -234,53 +304,10 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	/* Virtual memory remappings (up to 1GB each, for now) */
 	for (const auto& vmem : remappings)
 	{
-		if (vmem.virt <= free_page)
-			throw MachineException("Invalid remapping address", vmem.virt);
-		if (vmem.size % vMemory::PageSize() != 0)
-			throw MachineException("Invalid remapping size", vmem.size);
-		const auto virt_tera_page = (vmem.virt >> 39UL) & 511;
-		const auto virt_giga_page = (vmem.virt >> 30UL) & 511;
-
-		uint64_t paddr_base = vmem.phys;
-		if (paddr_base == 0x0) {
-			constexpr auto PD_ALIGN_MASK = (1ULL << 21U) - 1;
-			// Over-allocate rounding up to nearest 2MB
-			paddr_base = memory.machine.mmap_allocate(vmem.size + PD_ALIGN_MASK);
-			paddr_base = (paddr_base + PD_ALIGN_MASK) & ~PD_ALIGN_MASK;
-			// Relax allocation down to size
-			memory.machine.mmap() = paddr_base + vmem.size;
-		}
-
-		if (pml4[virt_tera_page] == 0) {
-			const auto pdpt_addr = free_page;
-			free_page += 0x1000;
-
-			pml4[virt_tera_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpt_addr;
-		}
-
-		auto  pdpt_addr = pml4[virt_tera_page] & PDE64_ADDR_MASK;
-		auto* pdpt = memory.page_at(pdpt_addr);
-
-		// Allocate the gigapage with 512x 2MB entries
-		if (pdpt[virt_giga_page] == 0) {
-			const auto giga_page = free_page;
-			free_page += 0x1000;
-			pdpt[virt_giga_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | giga_page;
-		}
-
-		auto  pd_addr = pdpt[virt_giga_page] & PDE64_ADDR_MASK;
-		auto* pd = memory.page_at(pd_addr);
-
-		// Create 2MB entries for remapping size
-		const auto n_2mb_pages = (vmem.size >> 21UL) & 511;
-		for (uint64_t i = 0; i < 512; i++)
-		{
-			const auto paddr = paddr_base + (i << 21UL);
-			if (i < n_2mb_pages)
-				pd[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | PDE64_NX | PDE64_PS | paddr;
-			else
-				pd[i] = 0;
-		}
+		uint64_t flags = PDE64_USER | PDE64_NX;
+		if (vmem.writable) flags |= PDE64_RW;
+		if (vmem.executable) flags &= ~PDE64_NX;
+		add_remappings(memory, vmem, pml4, flags, free_page);
 	}
 
 	// vDSO / vsyscall

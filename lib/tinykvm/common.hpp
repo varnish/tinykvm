@@ -25,6 +25,8 @@ namespace tinykvm
 		uint64_t phys;
 		uint64_t virt;
 		size_t   size;
+		bool     writable = false;
+		bool     executable = false;
 	};
 
 	struct MachineOptions {
@@ -51,6 +53,8 @@ namespace tinykvm
 		bool allow_reset_to_new_master = false;
 		/* Allow fixed addresses with mmap(). */
 		bool allow_fixed_mmap = false;
+		/* Make heap executable, to support JIT. */
+		bool executable_heap = false;
 	};
 
 	class MachineException : public std::exception {

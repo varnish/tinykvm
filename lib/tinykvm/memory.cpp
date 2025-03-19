@@ -26,6 +26,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	  ptr(p), size(overaligned_memsize(s)), owned(own),
 	  main_memory_writes(options.master_direct_memory_writes),
 	  split_hugepages(options.split_hugepages),
+	  executable_heap(options.executable_heap),
 	  banks(m, options)
 {
 	// Main memory is not always starting at 0x0
@@ -35,6 +36,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other)
 	: vMemory{m, options, other.physbase, other.safebase, other.ptr, other.size, false}
 {
+	this->executable_heap = other.executable_heap;
 }
 vMemory::~vMemory()
 {
@@ -125,7 +127,7 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 	const auto offset   = addr & PageMask();
 	if (offset + asize <= vMemory::PageSize())
 	{
-		auto* page = this->get_writable_page(pagebase, USERMODE_FLAGS, false);
+		auto* page = this->get_writable_page(pagebase, expectedUsermodeFlags(), false);
 		return &page[offset];
 	}
 
@@ -296,4 +298,13 @@ void vMemory::memory_exception(const char* msg, uint64_t addr, uint64_t size)
 	throw MemoryException(msg, addr, size);
 }
 
+
+uint64_t vMemory::expectedUsermodeFlags() const noexcept
+{
+	uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
+	if (!this->executable_heap)
+		flags |= PDE64_NX;
+	return flags;
 }
+
+} // namespace tinykvm
