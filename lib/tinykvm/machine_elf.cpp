@@ -263,7 +263,7 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 		return false;
 	}
 	const size_t rela_ents = rela->sh_size / sizeof(Elf64_Rela);
-	if (rela_ents > 16384) {
+	if (rela_ents > 524288) {
 		throw MachineException("Too many relocations", rela_ents);
 	}
 
