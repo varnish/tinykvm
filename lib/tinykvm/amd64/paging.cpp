@@ -209,7 +209,6 @@ uint64_t setup_amd64_paging(vMemory& memory,
 		pd[i] = PDE64_PRESENT | PDE64_PS | heap_flags
 			| ((base_giga_page << 30) + (i << 21));
 	}
-	printf("Heap is executable: %d\n", memory.executable_heap);
 
 	/* ELF executable area */
 	if (!binary.empty())
