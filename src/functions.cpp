@@ -561,6 +561,14 @@ void setup_kvm_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		230, [] (auto& cpu) {
+			/* SYS nanosleep */
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			SYSPRINT("nanosleep(...) = %lld\n", regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		233, [] (auto& cpu) {
 			/* SYS epoll_ctl */
 			auto& regs = cpu.registers();
