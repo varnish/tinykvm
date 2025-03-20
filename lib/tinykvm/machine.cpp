@@ -286,6 +286,12 @@ void Machine::run(float timeout)
 	return vcpu.run(timeout * 1000.0);
 }
 
+void Machine::run_in_usermode(float timeout)
+{
+	this->enter_usermode();
+	this->run(timeout);
+}
+
 __attribute__((cold, noreturn))
 void Machine::machine_exception(const char* msg, uint64_t data)
 {

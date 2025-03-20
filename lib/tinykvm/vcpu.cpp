@@ -276,6 +276,12 @@ tinykvm_fpuregs vCPU::fpu_registers() const
 	}
 	return regs;
 }
+void vCPU::set_fpu_registers(const struct tinykvm_fpuregs& regs)
+{
+	if (ioctl(this->fd, KVM_SET_FPU, &regs) < 0) {
+		Machine::machine_exception("KVM_SET_FPU failed");
+	}
+}
 const kvm_sregs& vCPU::get_special_registers() const
 {
 #ifndef TINYKVM_USE_SYNCED_SREGS

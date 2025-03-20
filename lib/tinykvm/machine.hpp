@@ -28,6 +28,7 @@ struct Machine
 	void setup_linux(const std::vector<std::string>& args,
 					const std::vector<std::string>& env = {});
 	void run(float timeout_secs = 0.f);
+	void run_in_usermode(float timeout_secs = 0.f);
 
 	/* Make a SYSV function call into the VM, with no timeout */
 	template <typename... Args>
@@ -108,6 +109,7 @@ struct Machine
 	const tinykvm_x86regs& registers() const;
 	void set_registers(const tinykvm_x86regs&);
 	tinykvm_fpuregs fpu_registers() const;
+	void set_fpu_registers(const tinykvm_fpuregs&);
 	const kvm_sregs& get_special_registers() const;
 	void set_special_registers(const kvm_sregs&);
 	std::pair<__u64, __u64> get_fsgs() const;
