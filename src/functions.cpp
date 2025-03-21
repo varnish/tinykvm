@@ -144,11 +144,9 @@ void setup_kvm_system_calls()
 				regs.rsi = (regs.rsi + PageMask) & ~PageMask;
 				if constexpr (true) {
 					auto range = cpu.machine().mmap_cache().find(regs.rsi);
-					// Not found in cache, increment MM base address
+					// Not found in cache, allocate new range
 					if (range.empty()) {
-						auto& mm = cpu.machine().mmap();
-						regs.rax = mm;
-						mm += regs.rsi;
+						regs.rax = cpu.machine().mmap_allocate(regs.rsi);
 					}
 					else
 					{
@@ -160,9 +158,7 @@ void setup_kvm_system_calls()
 						cpu.machine().memzero(range.addr, regs.rsi);
 					}
 				} else {
-					auto& mm = cpu.machine().mmap();
-					regs.rax = mm;
-					mm += regs.rsi;
+					regs.rax = cpu.machine().mmap_allocate(regs.rsi);
 				}
 			}
 			PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
