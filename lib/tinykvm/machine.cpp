@@ -97,6 +97,11 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 		m_mt.reset(new MultiThreading{*this});
 		m_mt->reset_to(*other.m_mt);
 	}
+
+	/* Copy register state from the master machine */
+	auto& m_regs = other.registers();
+	this->set_registers(m_regs);
+	this->set_fpu_registers(other.fpu_registers());
 }
 
 __attribute__ ((cold))
