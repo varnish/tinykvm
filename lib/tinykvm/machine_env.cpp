@@ -92,14 +92,26 @@ void Machine::setup_linux(__u64& rsp,
 	push_down(*this, dst, platform, sizeof(platform));
 	const auto platform_addr = dst;
 
-	/* Push program headers */
+	/* ELF program headers */
 	const auto* binary_ehdr = elf_offset<Elf64_Ehdr> (m_binary, 0);
 	const auto* binary_phdr = elf_offset<Elf64_Phdr> (m_binary, binary_ehdr->e_phoff);
 	const unsigned phdr_count = binary_ehdr->e_phnum;
-	dst -= phdr_count * sizeof(Elf64_Phdr);
-	dst &= ~0xFLL;
-	const auto phdr_location = dst;
-	this->copy_to_guest(dst, binary_phdr, phdr_count * sizeof(Elf64_Phdr));
+
+	/* Check if we have a PT_PHDR program header already loaded into memory */
+	address_t phdr_location = 0;
+	for (unsigned i = 0; i < phdr_count; i++) {
+		if (binary_phdr[i].p_type == PT_PHDR) {
+			phdr_location = this->m_image_base + binary_phdr[i].p_vaddr;
+			break;
+		}
+	}
+	if (phdr_location == 0) {
+		/* Push program headers */
+		dst -= phdr_count * sizeof(Elf64_Phdr);
+		dst &= ~0xFLL;
+		phdr_location = dst;
+		this->copy_to_guest(dst, binary_phdr, phdr_count * sizeof(Elf64_Phdr));
+	}
 
 	/* Push arguments to main() */
 	std::vector<address_t> argv;
