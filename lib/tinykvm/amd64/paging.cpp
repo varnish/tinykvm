@@ -66,11 +66,12 @@ static void add_remappings(vMemory& memory,
 		throw MachineException("Invalid remapping address", remapping.virt);
 	if (remapping.size % vMemory::PageSize() != 0)
 		throw MachineException("Invalid remapping size", remapping.size);
-	const auto virt_tera_page = (remapping.virt >> 39UL) & 511;
-	const auto virt_giga_page = (remapping.virt >> 30UL) & 511;
+	const auto virt_tera_page = (remapping.virt >> 39U) & 511;
+	auto virt_giga_page = (remapping.virt >> 30U) & 511;
 
 	uint64_t paddr_base = remapping.phys;
-	if (paddr_base == 0x0) {
+	// Blackout remappings are used to reserve/create unmapped virtual memory space
+	if (paddr_base == 0x0 && !remapping.blackout) {
 		constexpr auto PD_ALIGN_MASK = (1ULL << 21U) - 1;
 		// Over-allocate rounding up to nearest 2MB
 		paddr_base = memory.machine.mmap_allocate(remapping.size + PD_ALIGN_MASK);
@@ -89,25 +90,33 @@ static void add_remappings(vMemory& memory,
 	auto  pdpt_addr = pml4[virt_tera_page] & PDE64_ADDR_MASK;
 	auto* pdpt = memory.page_at(pdpt_addr);
 
-	// Allocate the gigapage with 512x 2MB entries
-	if (pdpt[virt_giga_page] == 0) {
-		const auto giga_page = free_page;
-		free_page += 0x1000;
-		pdpt[virt_giga_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | giga_page;
-	}
-
-	auto  pd_addr = pdpt[virt_giga_page] & PDE64_ADDR_MASK;
-	auto* pd = memory.page_at(pd_addr);
-
-	// Create 2MB entries for remapping size
-	const auto n_2mb_pages = (remapping.size >> 21UL) & 511;
-	for (uint64_t i = 0; i < 512; i++)
+	constexpr auto PDPT_ALIGN_MASK = (1ULL << 30U) - 1;
+	const auto n_pd_pages = ((remapping.size + PDPT_ALIGN_MASK) >> 30UL) & 511;
+	for (uint64_t n_pd = 0; n_pd < n_pd_pages; n_pd++)
 	{
-		const auto paddr = paddr_base + (i << 21UL);
-		if (i < n_2mb_pages)
-			pd[i] = PDE64_PRESENT | flags | PDE64_PS | paddr;
-		else
-			pd[i] = 0;
+		// Allocate the gigapage with 512x 2MB entries
+		if (pdpt[virt_giga_page] == 0) {
+			const auto giga_page = free_page;
+			free_page += 0x1000;
+			pdpt[virt_giga_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | giga_page;
+		}
+
+		auto  pd_addr = pdpt[virt_giga_page] & PDE64_ADDR_MASK;
+		auto* pd = memory.page_at(pd_addr);
+
+		// Create 2MB entries for remapping size
+		constexpr auto PD_ALIGN_MASK = (1ULL << 21U) - 1;
+		const auto n_2mb_pages = ((remapping.size + PD_ALIGN_MASK) >> 21UL) & 511;
+		for (uint64_t i = 0; i < 512; i++)
+		{
+			if (i < n_2mb_pages && !remapping.blackout) {
+				const auto paddr = paddr_base + (i << 21UL);
+				pd[i] = PDE64_PRESENT | flags | PDE64_PS | paddr;
+			}
+			else pd[i] = 0; // Unmapped 2MB page (remainder or blackout)
+		}
+
+		virt_giga_page++; // Next gigapage
 	}
 
 	// Track the first seen executable mapping, allowing mmap to use it for
@@ -306,6 +315,11 @@ uint64_t setup_amd64_paging(vMemory& memory,
 		uint64_t flags = PDE64_USER | PDE64_NX;
 		if (vmem.writable) flags |= PDE64_RW;
 		if (vmem.executable) flags &= ~PDE64_NX;
+		if (vmem.blackout) flags = 0;
+		if constexpr (true) {
+			printf("* Remapping 0x%lX -> 0x%lX  size 0x%lX write=%d exec=%d blackout=%d\n",
+				vmem.virt, vmem.phys, vmem.size, vmem.writable, vmem.executable, vmem.blackout);
+		}
 		add_remappings(memory, vmem, pml4, flags, free_page);
 	}
 

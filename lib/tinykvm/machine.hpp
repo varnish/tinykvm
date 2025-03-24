@@ -147,7 +147,7 @@ struct Machine
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t mmap_allocate(size_t bytes);
 	bool      mmap_unmap(uint64_t addr, size_t size);
-	bool allow_fixed_mmap() const noexcept { return m_allow_fixed_mmap; }
+	bool relocate_fixed_mmap() const noexcept { return m_relocate_fixed_mmap; }
 	bool mmap_relax(uint64_t addr, size_t size, size_t new_size);
 	auto& mmap_cache() noexcept { return m_mmap_cache; }
 
@@ -239,7 +239,7 @@ private:
 	bool  m_prepped = false;
 	bool  m_forked = false;
 	bool  m_just_reset = false;
-	bool  m_allow_fixed_mmap = false;
+	bool  m_relocate_fixed_mmap = false;
 	void* m_userdata = nullptr;
 
 	std::string_view m_binary;

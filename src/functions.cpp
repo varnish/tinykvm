@@ -134,7 +134,7 @@ void setup_kvm_system_calls()
 				} else {
 					regs.rax = ~0LL; /* MAP_FAILED */
 				}
-			} else if (regs.rdi != 0x0 && cpu.machine().allow_fixed_mmap()) {
+			} else if (regs.rdi != 0x0 && !cpu.machine().relocate_fixed_mmap()) {
 				regs.rax = regs.rdi;
 			} else if (regs.rdi != 0x0 && regs.rdi >= cpu.machine().heap_address() && regs.rdi < cpu.machine().mmap_start()) {
 				// Existing range already mmap'ed

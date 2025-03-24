@@ -27,6 +27,7 @@ namespace tinykvm
 		size_t   size;
 		bool     writable = false;
 		bool     executable = false;
+		bool     blackout = false; /* Unmapped virtual area */
 	};
 
 	struct MachineOptions {
@@ -51,8 +52,8 @@ namespace tinykvm
 		/* When enabled, reset_to() will accept a different
 		   master VM than the original, but at a steep cost. */
 		bool allow_reset_to_new_master = false;
-		/* Allow fixed addresses with mmap(). */
-		bool allow_fixed_mmap = false;
+		/* Force-relocate fixed addresses with mmap(). */
+		bool relocate_fixed_mmap = true;
 		/* Make heap executable, to support JIT. */
 		bool executable_heap = false;
 	};

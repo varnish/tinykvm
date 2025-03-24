@@ -68,7 +68,7 @@ int main(int argc, char** argv)
 		.remappings {remappings},
 		.verbose_loader = (getenv("VERBOSE") != nullptr),
 		.hugepages = (getenv("HUGE") != nullptr),
-		.allow_fixed_mmap = (getenv("GO") != nullptr),
+		.relocate_fixed_mmap = (getenv("GO") == nullptr),
 	};
 	tinykvm::Machine master_vm {binary, options};
 	//master_vm.print_pagetables();
