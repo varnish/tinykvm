@@ -468,8 +468,7 @@ void RSPClient::handle_writemem()
 			if (data == '{' && i+1 < rlen) {
 				data = bin[++i] ^ 0x20;
 			}
-			auto* mem = machine().rw_memory_at(addr+i, 1);
-			mem[0] = data;
+			machine().copy_to_guest(addr+i, &data, 1);
 		}
 		reply_ok();
 	} catch (...) {
@@ -659,12 +658,14 @@ void RSPClient::report_gprs()
 			const auto offset = cpu().exception_extra_offset(cpu().current_exception);
 			if (i == 16)
 			{
-				char* rip = machine().unsafe_memory_at(regs.rsp+offset, 8);
-				putreg(d, end, *(uint64_t *)rip);
+				uint64_t rip;
+				machine().unsafe_copy_from_guest(&rip, regs.rsp+offset, 8);
+				putreg(d, end, rip);
 				continue;
 			} else if (i == 7) {
-				char* rip = machine().unsafe_memory_at(regs.rsp+offset+24, 8);
-				putreg(d, end, *(uint64_t *)rip);
+				uint64_t rip;
+				machine().unsafe_copy_from_guest(&rip, regs.rsp+offset+24, 8);
+				putreg(d, end, rip);
 				continue;
 			}
 		}
