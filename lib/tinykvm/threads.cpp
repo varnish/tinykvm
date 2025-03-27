@@ -66,7 +66,9 @@ void Thread::exit()
 	if (this->clear_tid) {
 		THPRINT("Clearing thread value for tid=%d at 0x%lX\n",
 				this->tid, this->clear_tid);
-		*(uint32_t*) mt.machine.rw_memory_at(this->clear_tid, 4) = 0;
+		// clear the thread id in the parent
+		const uint32_t value = 0;
+		mt.machine.copy_to_guest(this->clear_tid, &value, sizeof(value));
 	}
 	auto& thr = this->mt;
 	// delete this thread
@@ -130,11 +132,13 @@ Thread& MultiThreading::create(
 	}
 	if (flags & CLONE_CHILD_SETTID) {
 		THPRINT("CHILD_SETTID at 0x%lX\n", ctid);
-		*(uint32_t*) machine.rw_memory_at(ctid, 4) = tid;
+		// set the thread id in the child
+		machine.copy_to_guest(ctid, &tid, sizeof(tid));
 	}
 	if (flags & CLONE_PARENT_SETTID) {
 		THPRINT("PARENT_SETTID at 0x%lX\n", ptid);
-		*(uint32_t*) machine.rw_memory_at(ptid, 4) = tid;
+		// set the thread id in the parent
+		machine.copy_to_guest(ptid, &tid, sizeof(tid));
 	}
 	if (flags & CLONE_CHILD_CLEARTID) {
 		THPRINT("CHILD_CLEARTID at 0x%lX\n", ctid);
@@ -304,11 +308,12 @@ void Machine::setup_multithreading()
 			const auto futex_op = regs.rsi;
 			const uint32_t val = regs.rdx;
 			THPRINT("Futex on: 0x%llX  val=%d\n", regs.rdi, val);
-			auto* fx = cpu.machine().template rw_memory_at<uint32_t>(addr, 4);
 
 			if ((futex_op & 0xF) == FUTEX_WAIT || (futex_op & 0xF) == FUTEX_WAIT_BITSET) {
-				THPRINT("FUTEX: Waiting for unlock... uaddr=%u val=%u\n", *fx, val);
-				if (*fx == val) {
+				uint32_t futexVal;
+				cpu.machine().copy_from_guest(&futexVal, addr, sizeof(futexVal));
+				THPRINT("FUTEX: Waiting for unlock... uaddr=%u val=%u\n", futexVal, val);
+				if (futexVal == val) {
 					if (cpu.machine().threads().suspend_and_yield()) {
 						return;
 					}

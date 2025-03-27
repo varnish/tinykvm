@@ -359,3 +359,93 @@ extern void crash() {
 		}());
 	}
 }
+
+TEST_CASE("Fork and run main()", "[Fork]")
+{
+	const auto binary = build_and_load(R"M(
+int main() {
+	return 666;
+}
+static unsigned value = 12345;
+void set_value(int v) {
+	value = v;
+}
+int func1() {
+	return value;
+}
+int func2() {
+	return 54321;
+}
+)M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+
+	// We need to create a Linux environment for runtimes to work well
+	machine.setup_linux({"fork"}, env);
+	REQUIRE(machine.banked_memory_pages() == 0);
+
+	// Make machine forkable (with *NO* working memory)
+	machine.prepare_copy_on_write(4ULL << 20);
+	REQUIRE(machine.is_forkable());
+	REQUIRE(!machine.is_forked());
+	REQUIRE(machine.return_value() == 0); // Initial register value
+
+	// Run for at most 4 seconds before giving up
+	machine.run(4.0f);
+	REQUIRE(machine.return_value() == 666); // Main() return value
+
+	// We only gave it 4MB working memory, so lets mmap allocate that and verify
+	// that if we write more than that, we get an exception thrown
+	REQUIRE_THROWS([&] () {
+		const size_t size = 5ULL << 20;
+		uint64_t addr = machine.mmap_allocate(5ULL << 20);
+		char buffer[4096];
+		for (int i = 0; i < 4096; i++)
+			buffer[i] = 'a';
+		for (size_t i = 0; i < size; i += 4096)
+		{
+			machine.copy_to_guest(addr + i, buffer, 4096);
+		}
+		// Unreachable
+		abort();
+	}());
+
+	// There are banked pages now
+	const auto banked_pages_before = machine.banked_memory_pages();
+	REQUIRE(banked_pages_before > 500);
+
+	// Create fork
+	auto fork1 = tinykvm::Machine { machine, {
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+	} };
+	REQUIRE(fork1.return_value() == 666); // Main() return value
+
+	fork1.vmcall("func1");
+	REQUIRE(fork1.return_value() == 12345);
+
+	fork1.vmcall("func2");
+	REQUIRE(fork1.return_value() == 54321);
+
+	// This is problematic, but we will try to fix this later
+	// Forked VM is supposed to diverge from the main VM, regardless of mode
+	machine.vmcall("set_value", 99999);
+	fork1.vmcall("func1");
+	REQUIRE(fork1.return_value() == 99999);
+
+	REQUIRE(machine.banked_memory_pages() == banked_pages_before);
+	REQUIRE(fork1.banked_memory_pages() > 0);
+
+	for (int i = 0; i < 20; i++)
+	{
+		fork1.reset_to(machine, {
+			.max_mem = MAX_MEMORY,
+			.max_cow_mem = MAX_COWMEM,
+		});
+
+		fork1.vmcall("func1");
+		REQUIRE(fork1.return_value() == 99999);
+
+		fork1.vmcall("func2");
+		REQUIRE(fork1.return_value() == 54321);
+	}
+}
