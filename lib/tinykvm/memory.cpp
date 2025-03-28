@@ -1,6 +1,7 @@
 #include "machine.hpp"
 #include <cstring>
 #include <sys/mman.h>
+#include <stdexcept>
 #include <string>
 #include <unistd.h>
 #include <unordered_set>
@@ -285,11 +286,7 @@ size_t Machine::banked_memory_pages() const noexcept
 }
 size_t Machine::banked_memory_capacity_pages() const noexcept
 {
-	size_t count = 0;
-	for (const auto& bank : memory.banks) {
-		count += bank.n_pages;
-	}
-	return count;
+	return memory.banks.max_pages();
 }
 
 __attribute__((cold, noreturn))
@@ -298,6 +295,18 @@ void vMemory::memory_exception(const char* msg, uint64_t addr, uint64_t size)
 	throw MemoryException(msg, addr, size);
 }
 
+void vMemory::increment_unlocked_pages(size_t pages)
+{
+	if (this->main_memory_writes) {
+		this->unlocked_pages += pages;
+		if (this->unlocked_pages > this->banks.max_pages()) {
+			memory_exception("Out of working memory",
+				this->unlocked_pages * PAGE_SIZE, this->banks.max_pages() * PAGE_SIZE);
+		}
+	} else {
+		memory_exception("Memory::increment_unlocked_pages() without direct main memory writes enabled", 0, pages);
+	}
+}
 
 uint64_t vMemory::expectedUsermodeFlags() const noexcept
 {

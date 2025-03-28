@@ -22,6 +22,9 @@ struct vMemory {
 	/* Optional executable memory range */
 	uint64_t vmem_exec_begin = 0;
 	uint64_t vmem_exec_end   = 0;
+	/* Counter for the number of pages that have been unlocked
+	   in the main memory. */
+	size_t unlocked_pages = 0;
 	/* Linear memory */
 	char*  ptr;
 	size_t size;
@@ -61,6 +64,14 @@ struct vMemory {
 	MemoryBank::Page new_hugepage();
 
 	bool compare(const vMemory& other);
+	/* When a main VM has direct memory writes enabled, it can
+	   write directly to its own memory, but in order to constrain
+	   the memory usage, we need to keep track of the number of
+	   pages that have been unlocked. */
+	void increment_unlocked_pages(size_t pages);
+	size_t unlocked_memory_pages() const noexcept {
+		return unlocked_pages;
+	}
 
 	VirtualMem vmem() const;
 
