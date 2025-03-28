@@ -37,7 +37,7 @@ namespace tinykvm
 		uint32_t reset_free_work_mem = 0; /* reset_to() */
 		uint64_t vmem_base_address = 0;
 		std::string_view binary = {};
-		std::vector<VirtualRemapping> remappings;
+		std::vector<VirtualRemapping> remappings {};
 
 		bool verbose_loader = false;
 		bool short_lived = false;
@@ -46,7 +46,7 @@ namespace tinykvm
 		/* When enabled, master VMs will write directly
 		   to their own main memory instead of memory banks,
 		   allowing forks to immediately see changes. */
-		bool master_direct_memory_writes = true;
+		bool master_direct_memory_writes = false;
 		/* When enabled, split hugepages during page faults. */
 		bool split_hugepages = false;
 		/* When enabled, reset_to() will accept a different

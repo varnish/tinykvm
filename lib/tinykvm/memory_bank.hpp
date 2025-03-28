@@ -50,12 +50,14 @@ struct MemoryBank {
 
 struct MemoryBanks {
 	static constexpr unsigned FIRST_BANK_IDX = 2;
+	static constexpr uint64_t ARENA_BASE_ADDRESS = 0x7000000000;
 
 	MemoryBanks(Machine&, const MachineOptions&);
 
 	MemoryBank& get_available_bank(size_t n_pages);
 	void reset(const MachineOptions&);
 	void set_max_pages(size_t new_max);
+	size_t max_pages() const noexcept { return m_max_pages; }
 
 	bool using_hugepages() const noexcept { return m_using_hugepages; }
 

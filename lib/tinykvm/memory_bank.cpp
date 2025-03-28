@@ -14,7 +14,7 @@ static constexpr bool MADVISE_NOT_DELETE  = true;
 
 MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	: m_machine { machine },
-	  m_arena_begin { 0x7000000000 },
+	  m_arena_begin { ARENA_BASE_ADDRESS },
 	  m_arena_next { m_arena_begin },
 	  m_idx_begin { FIRST_BANK_IDX },
 	  m_idx { m_idx_begin },
@@ -27,10 +27,8 @@ void MemoryBanks::set_max_pages(size_t new_max)
 	this->m_max_pages = new_max;
 	//fprintf(stderr, "max_pages: %zu/%zu\n", m_mem.size(), new_max);
 	/* Reserve the maximum number of banks possible.
-	   We have to + 1 to make sure it's rounded up, avoiding
-	   any possible reallocations close to being out of memory.
 	   NOTE: DO NOT modify this! Needs deque behavior. */
-	m_mem.reserve(m_max_pages / MemoryBank::N_PAGES + 1);
+	m_mem.reserve((m_max_pages + MemoryBank::N_PAGES-1) / MemoryBank::N_PAGES);
 }
 
 char* MemoryBanks::try_alloc(size_t N)
@@ -81,8 +79,8 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 	/* Allocate new memory bank if we are not maxing out memory */
 	if (m_num_pages < m_max_pages) {
 		if constexpr (VERBOSE_MEMORY_BANK) {
-			printf("Allocating new bank at 0x%lX with total pages %u\n",
-				m_arena_next, m_num_pages + MemoryBank::N_PAGES);
+			printf("Allocating new bank at 0x%lX with total pages %u/%u\n",
+				m_arena_next, m_num_pages + MemoryBank::N_PAGES, m_max_pages);
 		}
 		auto& bank = this->allocate_new_bank(m_arena_next);
 		m_num_pages += bank.n_pages;

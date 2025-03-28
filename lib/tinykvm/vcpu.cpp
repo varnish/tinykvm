@@ -377,14 +377,12 @@ void vCPU::set_vcpu_table_at(unsigned index, int value)
 
 void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_boundary)
 {
-	assert(this->m_prepped == false);
 	this->m_prepped = true;
 	/* Make each writable page read-only, causing page fault.
 	   any page after the @shared_memory_boundary is untouched,
 	   effectively turning it into a shared memory area for all. */
 	if (shared_memory_boundary == 0)
 		shared_memory_boundary = UINT64_MAX;
-	foreach_page_makecow(this->memory, kernel_end_address(), shared_memory_boundary);
 
 	// Visualizing the page tables after makecow should show that all
 	// relevant user-writable pages have been made read-only and cloneable
@@ -395,10 +393,27 @@ void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_
 	memory.banks.set_max_pages(max_work_mem / PAGE_SIZE);
 	/* Without working memory we will not be able to make
 	   this master VM usable after prepare_copy_on_write. */
-	if (max_work_mem == 0)
+	if (max_work_mem == 0) {
+		/* If there are previously banked pages, we need to
+		   flatten them into the main memory. */
+		/// XXX: Implement memory flattening
+		memory.page_tables = memory.physbase + PT_ADDR;
+		struct kvm_sregs sregs = this->get_special_registers();
+
+		/* Page table entry will be cloned at the start */
+		sregs.cr3 = memory.page_tables;
+		sregs.cr0 |= CR0_WP;
+
+		vcpu.set_special_registers(sregs);
+		this->enter_usermode();
+
+		foreach_page_makecow(this->memory, kernel_end_address(), shared_memory_boundary);
 		return;
+	}
+
 	/* This call makes this VM usable after making every page in the
 	   page tables read-only, enabling memory through page faults. */
+	foreach_page_makecow(this->memory, kernel_end_address(), shared_memory_boundary);
 	this->setup_cow_mode(this);
 }
 void Machine::setup_cow_mode(const Machine* other)
