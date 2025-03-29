@@ -463,7 +463,35 @@ int func2() {
 		fork1.vmcall("func1");
 		REQUIRE(fork1.return_value() == 12345);
 
-		fork1.vmcall("func2");
-		REQUIRE(fork1.return_value() == 54321);
+		fork1.vmcall("set_value", 22222);
+
+		fork1.vmcall("func1");
+		REQUIRE(fork1.return_value() == 22222);
+
+		REQUIRE_THROWS([&] () {
+			const size_t size = 8ULL << 20;
+			uint64_t addr = fork1.mmap_allocate(size);
+			char buffer[4096];
+			memset(buffer, 'a', sizeof(buffer));
+			for (size_t i = 0; i < size; i += 4096)
+			{
+				fork1.copy_to_guest(addr + i, buffer, 4096);
+			}
+			// Unreachable
+			abort();
+		}());
+
+		auto fork2 = tinykvm::Machine { machine2, {
+			.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+		} };
+		REQUIRE(fork2.return_value() == 666); // Main() return value
+
+		fork2.vmcall("func1");
+		REQUIRE(fork2.return_value() == 12345);
+
+		fork2.vmcall("set_value", 22222);
+
+		fork2.vmcall("func1");
+		REQUIRE(fork2.return_value() == 22222);
 	}
 }
