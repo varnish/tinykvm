@@ -42,6 +42,8 @@ struct Machine
 	void timed_vmcall_stack(address_t, address_t stk, float timeout, Args&&...);
 	/* Retrieve optional return value from a vmcall */
 	long return_value() const;
+	/* Resume the VM from a paused state */
+	void vmresume(float timeout_secs = 0.f);
 
 	auto& cpu() noexcept { return this->vcpu; }
 	const auto& cpu() const noexcept { return this->vcpu; }
@@ -138,6 +140,7 @@ struct Machine
 	address_t stack_address() const noexcept { return this->m_stack_address; }
 	address_t heap_address() const noexcept { return this->m_heap_address; }
 	address_t entry_address() const noexcept;
+	address_t preserving_entry_address() const noexcept;
 	address_t exit_address() const noexcept;
 	void set_stack_address(address_t addr) { this->m_stack_address = addr; }
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }

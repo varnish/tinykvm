@@ -2,6 +2,8 @@
 
 dw .vm64_entry
 dw .vm64_rexit
+dw .vm64_preserving_entry
+dw 0
 dd .vm64_cpuid
 
 ALIGN 0x10
@@ -23,6 +25,22 @@ ALIGN 0x10
 	mov eax, 0xFFFF
 	out 0, eax
 	jmp .vm64_rexit_retry
+.vm64_preserving_entry:
+	;; This is the entry point for a paused VM where
+	;; its in the middle of a user program, so every
+	;; register must be preserved. We need to flush
+	;; the pagetables to ensure the guest can see the
+	;; correct memory. Since the guest is potentially
+	;; blind here, the host has pushed the registers
+	;; necessary to perform the syscall safely.
+	mov rax, 0x1F777
+	syscall
+	pop r11 ;; used by syscall for rflags
+	pop rcx ;; used by syscall for rip
+	pop rax
+	;; With the registers restored, we can now
+	;; return to the guest program.
+	ret
 
 
 %macro  vcputable 1 
