@@ -22,8 +22,8 @@ namespace tinykvm {
 
 /* We want to remove the CLONEABLE bit after a page has been duplicated */
 static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
-static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~PDE64_CLONEABLE;
-static constexpr uint64_t PDE64_PD_SPLIT_MASK = 0x8000000000000FFF & ~(PDE64_RW | PDE64_CLONEABLE);
+static constexpr uint64_t PDE64_CLONED_MASK = 0x8000000000000FFF & ~(PDE64_CLONEABLE | PDE64_G);
+static constexpr uint64_t PDE64_PD_SPLIT_MASK = 0x8000000000000FFF & ~(PDE64_RW | PDE64_CLONEABLE | PDE64_G);
 
 __attribute__((cold, noinline, noreturn))
 static void memory_exception(const char*, uint64_t addr, uint64_t sz);
@@ -99,6 +99,15 @@ static void add_remappings(vMemory& memory,
 			const auto giga_page = free_page;
 			free_page += 0x1000;
 			pdpt[virt_giga_page] = PDE64_PRESENT | PDE64_USER | PDE64_RW | giga_page;
+
+			if (n_pd > 0 && n_pd-1 < n_pd_pages) {
+				// This entire page (all 512x 2MB entries) has a mapping
+				if (remapping.blackout) {
+					// Unmap the entire page
+					pdpt[virt_giga_page] = 0;
+					continue;
+				}
+			}
 		}
 
 		auto  pd_addr = pdpt[virt_giga_page] & PDE64_ADDR_MASK;
@@ -167,9 +176,16 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	pml4[511] = PDE64_PRESENT | PDE64_USER | vdso_pdpt_addr;
 
 	const auto base_giga_page = (memory.physbase >> 30UL) & 511;
-	for (size_t i = 0; i < PD_PAGES; i++)
+	for (size_t n_pd = 0; n_pd < PD_PAGES; n_pd++)
 	{
-		pdpt[base_giga_page+i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpage_addr.at(i);
+		auto& pdpt_entry = pdpt[base_giga_page+n_pd];
+		pdpt_entry = PDE64_PRESENT | PDE64_USER | PDE64_RW | pdpage_addr.at(n_pd);
+
+		// If this is not the first 1GB page, and there is >= 1GB left,
+		// treat this as a leaf 1GB page by setting the PS bit.
+		//if (n_pd > 0 && n_pd-1 < PD_PAGES) {
+		//	pdpt_entry |= PDE64_PS;
+		//}
 	}
 
 	const auto base_2mb_page = (memory.physbase >> 21UL) & 511;
@@ -318,6 +334,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	{
 		uint64_t flags = PDE64_USER | PDE64_NX;
 		if (vmem.writable) flags |= PDE64_RW;
+		else flags |= PDE64_G; // Global bit for read-only pages
 		if (vmem.executable) flags &= ~PDE64_NX;
 		if (vmem.blackout) flags = 0;
 		if constexpr (true) {
@@ -337,7 +354,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	const size_t kernel_begin_idx = PT_ADDR >> 12;
 	const size_t kernel_end_idx = (free_page >> 12) & 511;
 	for (unsigned i = kernel_begin_idx; i < kernel_end_idx; i++) {
-		lowpage[i] = PDE64_PRESENT | PDE64_NX;
+		lowpage[i] = PDE64_PRESENT | PDE64_G | PDE64_NX;
 	}
 
 	/* Stack area ~64KB -> 2MB */
@@ -443,6 +460,10 @@ void foreach_page(vMemory& memory, foreach_page_t callback)
 					const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
 					callback(pd_base, pdpt[j], pd_size);
 
+					if (pdpt[j] & PDE64_PS) { // 1GB page
+						continue;
+					}
+
 					// Skip out-of-bounds memory, as it may not be relevant for foreach
 					// (also, it is impossible to read page-memory out of bounds...)
 					if (pd_mem >= memory.physbase + memory.size)
@@ -486,7 +507,7 @@ void foreach_page_makecow(vMemory& mem, uint64_t kernel_end, uint64_t shared_mem
 			const uint64_t flags = (PDE64_PRESENT | PDE64_RW);
 			if ((entry & flags) == flags) {
 				entry &= ~PDE64_RW;
-				entry |= PDE64_CLONEABLE;
+				entry |= PDE64_CLONEABLE | PDE64_G; // Global bit for read-only pages
 			}
 		}
 	});
@@ -540,7 +561,7 @@ inline bool is_copy_on_modify(uint64_t entry) {
 
 static void unlock_identity_mapped_entry(uint64_t& entry) {
 	/* Make page directly writable */
-	entry &= ~PDE64_CLONEABLE;
+	entry &= ~(PDE64_CLONEABLE | PDE64_G);
 	entry |= PDE64_RW;
 }
 static void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
@@ -619,7 +640,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 						pd[k] &= ~(uint64_t)PDE64_PS;
 						/* Copy flags from 2MB page, except read-write */
 						uint64_t flags = pd[k] & PDE64_PD_SPLIT_MASK;
-						uint64_t branch_flags = flags | PDE64_CLONEABLE;
+						uint64_t branch_flags = flags | PDE64_CLONEABLE | PDE64_G;
 						/* Allocate pagetable page and fill 4k entries.
 						NOTE: new_page() makes page not a candidate for
 						sequentialization for eg. vmcommit() later on. */
