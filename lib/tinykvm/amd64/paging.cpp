@@ -178,12 +178,12 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	lowpage[0] = 0; /* Null-page at PHYS+0x0 */
 	/* GDT, IDT and TSS */
 	lowpage[1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (memory.physbase + 0x1000);
-	lowpage[6] = PDE64_PRESENT | PDE64_NX | (memory.physbase + VSYS_ADDR);
-	lowpage[7] = PDE64_PRESENT | PDE64_NX | (memory.physbase + TSS_SMP_ADDR);
+	lowpage[6] = PDE64_PRESENT | PDE64_G | PDE64_NX | (memory.physbase + VSYS_ADDR);
+	lowpage[7] = PDE64_PRESENT | PDE64_G | PDE64_NX | (memory.physbase + TSS_SMP_ADDR);
 
 	/* Kernel code: Exceptions, system calls */
 	const uint64_t except_page = INTR_ASM_ADDR >> 12;
-	lowpage[except_page] = PDE64_PRESENT | (memory.physbase + INTR_ASM_ADDR);
+	lowpage[except_page] = PDE64_PRESENT | PDE64_G | (memory.physbase + INTR_ASM_ADDR);
 
 	/* Exception (IST) stack */
 	const uint64_t ist_page = IST_ADDR >> 12;
@@ -192,7 +192,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 
 	/* Usercode page: Entry, exit */
 	const uint64_t user_page = USER_ASM_ADDR >> 12;
-	lowpage[user_page] = PDE64_PRESENT | PDE64_USER | (memory.physbase + USER_ASM_ADDR);
+	lowpage[user_page] = PDE64_PRESENT | PDE64_USER | PDE64_G | (memory.physbase + USER_ASM_ADDR);
 
 	/* Initial userspace area (no execute) */
 	pd[base_2mb_page+1] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
@@ -263,6 +263,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 							ptentry = PDE64_PRESENT | PDE64_USER | PDE64_NX | PDE64_PS | addr2m;
 							if (!read) ptentry &= ~PDE64_PRESENT; // A weird one, but... AMD64.
 							if (write) ptentry |= PDE64_RW;
+							else ptentry |= PDE64_G; // Global bit for read-only pages
 							if (exec) ptentry &= ~PDE64_NX;
 							// Increment whole 2MB page
 							addr += (1UL << 21);
@@ -302,7 +303,10 @@ uint64_t setup_amd64_paging(vMemory& memory,
 					else
 						ptentry |= PDE64_NX;
 					if (!read) ptentry &= ~PDE64_PRESENT;
-					if (!write) ptentry &= ~PDE64_RW;
+					if (!write) {
+						ptentry &= ~PDE64_RW;
+						ptentry |= PDE64_G; // Global bit for read-only pages
+					}
 					addr += 0x1000;
 				}
 			}
