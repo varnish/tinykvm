@@ -139,7 +139,8 @@ static void add_remappings(vMemory& memory,
 
 uint64_t setup_amd64_paging(vMemory& memory,
 	std::string_view binary,
-	const std::vector<VirtualRemapping>& remappings)
+	const std::vector<VirtualRemapping>& remappings,
+	bool split_hugepages)
 {
 	static constexpr uint64_t PD_MASK = (1ULL << 30) - 1;
 	const size_t PD_PAGES = (memory.size + PD_MASK) >> 30;
@@ -267,7 +268,8 @@ uint64_t setup_amd64_paging(vMemory& memory,
 				{
 					auto pdidx = (addr >> 21) & 511;
 					// Look for *complete* 2MB pages within segment
-					if ((addr & ~0xFFFFFFFFFFE00FFFLL) == 0)
+					// If split_hugepages is enabled, we want to avoid writable 2MB pages
+					if ((addr & ~0xFFFFFFFFFFE00FFFLL) == 0 && (!split_hugepages || !write))
 					{
 						if (addr + (1UL << 21) <= end) {
 							// This is a 2MB-aligned ELF segment
