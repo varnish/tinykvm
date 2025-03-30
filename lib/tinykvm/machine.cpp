@@ -177,6 +177,13 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 	}
 
 	this->setup_cow_mode(&other);
+
+	if (options.reset_copy_all_registers) {
+		/* Copy register state from the master machine */
+		auto& m_regs = other.registers();
+		this->set_registers(m_regs);
+		this->set_fpu_registers(other.fpu_registers());
+	}
 }
 
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
