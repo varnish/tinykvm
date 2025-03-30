@@ -284,6 +284,14 @@ size_t Machine::banked_memory_pages() const noexcept
 	}
 	return count;
 }
+size_t Machine::banked_memory_allocated_pages() const noexcept
+{
+	size_t count = 0;
+	for (const auto& bank : memory.banks) {
+		count += bank.n_pages;
+	}
+	return count;
+}
 size_t Machine::banked_memory_capacity_pages() const noexcept
 {
 	return memory.banks.max_pages();

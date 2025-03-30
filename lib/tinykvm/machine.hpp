@@ -193,7 +193,9 @@ struct Machine
 	size_t banked_memory_pages() const noexcept;
 	size_t banked_memory_bytes() const noexcept { return banked_memory_pages() * vMemory::PageSize(); }
 	/* The extra memory capacity attached to a VM for copy-on-write mechanisms. */
-	size_t banked_memory_capacity_pages() const noexcept;
+	size_t banked_memory_allocated_pages() const noexcept; // How many pages out of the capacity are allocated (backed by memory)
+	size_t banked_memory_allocated_bytes() const noexcept { return banked_memory_allocated_pages() * vMemory::PageSize(); }
+	size_t banked_memory_capacity_pages() const noexcept; // How many pages is the VM allowed to allocate in total
 	size_t banked_memory_capacity_bytes() const noexcept { return banked_memory_capacity_pages() * vMemory::PageSize(); }
 
 	template <typename... Args> constexpr
