@@ -339,7 +339,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 		else flags |= PDE64_G; // Global bit for read-only pages
 		if (vmem.executable) flags &= ~PDE64_NX;
 		if (vmem.blackout) flags = 0;
-		if constexpr (true) {
+		if constexpr (false) {
 			printf("* Remapping 0x%lX -> 0x%lX  size 0x%lX write=%d exec=%d blackout=%d\n",
 				vmem.virt, vmem.phys, vmem.size, vmem.writable, vmem.executable, vmem.blackout);
 		}
