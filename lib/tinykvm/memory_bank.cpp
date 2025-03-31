@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstring>
 #include <malloc.h>
+#include <mutex>
 #include <sys/mman.h>
 
 namespace tinykvm {
@@ -31,16 +32,99 @@ void MemoryBanks::set_max_pages(size_t new_max)
 	m_mem.reserve((m_max_pages + MemoryBank::N_PAGES-1) / MemoryBank::N_PAGES);
 }
 
+/* The page bank tries to allocate a crapton of memory in a single mapping,
+   so we can use it for all the pages in *every* memory bank of *every* VM.
+   First it tries to allocate huge pages, and if that fails, it falls back to
+   normal pages. */
+struct PageBank
+{
+	static constexpr size_t N_PAGES = 64 * 1024; // 256MB
+
+	PageBank(bool hugepages)
+		: m_using_hugepages(hugepages)
+	{
+		this->extend(); // Throws MemoryException
+	}
+	~PageBank()
+	{
+		for (auto& mem : m_mem) {
+			munmap(mem, N_PAGES * vMemory::PageSize());
+		}
+	}
+	struct AcquiredPages
+	{
+		char*   addr;
+		size_t  pages;
+	};
+	AcquiredPages acquire_pages(size_t pages, bool hugepages)
+	{
+		if (this->m_using_hugepages != hugepages) {
+			throw MemoryException("Page bank mismatch", 0, pages * vMemory::PageSize());
+		}
+
+		std::scoped_lock lock(mtx);
+		if (this->m_current_page + pages > N_PAGES) {
+			this->extend(); // Throws MemoryException
+		}
+		AcquiredPages ap;
+		ap.addr = this->m_mem.back() + this->m_current_page * vMemory::PageSize();
+		ap.pages = pages;
+		this->m_current_page += pages;
+		this->m_total_used_pages += pages;
+		return ap;
+	}
+private:
+	void extend()
+	{
+		// Try to allocate huge pages first
+		if (this->m_using_hugepages) {
+			char* mem = (char*) mmap(NULL, N_PAGES * vMemory::PageSize(), PROT_READ | PROT_WRITE,
+				MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+			if (mem != MAP_FAILED) {
+				this->m_current_page = 0;
+				this->m_mem.push_back(mem);
+				return;
+			}
+		}
+		// If huge pages failed (or not being used), allocate normal pages
+		char* mem = (char*) mmap(NULL, N_PAGES * vMemory::PageSize(), PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+		if (mem != MAP_FAILED) {
+			this->m_current_page = 0;
+			this->m_mem.push_back(mem);
+			return;
+		}
+		throw MemoryException("Failed to extend page bank", 0, N_PAGES * vMemory::PageSize());
+	}
+	std::vector<char*> m_mem;
+	uint32_t m_current_page = 0;
+	uint32_t m_total_used_pages  = 0;
+	bool     m_using_hugepages = false;
+	mutable std::mutex mtx;
+};
+static PageBank page_bank { false };
+static PageBank hugepage_bank { true };
+
 char* MemoryBanks::try_alloc(size_t N)
 {
 	char* ptr = (char*)MAP_FAILED;
-	if (this->m_using_hugepages && N == 512) {
-		ptr = (char*) mmap(NULL, N * vMemory::PageSize(), PROT_READ | PROT_WRITE,
-			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
-	}
-	if (ptr == MAP_FAILED) {
-		return (char*) mmap(NULL, N * vMemory::PageSize(), PROT_READ | PROT_WRITE,
-			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+
+	if constexpr (false) {
+		if (this->m_using_hugepages && N == 512) {
+			ptr = (char*) mmap(NULL, N * vMemory::PageSize(), PROT_READ | PROT_WRITE,
+				MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+		}
+		if (ptr == MAP_FAILED) {
+			return (char*) mmap(NULL, N * vMemory::PageSize(), PROT_READ | PROT_WRITE,
+				MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+		}
+	} else {
+		// Use large page banks
+		if (this->m_using_hugepages) {
+			ptr = (char*) hugepage_bank.acquire_pages(N, true).addr;
+		} else {
+			ptr = (char*) page_bank.acquire_pages(N, false).addr;
+		}
 	}
 	return ptr;
 }
