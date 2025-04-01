@@ -647,8 +647,9 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 						NOTE: new_page() makes page not a candidate for
 						sequentialization for eg. vmcommit() later on. */
 						auto page = memory.new_page();
+						const uint64_t base_address = pd[k] & PDE64_ADDR_MASK;
 						for (size_t e = 0; e < 512; e++) {
-							page.pmem[e] = pt_base | (e << 12) | branch_flags;
+							page.pmem[e] = base_address | (e << 12) | branch_flags;
 						}
 						/* Update 2MB entry, add read-write */
 						pd[k] = page.addr | flags | PDE64_RW;
