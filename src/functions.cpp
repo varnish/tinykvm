@@ -2,6 +2,7 @@
 #include <tinykvm/threads.hpp>
 #include <cstring>
 #include <signal.h>
+#include <sys/mman.h>
 #include <sys/random.h>
 #include <sys/time.h>
 #include <sys/uio.h>
@@ -118,8 +119,10 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		9, [] (auto& cpu) { // MMAP
 			auto& regs = cpu.registers();
+			const uint64_t address = regs.rdi & ~PageMask;
+			const uint64_t length = (regs.rsi + PageMask) & ~PageMask;
 			const auto flags = regs.r10;
-			if (UNLIKELY(regs.rdi % vMemory::PageSize() != 0 || regs.rsi == 0)) {
+			if (UNLIKELY(address % vMemory::PageSize() != 0 || length == 0)) {
 				// Size not matching a 4K page size
 				regs.rax = ~0LL; /* MAP_FAILED */
 			} else if (UNLIKELY(int(regs.r8) >= 0)) {
@@ -130,23 +133,21 @@ void setup_kvm_system_calls()
 				auto& memory = cpu.machine().main_memory();
 				if (memory.vmem_exec_begin != 0x0) {
 					regs.rax = memory.vmem_exec_begin;
-					memory.vmem_exec_begin += regs.rsi;
+					memory.vmem_exec_begin += length;
 				} else {
 					regs.rax = ~0LL; /* MAP_FAILED */
 				}
-			} else if (regs.rdi != 0x0 && !cpu.machine().relocate_fixed_mmap()) {
-				regs.rax = regs.rdi;
-			} else if (regs.rdi != 0x0 && regs.rdi >= cpu.machine().heap_address() && regs.rdi < cpu.machine().mmap_start()) {
+			} else if (address != 0x0 && !cpu.machine().relocate_fixed_mmap()) {
+				regs.rax = address;
+			} else if (address != 0x0 && address >= cpu.machine().heap_address() && address < cpu.machine().mmap_start()) {
 				// Existing range already mmap'ed
-				regs.rax = regs.rdi;
+				regs.rax = address;
 			} else {
-				// Round up to nearest power-of-two
-				regs.rsi = (regs.rsi + PageMask) & ~PageMask;
 				if constexpr (true) {
-					auto range = cpu.machine().mmap_cache().find(regs.rsi);
+					auto range = cpu.machine().mmap_cache().find(length);
 					// Not found in cache, allocate new range
 					if (range.empty()) {
-						regs.rax = cpu.machine().mmap_allocate(regs.rsi);
+						regs.rax = cpu.machine().mmap_allocate(length);
 					}
 					else
 					{
@@ -155,14 +156,14 @@ void setup_kvm_system_calls()
 						regs.rax = range.addr;
 						// When re-using a range we need to zero it
 						// TODO: Only zero dirty pages
-						cpu.machine().memzero(range.addr, regs.rsi);
+						cpu.machine().memzero(range.addr, length);
 					}
 				} else {
-					regs.rax = cpu.machine().mmap_allocate(regs.rsi);
+					regs.rax = cpu.machine().mmap_allocate(length);
 				}
 			}
 			PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
-				regs.rdi, regs.rsi, regs.rdx, regs.r10, regs.rax);
+				address, length, regs.rdx, regs.r10, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -212,6 +213,8 @@ void setup_kvm_system_calls()
 			if (sig == 0) {
 				regs.rax = 0;
 				cpu.set_registers(regs);
+				SYSPRINT("rt_sigaction(signum=%x, act=0x%llX, oldact=0x%llx) = 0x%llX (ignored)\n",
+					sig, regs.rsi, regs.rdx, regs.rax);
 				return;
 			}
 
@@ -247,22 +250,27 @@ void setup_kvm_system_calls()
 		14, [] (auto& cpu) {
 			/* SYS rt_sigprocmask */
 			auto& regs = cpu.registers();
-			const unsigned size = regs.rcx;
+			const int how = regs.rdi;
+			const uint64_t g_set = regs.rsi;
+			const uint64_t g_oldset = regs.rdx;
+			const unsigned size = regs.r10;
+			(void)how;
+			(void)g_set;
 			(void)size;
 
 			struct kernel_sigset_t {
 				unsigned long sig[1];
 			};
 
-			if (regs.rdx != 0x0) {
+			if (g_oldset != 0x0) {
 				kernel_sigset_t oldset {};
 				__builtin_memset(&oldset, 0xFF, sizeof(oldset));
-				cpu.machine().copy_to_guest(regs.rdx, &oldset, sizeof(oldset));
+				cpu.machine().copy_to_guest(g_oldset, &oldset, sizeof(oldset));
 			}
 
 			regs.rax = 0;
-			SYSPRINT("rt_sigprocmask(how=%x, set=0x%llX, oldset=0x%llx, size=%u) = 0x%llX\n",
-					 (int)regs.rdi, regs.rsi, regs.rdx, size, regs.rax);
+			SYSPRINT("rt_sigprocmask(how=%x, set=0x%lX, oldset=0x%lx, size=%u) = 0x%llX\n",
+					 how, g_set, g_oldset, size, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -364,16 +372,34 @@ void setup_kvm_system_calls()
 			auto& regs = cpu.registers();
 			auto& mm = cpu.machine().mmap();
 			uint64_t old_addr = regs.rdi & ~(uint64_t)0xFFF;
-			uint64_t old_len = regs.rsi & ~(uint64_t)0xFFF;
-			uint64_t new_len = regs.rdx & ~(uint64_t)0xFFF;
+			uint64_t old_len = (regs.rsi + 0xFFF) & ~(uint64_t)0xFFF;
+			uint64_t new_len = (regs.rdx + 0xFFF) & ~(uint64_t)0xFFF;
+			unsigned flags = regs.rcx;
+
 			if (old_addr + old_len == mm) {
 				mm = old_addr + new_len;
 				regs.rax = old_addr;
+			} else if (flags & MREMAP_FIXED) {
+				// We don't support MREMAP_FIXED
+				regs.rax = ~0LL; /* MAP_FAILED */
+			} else if (flags & MREMAP_MAYMOVE) {
+				uint64_t new_addr = cpu.machine().mmap_allocate(new_len);
+				regs.rax = new_addr;
+				// Copy the old data to the new location
+				cpu.machine().foreach_memory(old_addr, old_len,
+					[&cpu, &new_addr] (std::string_view buffer)
+					{
+						cpu.machine().copy_to_guest(new_addr, buffer.data(), buffer.size());
+						new_addr += buffer.size();
+					});
+				// Unmap the old range
+				cpu.machine().mmap_unmap(old_addr, old_len);
 			} else {
-				regs.rax = ~(uint64_t) 0; /* MAP_FAILED */
+				// We don't support other flags
+				regs.rax = ~0LL; /* MAP_FAILED */
 			}
-			PRINTMMAP("mremap(0x%llX, %llu, %llu) = 0x%llX\n",
-				regs.rdi, regs.rsi, regs.rdx, regs.rax);
+			PRINTMMAP("mremap(0x%llX, %llu, %llu, flags=0x%X) = 0x%llX\n",
+				regs.rdi, regs.rsi, regs.rdx, flags, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -382,6 +408,11 @@ void setup_kvm_system_calls()
 			regs.rax = 0;
 			PRINTMMAP("madvise(0x%llX, %llu, 0x%llx) = %lld\n",
 				regs.rdi, regs.rsi, regs.rdx, regs.rax);
+			if (regs.rdx == MADV_DONTNEED) {
+				// MADV_DONTNEED
+				/// XXX: TODO: Memdiscard the pages
+				//cpu.machine().memzero(regs.rdi, regs.rsi);
+			}
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -396,6 +427,7 @@ void setup_kvm_system_calls()
 		39, [] (auto& cpu) { // GETPID
 			auto& regs = cpu.registers();
 			regs.rax = 0;
+			SYSPRINT("getpid() = %lld\n", regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -443,8 +475,13 @@ void setup_kvm_system_calls()
 			auto& regs = cpu.registers();
 			struct timeval tv;
 			regs.rax = gettimeofday(&tv, nullptr);
-			cpu.machine().copy_to_guest(regs.rdi, &tv, sizeof(tv));
-			if (regs.rax < 0) regs.rax = -errno;
+			if (regs.rax < 0) {
+				regs.rax = -errno;
+			} else {
+				cpu.machine().copy_to_guest(regs.rdi, &tv, sizeof(tv));
+			}
+			SYSPRINT("gettimeofday(buf=0x%llX) = %lld\n",
+				regs.rdi, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -575,11 +612,11 @@ void setup_kvm_system_calls()
 	Machine::install_syscall_handler(
 		302, [] (auto& cpu) { // prlimit64
 			auto& regs = cpu.registers();
-			struct
-			{
-				uint64_t cur = 0;
-				uint64_t max = 0;
-			} lim;
+			struct rlimit64 {
+				__u64 cur = 0;
+				__u64 max = 0;
+			} __attribute__((packed));
+			const auto newptr = regs.rcx;
 			const auto oldptr = regs.rdx;
 
 			switch (regs.rsi) {
@@ -589,16 +626,21 @@ void setup_kvm_system_calls()
 			case 3: // RLIMIT_STACK
 				/* TODO: We currently do not accept new limits. */
 				if (oldptr != 0x0) {
-					lim.cur = cpu.machine().stack_address() - 0x200000;
+					struct rlimit64 lim {};
+					lim.cur = cpu.machine().stack_address() - (4UL << 20);
 					lim.max = cpu.machine().stack_address();
 					cpu.machine().copy_to_guest(oldptr, &lim, sizeof(lim));
+				} else if (newptr != 0x0) {
+					//struct rlimit64 lim {};
+					//cpu.machine().copy_from_guest(&lim, newptr, sizeof(lim));
 				}
 				regs.rax = 0;
 				break;
 			default:
 				regs.rax = -ENOSYS;
 			}
-			SYSPRINT("prlimit64(res=%lld old=0x%llX) = %lld\n", regs.rsi, oldptr, regs.rax);
+			SYSPRINT("prlimit64(res=%lld new=0x%llX old=0x%llX) = %lld\n",
+				regs.rsi, newptr, oldptr, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
