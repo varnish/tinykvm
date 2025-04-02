@@ -59,6 +59,10 @@ namespace tinykvm
 		bool relocate_fixed_mmap = true;
 		/* Make heap executable, to support JIT. */
 		bool executable_heap = false;
+		/* When using hugepages, cover the given size with
+		   hugepages, unless 0, in which case the entire
+		   main memory will be covered. */
+		size_t hugepages_arena_size = 0UL;
 	};
 
 	class MachineException : public std::exception {

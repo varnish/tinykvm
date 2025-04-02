@@ -348,9 +348,9 @@ uint64_t setup_amd64_paging(vMemory& memory,
 
 	// vDSO / vsyscall
 	// vsyscall gettimeofday: 0xFFFFFFFFFF600000
-	vdso_pdpt[511] = PDE64_PRESENT | PDE64_USER | vsyscall_pd_addr;
-	vsyscall_pd[507] = PDE64_PRESENT | PDE64_USER | vsyscall_pt_addr;
-	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | (memory.physbase + VSYS_ADDR);
+	vdso_pdpt[511] = PDE64_PRESENT | PDE64_USER | PDE64_G | vsyscall_pd_addr;
+	vsyscall_pd[507] = PDE64_PRESENT | PDE64_USER | PDE64_G | vsyscall_pt_addr;
+	vsyscall_pt[0] = PDE64_PRESENT | PDE64_USER | PDE64_G | (memory.physbase + VSYS_ADDR);
 
 	/* Kernel area ~64KB */
 	const size_t kernel_begin_idx = PT_ADDR >> 12;
@@ -377,6 +377,21 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	return free_page;
 }
 
+static const char* pagetag_cloneable_and_global(uint64_t entry)
+{
+	if (entry & PDE64_CLONEABLE) {
+		if (entry & PDE64_G) {
+			return "CLONEABLE+GLOBAL";
+		} else {
+			return "CLONEABLE";
+		}
+	} else if (entry & PDE64_G) {
+		return "GLOBAL";
+	} else {
+		return "";
+	}
+}
+
 TINYKVM_COLD()
 void print_pte(const vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
 {
@@ -387,7 +402,7 @@ void print_pte(const vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
 				pte_addr + (i << 12), pt[i] & PDE64_ADDR_MASK,
 				pt[i] & PDE64_RW, !(pt[i] & PDE64_NX),
 				(pt[i] & PDE64_USER) ? "USER" : "KERNEL",
-				(pt[i] & PDE64_CLONEABLE) ? "CLONEABLE" : "");
+				pagetag_cloneable_and_global(pt[i]));
 		}
 	}
 }
@@ -403,7 +418,7 @@ void print_pd(const vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
 				addr, mem,
 				pd[i] & PDE64_RW, !(pd[i] & PDE64_NX),
 				(pd[i] & PDE64_USER) ? "USER" : "KERNEL",
-				(pd[i] & PDE64_CLONEABLE) ? "CLONEABLE" : "");
+				pagetag_cloneable_and_global(pd[i]));
 			if (!(pd[i] & PDE64_PS)) {
 				print_pte(memory, addr, mem);
 			}
@@ -421,7 +436,7 @@ void print_pdpt(const vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
 				addr, pdpt[i] & ~0xFFF,
 				pdpt[i] & PDE64_RW, !(pdpt[i] & PDE64_NX),
 				(pdpt[i] & PDE64_USER) ? "USER" : "KERNEL",
-				(pdpt[i] & PDE64_CLONEABLE) ? "CLONEABLE" : "");
+				pagetag_cloneable_and_global(pdpt[i]));
 			print_pd(memory, addr, pdpt[i] & ~0xFFF);
 		}
 	}
@@ -436,7 +451,7 @@ void print_pagetables(const vMemory& memory)
 			printf("* 512GB PML4: W=%lu  E=%d  %s  %s\n",
 				pml4[i] & PDE64_RW, !(pml4[i] & PDE64_NX),
 				(pml4[i] & PDE64_USER) ? "USER" : "KERNEL",
-				(pml4[i] & PDE64_CLONEABLE) ? "CLONEABLE" : "");
+				pagetag_cloneable_and_global(pml4[i]));
 			print_pdpt(memory, i << 39, pml4[i] & ~(uint64_t) 0xFFF);
 		}
 	}

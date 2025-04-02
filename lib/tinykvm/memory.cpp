@@ -187,9 +187,31 @@ vMemory::AllocationResult vMemory::allocate_mapped_memory(
 		if (size < 0x200000L) {
 			memory_exception("Not enough guest memory", 0, size);
 		}
-		// Try 2MB pages first
-		ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
-			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+		if (options.hugepages_arena_size != 0) {
+			// 1. Allocate 4k pages for the entire arena
+			ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
+				MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+			if (ptr == MAP_FAILED) {
+				memory_exception("Failed to allocate guest memory", 0, size);
+			}
+			// 2. Try to allocate 2MB pages over the beginning of the arena
+			//    (this will fail if the arena is not aligned to 2MB)
+			munmap(ptr, options.hugepages_arena_size);
+			char* hugeptr = (char*) mmap(ptr, options.hugepages_arena_size, PROT_READ | PROT_WRITE,
+				MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+			if (hugeptr == MAP_FAILED) {
+				// This might fail, but we can still use the 4k pages
+				//printf("Failed to allocate hugepages over arena: %s\n", strerror(errno));
+				fprintf(stderr, "Failed to allocate hugepages over arena\n");
+				/// XXX: Redo the mmap with 4k pages?
+				mmap(ptr, options.hugepages_arena_size, PROT_READ | PROT_WRITE,
+					MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+			}
+		} else {
+			// Try 2MB pages first
+			ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
+				MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
+		}
 	} else {
 		// Only 4KB pages
 		if (size < 0x1000L) {
