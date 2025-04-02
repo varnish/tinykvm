@@ -154,13 +154,15 @@ void setup_kvm_system_calls()
 						//PRINTMMAP("Found existing range: 0x%lX -> 0x%lX\n",
 						//	range.addr, range.addr + range.size);
 						regs.rax = range.addr;
-						// When re-using a range we need to zero it
-						// TODO: Only zero dirty pages
-						cpu.machine().memzero(range.addr, length);
 					}
 				} else {
 					regs.rax = cpu.machine().mmap_allocate(length);
 				}
+			}
+			/* If MAP_ANON is set, the memory must be zeroed. memzero() will only
+			   zero the pages that are dirty, preventing RSS from exploding. */
+			if ((flags & MAP_ANON) != 0 && regs.rax != ~0ULL) {
+				cpu.machine().memzero(regs.rax, length);
 			}
 			PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
 				address, length, regs.rdx, regs.r10, regs.rax);

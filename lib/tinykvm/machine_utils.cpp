@@ -1,6 +1,7 @@
 #include "machine.hpp"
 
 #include <cstring>
+#include "amd64/paging.hpp"
 
 namespace tinykvm {
 static constexpr uint64_t PageMask() {
@@ -15,8 +16,18 @@ void Machine::memzero(address_t addr, size_t len)
 		{
 			const size_t offset = addr & PageMask();
 			const size_t size = std::min(vMemory::PageSize() - offset, len);
-			auto* page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), true);
-			std::memset(&page[offset], 0, size);
+			bool must_be_zeroed = true;
+			page_at(memory, addr & ~PageMask(),
+				[&addr, &must_be_zeroed] (address_t page_addr, uint64_t flags, size_t page_size) {
+					if ((flags & (1UL << 6)) == 0) {
+						/* This is not a dirty page, so we can skip zeroing it */
+						must_be_zeroed = false;
+					}
+				});
+			if (UNLIKELY(must_be_zeroed)) {
+				auto* page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), true);
+				std::memset(&page[offset], 0, size);
+			}
 
 			addr += size;
 			len -= size;
