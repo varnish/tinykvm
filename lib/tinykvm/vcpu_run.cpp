@@ -151,7 +151,41 @@ long vCPU::run_once()
 			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
 			const uint32_t intr = *(uint32_t *)data;
 			if (intr != 0xFFFF) {
-				machine().system_call(*this, intr);
+				static constexpr bool VERIFY_SYSCALL_REGS = false;
+				if constexpr (VERIFY_SYSCALL_REGS) {
+					auto regs_copy = this->registers();
+					machine().system_call(*this, intr);
+					// Verify that the system call didn't change any registers other than RAX
+					// These are the system calls that may change registers:
+					// SCHED_YIELD - 24, CLONE - 56
+					// FUTEX - 202, TGKILL - 234
+					// CLONE3 - 435
+					const bool is_allowed = (intr == 234 || intr == 24 ||
+						intr == 202 || intr == 435 || intr == 56);
+					if (!is_allowed && (
+						regs_copy.rdi != this->registers().rdi ||
+						regs_copy.rsi != this->registers().rsi ||
+						regs_copy.rdx != this->registers().rdx ||
+						regs_copy.rcx != this->registers().rcx ||
+						regs_copy.r8  != this->registers().r8  ||
+						regs_copy.r9  != this->registers().r9))
+					{
+						fprintf(stderr,
+							"System call %u changed registers: "
+							"RDI 0x%llX, RSI 0x%llX, RDX 0x%llX, "
+							"RCX 0x%llX, R8  0x%llX, R9  0x%llX\n",
+							intr,
+							this->registers().rdi,
+							this->registers().rsi,
+							this->registers().rdx,
+							this->registers().rcx,
+							this->registers().r8,
+							this->registers().r9);
+						Machine::machine_exception("System call changed registers", intr);
+					}
+				} else {
+					machine().system_call(*this, intr);
+				}
 				if (this->stopped) return 0;
 				return KVM_EXIT_IO;
 			} else {
