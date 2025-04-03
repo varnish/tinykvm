@@ -18,7 +18,7 @@ void Machine::memzero(address_t addr, size_t len)
 			const size_t size = std::min(vMemory::PageSize() - offset, len);
 			bool must_be_zeroed = true;
 			page_at(memory, addr & ~PageMask(),
-				[&addr, &must_be_zeroed] (address_t page_addr, uint64_t flags, size_t page_size) {
+				[&must_be_zeroed] (address_t /*page_addr*/, uint64_t flags, size_t /*page_size*/) {
 					if ((flags & (1UL << 6)) == 0) {
 						/* This is not a dirty page, so we can skip zeroing it */
 						must_be_zeroed = false;

@@ -17,24 +17,26 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	  m_arena_begin { ARENA_BASE_ADDRESS },
 	  m_arena_next { m_arena_begin },
 	  m_idx_begin { FIRST_BANK_IDX },
-	  m_idx { m_idx_begin },
-	  m_using_hugepages { options.hugepages }
+	  m_idx { m_idx_begin }
 {
-	this->set_max_pages(options.max_cow_mem / vMemory::PageSize());
+	this->set_max_pages(options.max_cow_mem / vMemory::PageSize(),
+		options.hugepages_arena_size / vMemory::PageSize());
 }
-void MemoryBanks::set_max_pages(size_t new_max)
+void MemoryBanks::set_max_pages(size_t new_max, size_t new_hugepages)
 {
 	this->m_max_pages = new_max;
-	//fprintf(stderr, "max_pages: %zu/%zu\n", m_mem.size(), new_max);
+	this->m_hugepage_banks = new_hugepages / MemoryBank::N_PAGES;
+	//printf("Memory banks: %u pages, %u hugepages\n",
+	//	m_max_pages, m_hugepage_banks * MemoryBank::N_PAGES);
 	/* Reserve the maximum number of banks possible.
 	   NOTE: DO NOT modify this! Needs deque behavior. */
 	m_mem.reserve((m_max_pages + MemoryBank::N_PAGES-1) / MemoryBank::N_PAGES);
 }
 
-char* MemoryBanks::try_alloc(size_t N)
+char* MemoryBanks::try_alloc(size_t N, bool try_hugepages)
 {
 	char* ptr = (char*)MAP_FAILED;
-	if (this->m_using_hugepages && N == 512) {
+	if (try_hugepages && N == 512) {
 		ptr = (char*) mmap(NULL, N * vMemory::PageSize(), PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_HUGETLB, -1, 0);
 	}
@@ -48,10 +50,11 @@ char* MemoryBanks::try_alloc(size_t N)
 MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
 {
 	size_t pages = MemoryBank::N_PAGES;
-	char* mem = this->try_alloc(pages);
+	const bool try_hugepages = m_mem.size() < m_hugepage_banks;
+	char* mem = this->try_alloc(pages, try_hugepages);
 	if (mem == nullptr) {
 		pages = 4;
-		mem = this->try_alloc(pages);
+		mem = this->try_alloc(pages, false);
 	}
 
 	const size_t size = pages * vMemory::PageSize();

@@ -389,8 +389,8 @@ void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_
 	//print_pagetables(this->memory);
 
 	/* Make this machine runnable again using itself
-	   as the master VM. */
-	memory.banks.set_max_pages(max_work_mem / PAGE_SIZE);
+	   as the master VM. TODO: Enable hugepages for CoW mode? */
+	memory.banks.set_max_pages(max_work_mem / PAGE_SIZE, 0u);
 	/* Without working memory we will not be able to make
 	   this master VM usable after prepare_copy_on_write. */
 	if (max_work_mem == 0) {
