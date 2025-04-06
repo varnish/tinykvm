@@ -135,6 +135,12 @@ static void add_remappings(vMemory& memory,
 		memory.vmem_exec_begin = remapping.virt;
 		memory.vmem_exec_end = remapping.virt + remapping.size;
 	}
+
+#ifdef KVM_VERBOSE_PAGETABLES
+	printf("Remapping 0x%lX -> 0x%lX  size 0x%lX write=%d exec=%d blackout=%d\n",
+		remapping.virt, paddr_base, remapping.size,
+		remapping.writable, remapping.executable, remapping.blackout);
+#endif
 }
 
 uint64_t setup_amd64_paging(vMemory& memory,
@@ -530,7 +536,7 @@ void foreach_page_makecow(vMemory& mem, uint64_t kernel_end, uint64_t shared_mem
 	});
 }
 
-void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback)
+void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback, bool ignore_missing)
 {
 	auto* pml4 = memory.page_at(memory.page_tables);
 	const uint64_t i = (addr >> 39) & 511;
@@ -555,13 +561,21 @@ void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback)
 						callback(pte_base, pt[e], pte_size);
 						return;
 					} // pt
+					if (ignore_missing)
+						return;
 					memory_exception("page_at: pt entry not present", addr, PDE64_PTE_SIZE);
 				}
 			} // pd
+			if (ignore_missing)
+				return;
 			memory_exception("page_at: page table not present", addr, PDE64_PT_SIZE);
 		} // pdpt
+		if (ignore_missing)
+			return;
 		memory_exception("page_at: page directory not present", addr, PDE64_PD_SIZE);
 	} // pml4
+	if (ignore_missing)
+		return;
 	memory_exception("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
 }
 
