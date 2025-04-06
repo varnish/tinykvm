@@ -91,9 +91,12 @@ static void add_remappings(vMemory& memory,
 	auto* pdpt = memory.page_at(pdpt_addr);
 
 	constexpr auto PDPT_ALIGN_MASK = (1ULL << 30U) - 1;
+	constexpr auto PD_ALIGN_MASK = (1ULL << 21U) - 1;
 	const auto n_pd_pages = ((remapping.size + PDPT_ALIGN_MASK) >> 30UL) & 511;
+	const auto n_2mb_pages = (remapping.size + PD_ALIGN_MASK) >> 21UL;
 	for (uint64_t n_pd = 0; n_pd < n_pd_pages; n_pd++)
 	{
+		const bool last_pd = (n_pd == n_pd_pages - 1);
 		// Allocate the gigapage with 512x 2MB entries
 		if (pdpt[virt_giga_page] == 0) {
 			const auto giga_page = free_page;
@@ -112,13 +115,12 @@ static void add_remappings(vMemory& memory,
 
 		auto  pd_addr = pdpt[virt_giga_page] & PDE64_ADDR_MASK;
 		auto* pd = memory.page_at(pd_addr);
+		const unsigned last_pd_pages = (n_2mb_pages & 511);
 
-		// Create 2MB entries for remapping size
-		constexpr auto PD_ALIGN_MASK = (1ULL << 21U) - 1;
-		const auto n_2mb_pages = ((remapping.size + PD_ALIGN_MASK) >> 21UL) & 511;
+		// Create 2MB entries for the gigapage
 		for (uint64_t i = 0; i < 512; i++)
 		{
-			if (i < n_2mb_pages && !remapping.blackout) {
+			if ((!last_pd || i < last_pd_pages) && !remapping.blackout) {
 				const auto paddr = paddr_base + (i << 21UL);
 				pd[i] = PDE64_PRESENT | flags | PDE64_PS | paddr;
 			}
