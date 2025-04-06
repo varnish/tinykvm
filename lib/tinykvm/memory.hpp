@@ -76,7 +76,7 @@ struct vMemory {
 	VirtualMem vmem() const;
 
 	[[noreturn]] static void memory_exception(const char*, uint64_t, uint64_t);
-	void fork_reset(const MachineOptions&);
+	bool fork_reset(const Machine&, const MachineOptions&); // Returns true if a full reset was done
 	void fork_reset(const vMemory& other, const MachineOptions&);
 	static vMemory New(Machine&, const MachineOptions&, uint64_t phys, uint64_t safe, size_t size);
 	/* Returns true when this VM uses banking only to make page tables writable

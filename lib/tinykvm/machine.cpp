@@ -135,11 +135,15 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 	assert(m_forked && other.m_prepped &&
 		"This machine must be forked, and the source must be prepped");
 
+	bool full_reset = false;
 	if (UNLIKELY(this->m_binary.begin() != other.m_binary.begin() ||
 		memory.compare(other.memory) == false))
 	{
 		if (options.allow_reset_to_new_master == false) {
 			throw MachineException("Swapping main memories not enabled (experimental)");
+		}
+		if (options.reset_keep_all_work_memory) {
+			throw MachineException("Cannot reset to new Machine with old work memory");
 		}
 
 		/* This could be dangerous, but we will allow it anyway,
@@ -159,11 +163,20 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 			this->delete_memory(1);
 			this->install_memory(1, remote().memory.vmem(), true);
 		}
+		full_reset = true;
 	} else {
-		memory.fork_reset(options);
+		full_reset = memory.fork_reset(other, options);
+		if (!full_reset) {
+			/* Restore usermode (just in case?) */
+			this->enter_usermode();
+		}
 	}
 
-	this->m_just_reset = true;
+	/* We don't need to reset the pagetables with an expensive
+	   mov cr3 instruction, because we are not resetting the
+	   memory banks (or pagetables). Instead, we gamble that its
+	   cheaper to copy all used pages from the master machine. */
+	this->m_just_reset = full_reset;
 	this->m_mm = other.m_mm;
 	this->m_mmap_cache = other.m_mmap_cache;
 
@@ -176,7 +189,9 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		m_mt = nullptr;
 	}
 
-	this->setup_cow_mode(&other);
+	if (full_reset) {
+		this->setup_cow_mode(&other);
+	}
 
 	if (options.reset_copy_all_registers) {
 		/* Copy register state from the master machine */

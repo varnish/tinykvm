@@ -55,6 +55,10 @@ namespace tinykvm
 		/* When enabled, reset_to() will copy all registers
 		   from the master VM to the new VM. */
 		bool reset_copy_all_registers = true;
+		/* When enabled, reset_to() will copy all memory
+		   from the master VM to the forked VM instead of
+		   resetting the memory banks. */
+		bool reset_keep_all_work_memory = false;
 		/* Force-relocate fixed addresses with mmap(). */
 		bool relocate_fixed_mmap = true;
 		/* Make heap executable, to support JIT. */

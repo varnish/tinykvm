@@ -280,23 +280,66 @@ extern int get_value() {
 	machine.timed_vmcall(funcaddr, 4.0f);
 	REQUIRE(machine.return_value() == 1);
 
-	// Resetting will use the current state of the main VM
-	fork1.reset_to(machine, {
-			.max_mem = MAX_MEMORY,
-			.max_cow_mem = MAX_COWMEM,
-	});
+	for (int i = 0; i < 20; i++) {
+		// Resetting will use the current state of the main VM
+		fork1.reset_to(machine, {
+				.max_mem = MAX_MEMORY,
+				.max_cow_mem = MAX_COWMEM,
+		});
 
-	fork2.reset_to(machine, {
-			.max_mem = MAX_MEMORY,
-			.max_cow_mem = MAX_COWMEM,
-	});
+		fork2.reset_to(machine, {
+				.max_mem = MAX_MEMORY,
+				.max_cow_mem = MAX_COWMEM,
+		});
 
-	// Value now starts at 1 due to the change in main VM
-	fork1.timed_vmcall(funcaddr, 4.0f);
-	REQUIRE(fork1.return_value() == 1);
+		// Value now starts at 1 due to the change in main VM
+		fork1.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork1.return_value() == 1);
 
-	fork2.timed_vmcall(funcaddr, 4.0f);
-	REQUIRE(fork2.return_value() == 1);
+		fork2.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork2.return_value() == 1);
+
+		fork1.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork1.return_value() == 2);
+
+		fork2.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork2.return_value() == 2);
+	}
+
+	for (int i = 0; i < 20; i++) {
+		// Resetting will use the current state of the main VM
+		// but keep all working memory. This is still a reset, as
+		// the original pages are still copied to the forked VM.
+		// This type of reset will unfortunately only be able to see
+		// working memory pages on the main VM, which means that when
+		// we reset we see that the value starts at 1, and not 0,
+		// because the main VM has made changes since it was prepared
+		// for copy-on-write.
+		fork1.reset_to(machine, {
+				.max_mem = MAX_MEMORY,
+				.max_cow_mem = MAX_COWMEM,
+				.reset_keep_all_work_memory = true,
+		});
+
+		fork2.reset_to(machine, {
+				.max_mem = MAX_MEMORY,
+				.max_cow_mem = MAX_COWMEM,
+				.reset_keep_all_work_memory = true,
+		});
+
+		// Value now starts at 1 due to the change in main VM
+		fork1.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork1.return_value() == 2);
+
+		fork2.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork2.return_value() == 2);
+
+		fork1.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork1.return_value() == 3);
+
+		fork2.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork2.return_value() == 3);
+	}
 }
 
 TEST_CASE("Fork sanity checks w/crashes", "[Fork]")
@@ -350,6 +393,27 @@ extern void crash() {
 			.max_mem = MAX_MEMORY,
 			.max_cow_mem = MAX_COWMEM,
 		});
+
+		fork1.timed_vmcall(normalfunc, 4.0f);
+		REQUIRE(fork1.return_value() == 42);
+
+		REQUIRE_THROWS([&] () {
+			fork1.timed_vmcall(funcaddr, 4.0f);
+		}());
+	}
+
+	for (int i = 0; i < 20; i++)
+	{
+		// This time reset, but keep all working memory
+		// instead of resetting pagetables. This is still
+		// a reset, as the original pages are still copied
+		// to the forked VM.
+		fork1.reset_to(machine, {
+			.max_mem = MAX_MEMORY,
+			.max_cow_mem = MAX_COWMEM,
+			.reset_keep_all_work_memory = true,
+		});
+		REQUIRE(fork1.banked_memory_pages() > 0);
 
 		fork1.timed_vmcall(normalfunc, 4.0f);
 		REQUIRE(fork1.return_value() == 42);

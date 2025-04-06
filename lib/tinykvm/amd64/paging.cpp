@@ -457,7 +457,7 @@ void print_pagetables(const vMemory& memory)
 	}
 }
 
-void foreach_page(vMemory& memory, foreach_page_t callback)
+void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addresses)
 {
 	auto* pml4 = memory.page_at(memory.page_tables);
 	for (size_t i = 0; i < 512; i++)
@@ -467,7 +467,7 @@ void foreach_page(vMemory& memory, foreach_page_t callback)
 			callback(pdpt_base, pml4[i], pdpt_size);
 
 			// Skip out-of-bounds memory, as it may not be relevant for foreach
-			if (pdpt_mem >= memory.physbase + memory.size)
+			if (skip_oob_addresses && pdpt_mem >= memory.physbase + memory.size)
 				continue;
 
 			auto* pdpt = memory.page_at(pdpt_mem);
@@ -483,7 +483,7 @@ void foreach_page(vMemory& memory, foreach_page_t callback)
 
 					// Skip out-of-bounds memory, as it may not be relevant for foreach
 					// (also, it is impossible to read page-memory out of bounds...)
-					if (pd_mem >= memory.physbase + memory.size)
+					if (skip_oob_addresses && pd_mem >= memory.physbase + memory.size)
 						continue;
 
 					auto* pd = memory.page_at(pd_mem);
@@ -508,9 +508,9 @@ void foreach_page(vMemory& memory, foreach_page_t callback)
 		}
 	} // i
 } // foreach_page
-void foreach_page(const vMemory& mem, foreach_page_t callback)
+void foreach_page(const vMemory& mem, foreach_page_t callback, bool skip_oob_addresses)
 {
-	foreach_page(const_cast<vMemory&>(mem), std::move(callback));
+	foreach_page(const_cast<vMemory&>(mem), std::move(callback), skip_oob_addresses);
 }
 
 void foreach_page_makecow(vMemory& mem, uint64_t kernel_end, uint64_t shared_memory_boundary)
@@ -787,13 +787,13 @@ char * readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags)
 					CLPRINT("-> Returning 4k data: %p\n", data);
 					return (char *)data;
 				} // pt
-				memory_exception("readable_userpage_at: pt entry not readable", addr, PDE64_PTE_SIZE);
+				memory_exception("readable_page_at: pt entry not readable", addr, PDE64_PTE_SIZE);
 			} // pd
-			memory_exception("readable_userpage_at: page table not readable", addr, PDE64_PT_SIZE);
+			memory_exception("readable_page_at: page table not readable", addr, PDE64_PT_SIZE);
 		} // pdpt
-		memory_exception("readable_userpage_at: page directory not readable", addr, PDE64_PD_SIZE);
+		memory_exception("readable_page_at: page directory not readable", addr, PDE64_PD_SIZE);
 	} // pml4
-	memory_exception("readable_userpage_at: pml4 entry not readable", addr, PDE64_PDPT_SIZE);
+	memory_exception("readable_page_at: pml4 entry not readable", addr, PDE64_PDPT_SIZE);
 }
 
 void memory_exception(const char* msg, uint64_t addr, uint64_t sz)

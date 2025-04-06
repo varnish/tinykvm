@@ -51,9 +51,62 @@ bool vMemory::compare(const vMemory& other)
 	return this->ptr == other.ptr;
 }
 
-void vMemory::fork_reset(const MachineOptions& options)
+bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 {
+	if (options.reset_keep_all_work_memory) {
+		// With this method, instead of resetting the memory banks,
+		// and the pagetables, which requires an expensive mov cr3,
+		// we will iterate the pagetables and copy non-CoW pages
+		// from the master VM to this forked VM. This is a gamble
+		// that it's cheaper to copy than the TLB flushes that happen
+		// from the mov cr3.
+		/// XXX: TODO: If we are resetting with a lower working memory than
+		/// what is currently allocated, we cannot re-use the memory banks
+		/// anymore and we have to do a full reset. Although, we could have
+		/// a rule that says if you are above the limit, it just means you
+		/// have nowhere to go. If you need one more page, a fault will be
+		/// triggered which again triggers a full reset. Oh well.
+		try {
+		foreach_page(*this, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
+			// If the page is writable, we will restore the original
+			// memory from the master VM. We only care about leaf pages.
+			const bool is_leaf = (page_size == PAGE_SIZE) || (entry & PDE64_PS) != 0;
+			const uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
+			if ((entry & flags) == flags && is_leaf) {
+				static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
+				const uint64_t bank_addr = entry & PDE64_ADDR_MASK;
+				//fprintf(stderr, "Copying virtual page %016lx from physical %016lx with size %lu\n",
+				//	addr, bank_addr, page_size);
+
+				// This is a writable page, we will copy it using the "real"
+				// address from the master VM.
+				auto* our_page = this->safely_at(bank_addr, page_size);
+				// Find the page in the main VM
+				bool duplicate = true;
+				tinykvm::page_at(const_cast<vMemory&> (main_vm.main_memory()), addr,
+					[&](uint64_t, uint64_t& entry, size_t) {
+						if ((entry & PDE64_DIRTY) == 0) {
+							madvise(our_page, page_size, MADV_DONTNEED);
+							duplicate = false;
+						}
+					});
+				if (duplicate) {
+					/// XXX: This could be improved by iterating the pagetables of the
+					/// main VM and copying the pages directly from that.
+					main_vm.copy_from_guest(our_page, addr, page_size);
+				}
+			}
+		}, false);
+		return false;
+		} catch (const std::exception& e) {
+			/// XXX: Silently ignore the exception, as we will just completely reset the memory banks
+			//fprintf(stderr, "Failed to copy memory from master VM: %s\n", e.what());
+		}
+		/// Fallthrough to reset the memory banks
+	}
+	// Reset the memory banks (also fallback if the above fails)
 	banks.reset(options);
+	return true;
 }
 void vMemory::fork_reset(const vMemory& other, const MachineOptions& options)
 {
