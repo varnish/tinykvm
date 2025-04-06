@@ -58,6 +58,14 @@ void page_memzero(uint64_t* dest)
 void avx2_page_duplicate(uint64_t* dest, const uint64_t* source)
 {
 	for (size_t i = 0; i < 16; i++) {
+		_mm_prefetch((const char *)&source[4 * 0], _MM_HINT_T0);
+		_mm_prefetch((const char *)&source[4 * 1], _MM_HINT_T0);
+		_mm_prefetch((const char *)&source[4 * 2], _MM_HINT_T0);
+		_mm_prefetch((const char *)&source[4 * 3], _MM_HINT_T0);
+		_mm_prefetch((const char *)&source[4 * 4], _MM_HINT_T0);
+		_mm_prefetch((const char *)&source[4 * 5], _MM_HINT_T0);
+		_mm_prefetch((const char *)&source[4 * 6], _MM_HINT_T0);
+		_mm_prefetch((const char *)&source[4 * 7], _MM_HINT_T0);
 		auto i0 = _mm256_stream_load_si256((__m256i *)&source[4 * 0]);
 		auto i1 = _mm256_stream_load_si256((__m256i *)&source[4 * 1]);
 		auto i2 = _mm256_stream_load_si256((__m256i *)&source[4 * 2]);

@@ -579,7 +579,7 @@ inline bool is_copy_on_modify(uint64_t entry) {
 static void unlock_identity_mapped_entry(uint64_t& entry) {
 	/* Make page directly writable */
 	entry &= ~(PDE64_CLONEABLE | PDE64_G);
-	entry |= PDE64_RW;
+	entry |= PDE64_RW | PDE64_PRESENT;
 }
 static void clone_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
 	/* Allocate new page, pass old vaddr to memory banks */
@@ -636,9 +636,16 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 				}
 			}
 			const uint64_t k = index_from_pd_entry(addr);
-			if (pd[k] & PDE64_PRESENT) {
+			if (pd[k] & (PDE64_PRESENT | PDE64_CLONEABLE)) {
 				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
-				uint64_t* pt = memory.page_at(pd[k] & ~(uint64_t)0x8000000000000FFF);
+				uint64_t* pt;
+				if (pd[k] & PDE64_PRESENT) { // A regular copy-on-write entry
+					pt = memory.page_at(pd[k] & ~(uint64_t)0x8000000000000FFF);
+				} else { // An unpresent copy-on-write entry
+					// Reconstruct the page table address
+					const uint64_t pd_addr = pd_base + (k << 21);
+					pt = memory.page_at(pd_addr);
+				}
 				/* Make copy of page if needed (not likely) */
 				if (UNLIKELY(is_copy_on_write(pd[k]))) {
 					/* Copy-on-write 2MB page */
@@ -657,7 +664,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 						pd[k] &= ~(uint64_t)PDE64_PS;
 						/* Copy flags from 2MB page, except read-write */
 						uint64_t flags = pd[k] & PDE64_PD_SPLIT_MASK;
-						uint64_t branch_flags = flags | PDE64_CLONEABLE | PDE64_G;
+						uint64_t branch_flags = flags | PDE64_CLONEABLE | PDE64_G | PDE64_PRESENT;
 						/* Allocate pagetable page and fill 4k entries.
 						NOTE: new_page() makes page not a candidate for
 						sequentialization for eg. vmcommit() later on. */
@@ -667,7 +674,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 							page.pmem[e] = base_address | (e << 12) | branch_flags;
 						}
 						/* Update 2MB entry, add read-write */
-						pd[k] = page.addr | flags | PDE64_RW;
+						pd[k] = page.addr | flags | PDE64_RW | PDE64_PRESENT;
 						pt = page.pmem;
 					}
 					else if ((pd[k] & PDE64_PS)) {
@@ -682,7 +689,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 						/* Set the new page address and bits, adding RW and removing DIRTY. */
 						auto page = memory.new_hugepage();
 						uint64_t flags = (pd[k] & PDE64_PD_SPLIT_MASK) & ~PDE64_DIRTY;
-						pd[k] = page.addr | flags | PDE64_RW;
+						pd[k] = page.addr | flags | PDE64_RW | PDE64_PRESENT;
 
 						/* Verify flags after CLONEABLE -> RW, in order to match RW. */
 						if (UNLIKELY((pd[k] & verify_flags) != verify_flags)) {
@@ -709,7 +716,7 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 						return (char *)page.pmem + e * PAGE_SIZE;
 					}
 
-					clone_and_update_entry(memory, pd[k], pt, PDE64_RW);
+					clone_and_update_entry(memory, pd[k], pt, PDE64_RW | PDE64_PRESENT);
 					CLPRINT("-> Cloning a PD entry: 0x%lX\n", pd[k]);
 				}
 
@@ -725,17 +732,30 @@ entry_is_no_longer_copy_on_write:
 				}
 
 				const uint64_t e = index_from_pt_entry(addr);
-				if (pt[e] & PDE64_PRESENT) { // 4KB page
+				if (pt[e] & (PDE64_PRESENT | PDE64_CLONEABLE)) { // 4KB page
 					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
-					auto* data = memory.page_at(pte_mem);
+					uint64_t* data;
+					if (pt[e] & PDE64_PRESENT) { // A regular copy-on-write entry
+						data = memory.page_at(pt[e] & ~(uint64_t)0x8000000000000FFF);
+					} else { // An unpresent copy-on-write entry
+						// Reconstruct the address from the page table indices
+						const uint64_t pt_addr = pd_base + (k << 21) + (e << 12);
+						data = memory.page_at(pt_addr);
+					}
 					if (is_copy_on_write(pt[e])) {
 						if (memory.is_forkable_master() && memory.main_memory_writes) {
 							unlock_identity_mapped_entry(pt[e]);
 							memory.increment_unlocked_pages(1);
 						} else if (write_zeroes || (pt[e] & PDE64_DIRTY) == 0x0) {
-							zero_and_update_entry(memory, pt[e], data, PDE64_RW);
+							zero_and_update_entry(memory, pt[e], data, PDE64_RW | PDE64_PRESENT);
+						} else if (pt[e] & PDE64_PRESENT) {
+							clone_and_update_entry(memory, pt[e], data, PDE64_RW | PDE64_PRESENT);
 						} else {
-							clone_and_update_entry(memory, pt[e], data, PDE64_RW);
+							// This entry already points to a new page, but we still need to copy
+							// the original page to the new one.
+							page_duplicate(memory.page_at(pt[e] & PDE64_ADDR_MASK), data);
+							pt[e] &= ~PDE64_CLONEABLE;
+							pt[e] |= PDE64_RW | PDE64_PRESENT;
 						}
 						CLPRINT("-> Cloning a PT entry: 0x%lX\n", pt[e]);
 					}

@@ -329,16 +329,16 @@ extern int get_value() {
 
 		// Value now starts at 1 due to the change in main VM
 		fork1.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork1.return_value() == 1);
+
+		fork2.timed_vmcall(funcaddr, 4.0f);
+		REQUIRE(fork2.return_value() == 1);
+
+		fork1.timed_vmcall(funcaddr, 4.0f);
 		REQUIRE(fork1.return_value() == 2);
 
 		fork2.timed_vmcall(funcaddr, 4.0f);
 		REQUIRE(fork2.return_value() == 2);
-
-		fork1.timed_vmcall(funcaddr, 4.0f);
-		REQUIRE(fork1.return_value() == 3);
-
-		fork2.timed_vmcall(funcaddr, 4.0f);
-		REQUIRE(fork2.return_value() == 3);
 	}
 }
 

@@ -73,6 +73,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 			const bool is_leaf = (page_size == PAGE_SIZE) || (entry & PDE64_PS) != 0;
 			const uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
 			if ((entry & flags) == flags && is_leaf) {
+#define PDE64_CLONEABLE  (1ul << 11)
 				static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
 				const uint64_t bank_addr = entry & PDE64_ADDR_MASK;
 				//fprintf(stderr, "Copying virtual page %016lx from physical %016lx with size %lu\n",
@@ -93,7 +94,11 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				if (duplicate) {
 					/// XXX: This could be improved by iterating the pagetables of the
 					/// main VM and copying the pages directly from that.
-					main_vm.copy_from_guest(our_page, addr, page_size);
+					//main_vm.copy_from_guest(our_page, addr, page_size);
+					avx2_page_duplicate((uint64_t*)our_page,
+						(const uint64_t*)main_vm.main_memory().safely_at(addr, page_size));
+					//entry |= PDE64_CLONEABLE;
+					//entry &= ~(PDE64_PRESENT | PDE64_RW);
 				}
 			}
 		}, false);
