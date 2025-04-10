@@ -87,15 +87,12 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				tinykvm::page_at(const_cast<vMemory&> (main_vm.main_memory()), addr,
 					[&](uint64_t, uint64_t& entry, size_t) {
 						if ((entry & PDE64_DIRTY) == 0) {
-							madvise(our_page, page_size, MADV_DONTNEED);
+							madvise(our_page, page_size, MADV_FREE);
 							duplicate = false;
 						}
 					});
 				if (duplicate) {
-					/// XXX: This could be improved by iterating the pagetables of the
-					/// main VM and copying the pages directly from that.
-					//main_vm.copy_from_guest(our_page, addr, page_size);
-					avx2_page_duplicate((uint64_t*)our_page,
+					page_duplicate((uint64_t*)our_page,
 						(const uint64_t*)main_vm.main_memory().safely_at(addr, page_size));
 					//entry |= PDE64_CLONEABLE;
 					//entry &= ~(PDE64_PRESENT | PDE64_RW);
