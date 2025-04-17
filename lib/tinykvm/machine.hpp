@@ -9,6 +9,7 @@
 #include <cassert>
 #include <functional>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace tinykvm {
@@ -72,6 +73,14 @@ struct Machine
 	std::string buffer_to_string(address_t src, size_t len, size_t maxlen = 65535u) const;
 	/* Explicitly zero memory range. */
 	void memzero(address_t src, size_t len);
+	/* View sequential user-writable memory as a string_view, or throw an exception. Small
+		structs can be viewed provided the guest over-aligns so that it never crosses a page. */
+	std::span<uint8_t> writable_memview(address_t src, size_t len);
+	/* View sequential user-writable memory as an array of T, or throw an exception. */
+	template <typename T>
+	T* writable_memarray(address_t src, size_t elements = 1) {
+		return reinterpret_cast<T*>(writable_memview(src, elements * sizeof(T)).data());
+	}
 
 	struct StringOrView {
 		const char* begin() const noexcept { return sv.begin(); }

@@ -291,6 +291,37 @@ Machine::StringOrView Machine::string_or_view(address_t src, size_t len) const
 	}
 }
 
+std::span<uint8_t> Machine::writable_memview(address_t src, size_t len)
+{
+	const size_t offset = src & PageMask();
+	const size_t size = std::min(vMemory::PageSize() - offset, len);
+	auto* page = memory.get_writable_page(src & ~PageMask(),
+		memory.expectedUsermodeFlags(), false);
+
+	std::span<uint8_t> view {(uint8_t*) &page[offset], size};
+	src += size;
+	len -= size;
+
+	while (len != 0)
+	{
+		const size_t offset = src & PageMask();
+		const size_t size = std::min(vMemory::PageSize() - offset, len);
+		auto *page = memory.get_writable_page(src & ~PageMask(),
+			memory.expectedUsermodeFlags(), false);
+
+		auto *ptr = (uint8_t *)&page[offset];
+		if (ptr == view.data() + view.size()) {
+			view = std::span<uint8_t>{view.data(), view.size() + size};
+		} else {
+			machine_exception("Memory not sequential", src);
+		}
+
+		src += size;
+		len -= size;
+	}
+	return view;
+}
+
 void Machine::foreach_memory(address_t src, size_t len,
 	std::function<void(const std::string_view)> callback) const
 {
