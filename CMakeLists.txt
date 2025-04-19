@@ -22,24 +22,20 @@ target_compile_definitions(tinykvm PUBLIC
 
 add_executable(bench
 	src/bench.cpp
-	src/functions.cpp
 )
 target_link_libraries(bench tinykvm)
 
 add_executable(tinytest
 	src/tests.cpp
-	src/functions.cpp
 )
 target_link_libraries(tinytest tinykvm)
 
 add_executable(simplekvm
 	src/simple.cpp
-	src/functions.cpp
 )
 target_link_libraries(simplekvm tinykvm)
 
 add_executable(storagekvm
 	src/storage.cpp
-	src/functions.cpp
 )
 target_link_libraries(storagekvm tinykvm)

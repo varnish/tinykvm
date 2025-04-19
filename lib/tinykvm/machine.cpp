@@ -1,6 +1,6 @@
 #include "machine.hpp"
 
-#include "threads.hpp"
+#include "linux/threads.hpp"
 #include "smp.hpp"
 #include "util/threadpool.h"
 #include <cassert>
@@ -119,6 +119,7 @@ void Machine::reset_to(std::string_view binary, const MachineOptions& options)
 	this->m_mmap_cache = {};
 	this->m_mt.reset(nullptr);
 	this->m_signals.reset(nullptr);
+	this->m_fds.reset(nullptr);
 
 	this->elf_loader(binary, options);
 
@@ -188,6 +189,8 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 	} else {
 		m_mt = nullptr;
 	}
+	/* Reset the file descriptors */
+	this->fds().reset_to(other.fds());
 
 	if (full_reset) {
 		this->setup_cow_mode(&other);
@@ -352,6 +355,9 @@ int kvm_open()
 
 	extern void initialize_vcpu_stuff(int kvm_fd);
 	initialize_vcpu_stuff(fd);
+
+	/* Setup the default syscall table */
+	Machine::setup_linux_system_calls();
 
 	return fd;
 }

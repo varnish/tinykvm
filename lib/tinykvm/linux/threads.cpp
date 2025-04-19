@@ -1,6 +1,6 @@
 #include "threads.hpp"
 
-#include "machine.hpp"
+#include "../machine.hpp"
 #include <linux/kvm.h>
 #include <linux/futex.h>
 #include <cassert>
@@ -317,9 +317,12 @@ void Machine::setup_multithreading()
 					if (cpu.machine().threads().suspend_and_yield()) {
 						return;
 					}
-					// Avoid spin-waiting solution, let's just end execution for now :)
-					regs.rax = -EINTR;
-					throw std::runtime_error("DEADLOCK_REACHED");
+					// Deadlock reached. XXX: Force-unlock to continue
+					// execution.
+					futexVal = 0;
+					cpu.machine().copy_to_guest(addr, &futexVal, sizeof(futexVal));
+					regs.rax = 0;
+					//throw std::runtime_error("DEADLOCK_REACHED");
 				} else {
 					regs.rax = 0;
 				}

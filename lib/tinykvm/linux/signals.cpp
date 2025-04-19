@@ -1,4 +1,4 @@
-#include "machine.hpp"
+#include "../machine.hpp"
 #include "threads.hpp"
 
 namespace tinykvm {
@@ -31,6 +31,11 @@ void Signals::enter(vCPU& cpu, int sig)
 	//cpu.machine().enter_usermode();
 	regs.rcx = sigact.handler;
 	cpu.set_registers(regs);
+}
+
+SignalAction& Machine::sigaction(int sig)
+{
+	return signals().get(sig);
 }
 
 } // tinykvm
