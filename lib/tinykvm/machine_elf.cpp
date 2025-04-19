@@ -10,7 +10,28 @@
 
 namespace tinykvm {
 static constexpr bool VERBOSE_LOADER = false;
-static constexpr int MAX_LOADABLE_SEGMENTS = 8;
+static constexpr int MAX_LOADABLE_SEGMENTS = 16;
+
+bool is_dynamic_elf(std::string_view binary)
+{
+	if (binary.size() < sizeof(Elf64_Ehdr))
+	{
+		throw MachineException("ELF binary too short");
+	}
+	const auto *elf = (Elf64_Ehdr *)binary.data();
+	if (elf->e_type == ET_DYN)
+	{
+		return true;
+	}
+	else if (elf->e_type == ET_EXEC)
+	{
+		return false;
+	}
+	else
+	{
+		throw MachineException("Invalid ELF type: Not a static or dynamic executable");
+	}
+}
 
 void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 {
@@ -21,16 +42,8 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	if (UNLIKELY(!validate_header(elf))) {
 		throw MachineException("Invalid ELF header! Not a 64-bit program?");
 	}
-	bool is_dynamic = false;
-	if (elf->e_type == ET_DYN) {
-		is_dynamic = true;
-		this->m_image_base = DYLINK_BASE;
-	}
-	else if (elf->e_type == ET_EXEC) {
-		this->m_image_base = 0x0;
-	} else {
-		throw MachineException("Invalid ELF type: Not a static or dynamic executable!");
-	}
+	bool is_dynamic = is_dynamic_elf(binary);
+	this->m_image_base = (is_dynamic) ? DYLINK_BASE : 0x0;
 
 	// enumerate & load loadable segments
 	const auto program_headers = elf->e_phnum;

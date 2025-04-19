@@ -119,4 +119,6 @@ namespace tinykvm
 		int userval2;
 		int userval3;
 	};
+
+	extern bool is_dynamic_elf(std::string_view bin);
 }

@@ -71,34 +71,23 @@ namespace tinykvm
 			m_open_writable = callback;
 		}
 
+		/// @brief Add a read-only file
+		void add_readonly_file(const std::string& path);
+
 		/// @brief Check if a path is allowed to be opened for reading.
 		/// @param modifiable_path The path to check. This may be modified by
 		/// the callback to indicate which real path to open.
 		/// @return True if the path is allowed to be opened for reading, false
 		/// otherwise. The path may be modified by the callback, indicating
 		/// which real path to open.
-		bool is_readable_path(std::string& modifiable_path) const noexcept {
-			if (m_open_readable) {
-				return m_open_readable(modifiable_path);
-			}
-			auto it = m_allowed_readable_paths.find(modifiable_path);
-			if (it != m_allowed_readable_paths.end()) {
-				return true;
-			}
-			return false;
-		}
+		bool is_readable_path(std::string& modifiable_path) const noexcept;
 
 		/// @brief Check if a path is writable. Paths are usually not writable,
 		/// but this can be overridden by setting the open_writable callback.
 		/// @param modifiable_path 
 		/// @return True if the path is writable, false otherwise. The path
 		/// may be modified by the callback, indicating which real path to open.
-		bool is_writable_path(std::string& modifiable_path) const noexcept {
-			if (m_open_writable) {
-				return m_open_writable(modifiable_path);
-			}
-			return false;
-		}
+		bool is_writable_path(std::string& modifiable_path) const noexcept;
 
 	private:
 		Machine& m_machine;

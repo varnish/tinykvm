@@ -145,7 +145,7 @@ void Machine::setup_linux_system_calls()
 			struct stat vstat;
 			regs.rax = stat(path.c_str(), &vstat);
 			SYSPRINT("STAT to path=%s, data=0x%llX = %lld\n",
-				path, regs.rsi, regs.rax);
+				path.c_str(), regs.rsi, regs.rax);
 			if (regs.rax == 0) {
 				cpu.machine().copy_to_guest(regs.rsi, &vstat, sizeof(vstat));
 			}
@@ -215,12 +215,10 @@ void Machine::setup_linux_system_calls()
 				const int real_fd = cpu.machine().fds().translate(vfd);
 
 				uint64_t dst = 0x0;
-				if (address == 0x0)
-				{
+				if (address == 0x0) {
 					dst = cpu.machine().mmap_allocate(length);
 				}
-				else
-				{
+				else {
 					dst = address;
 				}
 				// Readv into the area
@@ -228,13 +226,9 @@ void Machine::setup_linux_system_calls()
 				const size_t cnt =
 					cpu.machine().writable_buffers_from_range(buffers.size(), buffers.data(), dst, length);
 				// Seek to the given offset in the file and read the contents into guest memory
-				if (lseek(real_fd, voff, SEEK_SET) == (off_t)-1) {
+				if (preadv64(real_fd, (const iovec *)&buffers[0], cnt, voff) < 0) {
 					regs.rax = ~0LL; /* MAP_FAILED */
-				}
-				else if (readv(real_fd, (const iovec *)&buffers[0], cnt) < 0) {
-					regs.rax = ~0LL; /* MAP_FAILED */
-				}
-				else {
+				} else {
 					regs.rax = dst;
 				}
 				PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
@@ -245,7 +239,7 @@ void Machine::setup_linux_system_calls()
 			else if ((flags & 0x4) != 0)
 			{
 				// Executable mappings are supported if there is an execute-range in vMemory
-				auto &memory = cpu.machine().main_memory();
+				auto& memory = cpu.machine().main_memory();
 				if (memory.vmem_exec_begin != 0x0)
 				{
 					regs.rax = memory.vmem_exec_begin;
@@ -446,6 +440,31 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		17, [](vCPU& cpu) { // PREAD64
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			const auto g_buf = regs.rsi;
+			const auto bytes = regs.rdx;
+			const auto offset = regs.r10;
+			const int fd = cpu.machine().fds().translate(vfd);
+
+			// Readv into the area
+			static constexpr size_t READV_BUFFERS = 64;
+			tinykvm::Machine::WrBuffer buffers[READV_BUFFERS];
+			const auto bufcount =
+				cpu.machine().writable_buffers_from_range(READV_BUFFERS, buffers, g_buf, bytes);
+
+			if (preadv64(fd, (const iovec *)&buffers[0], bufcount, offset) < 0) {
+				regs.rax = -errno;
+			}
+			else {
+				regs.rax = bytes;
+			}
+			SYSPRINT("pread64(fd=%lld, buf=0x%llX, size=%llu, offset=%llu) = %lld\n",
+					 vfd, g_buf, bytes, offset, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		20, [](vCPU& cpu) { // WRITEV
 			/* SYS writev */
 			auto& regs = cpu.registers();
@@ -492,7 +511,7 @@ void Machine::setup_linux_system_calls()
 				if (opt_entry.has_value() && (*opt_entry)->is_writable)
 				{
 					std::array<g_iovec, 64> vecs;
-					cpu.machine().copy_from_guest(vecs.data(), regs.rsi, count * sizeof(struct iovec));
+					cpu.machine().copy_from_guest(vecs.data(), regs.rsi, count * sizeof(g_iovec));
 					ssize_t written = 0;
 					std::array<Machine::Buffer, 256> buffers;
 
@@ -520,7 +539,7 @@ void Machine::setup_linux_system_calls()
 				
 			}
 			SYSPRINT("writev(%d) = %lld\n",
-					 fd, regs.rax);
+					 vfd, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -926,19 +945,18 @@ void Machine::setup_linux_system_calls()
 					}
 
 					int fd = openat(AT_FDCWD, real_path.c_str(), flags);
-					SYSPRINT("OPENAT fd=%lld path=%s (real_path=%s) = %d\n",
-						regs.rdi, path.c_str(), real_path.c_str(), fd);
-
 					if (fd > 0) {
 						regs.rax = cpu.machine().fds().manage(fd, false);
-						cpu.set_registers(regs);
-						return;
 					} else {
 						regs.rax = -1;
 					}
+					SYSPRINT("OPENAT fd=%lld path=%s (real_path=%s) = %d (%lld)\n",
+						regs.rdi, path.c_str(), real_path.c_str(), fd, regs.rax);
+					cpu.set_registers(regs);
+					return;
 				} catch (...) {
 					SYSPRINT("OPENAT fd=%lld path=%s flags=%X = %d\n",
-						regs.rdi, path, flags, -1);
+						regs.rdi, path.c_str(), flags, -1);
 					regs.rax = -1;
 				}
 			}
@@ -972,9 +990,10 @@ void Machine::setup_linux_system_calls()
 			const auto buffer = regs.rdx;
 			const int  flags  = regs.r8;
 			long fd = AT_FDCWD;
+			std::string path;
 
 			try {
-				std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
+				path = cpu.machine().memcstring(vpath, PATH_MAX);
 
 				if (regs.rdi != AT_FDCWD) {
 					// Use existing vfd
@@ -1017,9 +1036,10 @@ void Machine::setup_linux_system_calls()
 			const auto flags  = regs.rdx;
 			const auto mask   = regs.r10;
 			const auto buffer = regs.r8;
+			std::string path;
 
 			try {
-				std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
+				path = cpu.machine().memcstring(vpath, PATH_MAX);
 				if (!cpu.machine().fds().is_readable_path(path)) {
 					regs.rax = -EPERM;
 				} else {
@@ -1038,7 +1058,7 @@ void Machine::setup_linux_system_calls()
 			}
 
 			SYSPRINT("STATX to vfd=%lld, fd=%ld, path=%s, data=0x%llX, flags=0x%llX, mask=0x%llX = %lld\n",
-				regs.rdi, fd, path, buffer, flags, mask, regs.rax);
+				regs.rdi, fd, path.c_str(), buffer, flags, mask, regs.rax);
 			cpu.set_registers(regs);
 		});
 }
