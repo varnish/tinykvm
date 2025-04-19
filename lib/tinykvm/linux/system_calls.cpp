@@ -155,7 +155,10 @@ void Machine::setup_linux_system_calls()
 		5, [] (vCPU& cpu) { // FSTAT
 			auto& regs = cpu.registers();
 
-			int fd = cpu.machine().fds().translate(regs.rdi);
+			int fd = regs.rdi;
+			if (fd > 2) {
+				fd = cpu.machine().fds().translate(regs.rdi);
+			}
 			struct stat vstat;
 			regs.rax = fstat(fd, &vstat);
 			if (regs.rax == 0) {
@@ -674,6 +677,19 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		79, [](vCPU& cpu) { // GETCWD
+			auto& regs = cpu.registers();
+
+			const char fakepath[] = "/";
+			if (sizeof(fakepath) <= regs.rsi) {
+				cpu.machine().copy_to_guest(regs.rdi, fakepath, sizeof(fakepath));
+				regs.rax = regs.rdi;
+			} else {
+				regs.rax = 0;
+			}
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		89, [](vCPU& cpu) { // READLINK
 			auto& regs = cpu.registers();
 			regs.rax = -ENOENT;
@@ -762,6 +778,22 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		217, [](vCPU& cpu) { // GETDENTS64
+			auto& regs = cpu.registers();
+
+			int fd = cpu.machine().fds().translate(regs.rdi);
+
+			char buffer[2048];
+			regs.rax = syscall(SYS_getdents64, fd, buffer, sizeof(buffer));
+			if (regs.rax > 0)
+			{
+				cpu.machine().copy_to_guest(regs.rsi, buffer, regs.rax);
+			}
+			SYSPRINT("GETDENTS64 to vfd=%lld, fd=%d, data=0x%llX = %lld\n",
+				regs.rdi, fd, regs.rsi, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		228, [](vCPU& cpu) { // clock_gettime
 			auto& regs = cpu.registers();
 			struct timespec ts;
@@ -783,6 +815,104 @@ void Machine::setup_linux_system_calls()
 			printf("Machine exits: _exit(%lld)\n", regs.rdi);
 #endif
 			cpu.stop(); });
+	Machine::install_syscall_handler(
+		257, [] (vCPU& cpu) { // OPENAT
+			auto& regs = cpu.registers();
+
+			const auto vpath = regs.rsi;
+			const int  flags = regs.rdx;
+
+			std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
+			bool write_flags = (flags & (O_WRONLY | O_RDWR)) != 0x0;
+			if (!write_flags)
+			{
+				try {
+					std::string real_path = path;
+					if (!cpu.machine().fds().is_readable_path(real_path)) {
+						throw std::runtime_error("Path not readable: " + real_path);
+					}
+
+					int fd = openat(AT_FDCWD, real_path.c_str(), flags);
+					if (fd > 0) {
+						regs.rax = cpu.machine().fds().manage(fd, false);
+					} else {
+						regs.rax = -1;
+					}
+					SYSPRINT("OPENAT fd=%lld path=%s (real_path=%s) = %d (%lld)\n",
+						regs.rdi, path.c_str(), real_path.c_str(), fd, regs.rax);
+					cpu.set_registers(regs);
+					return;
+				} catch (...) {
+					SYSPRINT("OPENAT fd=%lld path=%s flags=%X = %d\n",
+						regs.rdi, path.c_str(), flags, -1);
+					regs.rax = -1;
+				}
+			}
+			if (write_flags || regs.rax == (__u64)-1)
+			{
+				try {
+					std::string real_path = path;
+					if (!cpu.machine().fds().is_writable_path(real_path)) {
+						throw std::runtime_error("Path not writable: " + real_path);
+					}
+
+					int fd = openat(AT_FDCWD, real_path.c_str(), flags, S_IWUSR | S_IRUSR);
+					SYSPRINT("OPENAT where=%lld path=%s (real_path=%s) flags=%X = fd %d\n",
+						regs.rdi, path.c_str(), real_path.c_str(), flags, fd);
+
+					if (fd > 0) {
+						regs.rax = cpu.machine().fds().manage(fd, false);
+					} else {
+						regs.rax = -1;
+					}
+				} catch (...) {
+					regs.rax = -1;
+				}
+			}
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		262, [] (vCPU& cpu) { // NEWFSTATAT
+			auto& regs = cpu.registers();
+			const auto vpath  = regs.rsi;
+			const auto buffer = regs.rdx;
+			const int  flags  = regs.r8;
+			int fd = AT_FDCWD;
+			std::string path;
+
+			try {
+				path = cpu.machine().memcstring(vpath, PATH_MAX);
+
+				if (regs.rdi != AT_FDCWD) {
+					// Use existing vfd
+					fd = cpu.machine().fds().translate(regs.rdi);
+
+					struct stat64 vstat;
+					// We don't use path here, as a security measure
+					regs.rax = fstatat64(fd, "", &vstat, flags);
+					if (regs.rax == 0) {
+						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
+					}
+				} else {
+					if (!cpu.machine().fds().is_readable_path(path)) {
+						regs.rax = -EPERM;
+					} else {
+						struct stat64 vstat;
+						// Path is in allow-list
+						regs.rax = fstatat64(AT_FDCWD, path.c_str(), &vstat, flags);
+						if (regs.rax == 0) {
+							cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
+						}
+					}
+				}
+			} catch (...) {
+				regs.rax = -1;
+			}
+
+			SYSPRINT("NEWFSTATAT to vfd=%lld, vfd=%d, path=%s, data=0x%llX, flags=0x%X = %lld\n",
+				regs.rdi, fd, path.c_str(), buffer, flags, regs.rax);
+			cpu.set_registers(regs);
+		});
 	Machine::install_syscall_handler(
 		273, [](vCPU& cpu)
 		{
@@ -888,147 +1018,6 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		334, [](vCPU& cpu) { // faccessat
-			auto& regs = cpu.registers();
-			regs.rax = -ENOSYS;
-			SYSPRINT("faccessat(...) = %lld\n",
-					 regs.rax);
-			cpu.set_registers(regs);
-		});
-
-	// Threads: clone, futex, block/tkill etc.
-	Machine::setup_multithreading();
-	Machine::install_syscall_handler(
-		79, [](vCPU& cpu) { // GETCWD
-			auto& regs = cpu.registers();
-
-			const char fakepath[] = "/";
-			if (sizeof(fakepath) <= regs.rsi) {
-				cpu.machine().copy_to_guest(regs.rdi, fakepath, sizeof(fakepath));
-				regs.rax = regs.rdi;
-			} else {
-				regs.rax = 0;
-			}
-			cpu.set_registers(regs);
-		});
-	Machine::install_syscall_handler(
-		217, [](vCPU& cpu) { // GETDENTS64
-			auto& regs = cpu.registers();
-
-			int fd = cpu.machine().fds().translate(regs.rdi);
-
-			char buffer[2048];
-			regs.rax = syscall(SYS_getdents64, fd, buffer, sizeof(buffer));
-			if (regs.rax > 0)
-			{
-				cpu.machine().copy_to_guest(regs.rsi, buffer, regs.rax);
-			}
-			SYSPRINT("GETDENTS64 to vfd=%lld, fd=%d, data=0x%llX = %lld\n",
-				regs.rdi, fd, regs.rsi, regs.rax);
-			cpu.set_registers(regs);
-		});
-	Machine::install_syscall_handler(
-		257, [] (vCPU& cpu) { // OPENAT
-			auto& regs = cpu.registers();
-
-			const auto vpath = regs.rsi;
-			const int  flags = regs.rdx;
-
-			std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
-			bool write_flags = (flags & (O_WRONLY | O_RDWR)) != 0x0;
-			if (!write_flags)
-			{
-				try {
-					std::string real_path = path;
-					if (!cpu.machine().fds().is_readable_path(real_path)) {
-						throw std::runtime_error("Path not readable: " + real_path);
-					}
-
-					int fd = openat(AT_FDCWD, real_path.c_str(), flags);
-					if (fd > 0) {
-						regs.rax = cpu.machine().fds().manage(fd, false);
-					} else {
-						regs.rax = -1;
-					}
-					SYSPRINT("OPENAT fd=%lld path=%s (real_path=%s) = %d (%lld)\n",
-						regs.rdi, path.c_str(), real_path.c_str(), fd, regs.rax);
-					cpu.set_registers(regs);
-					return;
-				} catch (...) {
-					SYSPRINT("OPENAT fd=%lld path=%s flags=%X = %d\n",
-						regs.rdi, path.c_str(), flags, -1);
-					regs.rax = -1;
-				}
-			}
-			if (write_flags || regs.rax == (__u64)-1)
-			{
-				try {
-					std::string real_path = path;
-					if (!cpu.machine().fds().is_writable_path(real_path)) {
-						throw std::runtime_error("Path not writable: " + real_path);
-					}
-
-					int fd = openat(AT_FDCWD, real_path.c_str(), flags, S_IWUSR | S_IRUSR);
-					SYSPRINT("OPENAT where=%lld path=%s (real_path=%s) flags=%X = fd %d\n",
-						regs.rdi, path.c_str(), real_path.c_str(), flags, fd);
-
-					if (fd > 0) {
-						regs.rax = cpu.machine().fds().manage(fd, false);
-					} else {
-						regs.rax = -1;
-					}
-				} catch (...) {
-					regs.rax = -1;
-				}
-			}
-			cpu.set_registers(regs);
-		});
-	Machine::install_syscall_handler(
-		262, [] (vCPU& cpu) { // NEWFSTATAT
-			auto& regs = cpu.registers();
-			const auto vpath  = regs.rsi;
-			const auto buffer = regs.rdx;
-			const int  flags  = regs.r8;
-			long fd = AT_FDCWD;
-			std::string path;
-
-			try {
-				path = cpu.machine().memcstring(vpath, PATH_MAX);
-
-				if (regs.rdi != AT_FDCWD) {
-					// Use existing vfd
-					fd = cpu.machine().fds().translate(regs.rdi);
-
-					struct stat64 vstat;
-					// We don't use path here, as a security measure
-					regs.rax = fstatat64(fd, "", &vstat, flags);
-					if (regs.rax == 0) {
-						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
-					}
-				} else {
-					if (!cpu.machine().fds().is_readable_path(path)) {
-						regs.rax = -EPERM;
-					} else {
-						// Translate from vfd when fd != CWD
-						if ((long)regs.rdi != fd) fd = cpu.machine().fds().translate(regs.rdi);
-
-						struct stat64 vstat;
-						// Path is sanitized, so we can use it
-						regs.rax = fstatat64(fd, path.c_str(), &vstat, flags);
-						if (regs.rax == 0) {
-							cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
-						}
-					}
-				}
-			} catch (...) {
-				regs.rax = -1;
-			}
-
-			SYSPRINT("NEWFSTATAT to vfd=%lld, fd=%ld, path=%s, data=0x%llX, flags=0x%X = %lld\n",
-				regs.rdi, fd, path.c_str(), buffer, flags, regs.rax);
-			cpu.set_registers(regs);
-		});
-	Machine::install_syscall_handler(
 		332, [] (vCPU& cpu) { // STATX
 			auto& regs = cpu.registers();
 			long fd = AT_FDCWD; // rdi
@@ -1061,6 +1050,17 @@ void Machine::setup_linux_system_calls()
 				regs.rdi, fd, path.c_str(), buffer, flags, mask, regs.rax);
 			cpu.set_registers(regs);
 		});
+	Machine::install_syscall_handler(
+		334, [](vCPU& cpu) { // faccessat
+			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			SYSPRINT("faccessat(...) = %lld\n",
+					 regs.rax);
+			cpu.set_registers(regs);
+		});
+
+	// Threads: clone, futex, block/tkill etc.
+	Machine::setup_multithreading();
 }
 
 } // tinykvm
