@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -92,7 +93,7 @@ namespace tinykvm
 	private:
 		Machine& m_machine;
 		std::map<int, Entry> m_fds;
-		std::unordered_set<std::string> m_allowed_readable_paths;
+		std::shared_ptr<std::unordered_set<std::string>> m_allowed_readable_paths;
 		int m_next_file_fd = 0x1000;
 		int m_next_socket_fd = 0x1000 | SOCKET_BIT;
 		bool m_verbose = true;

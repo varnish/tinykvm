@@ -280,7 +280,7 @@ private:
 
 	mutable std::unique_ptr<SMP> m_smp;
 	std::unique_ptr<Signals> m_signals = nullptr;
-	std::unique_ptr<FileDescriptors> m_fds = nullptr;
+	mutable std::unique_ptr<FileDescriptors> m_fds = nullptr;
 
 	Machine* m_remote = nullptr;
 

@@ -16,20 +16,26 @@ namespace tinykvm
 		}
 		return *m_fds;
 	}
+	const FileDescriptors& Machine::fds() const
+	{
+		return const_cast<Machine&>(*this).fds();
+	}
 
 	FileDescriptors::FileDescriptors(Machine& machine)
 		: m_machine(machine)
 	{
+		m_allowed_readable_paths =
+			std::make_shared<std::unordered_set<std::string>>();
 		// Add all common standard libraries to the list of allowed readable paths
-		m_allowed_readable_paths.insert("/lib64/ld-linux-x86-64.so.2");
-		m_allowed_readable_paths.insert("/lib/x86_64-linux-gnu/libgcc_s.so.1");
-		m_allowed_readable_paths.insert("/lib/x86_64-linux-gnu/libc.so.6");
-		m_allowed_readable_paths.insert("/lib/x86_64-linux-gnu/libm.so.6");
-		m_allowed_readable_paths.insert("/lib/x86_64-linux-gnu/libpthread.so.0");
-		m_allowed_readable_paths.insert("/lib/x86_64-linux-gnu/libdl.so.2");
-		m_allowed_readable_paths.insert("/lib/x86_64-linux-gnu/libstdc++.so.6");
-		m_allowed_readable_paths.insert("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v2/libstdc++.so.6");
-		m_allowed_readable_paths.insert("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3/libstdc++.so.6");
+		this->add_readonly_file("/lib64/ld-linux-x86-64.so.2");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/libgcc_s.so.1");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/libc.so.6");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/libm.so.6");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/libpthread.so.0");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/libdl.so.2");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/libstdc++.so.6");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v2/libstdc++.so.6");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3/libstdc++.so.6");
 	}
 
 	FileDescriptors::~FileDescriptors()
@@ -43,6 +49,15 @@ namespace tinykvm
 
 	void FileDescriptors::reset_to(const FileDescriptors& other)
 	{
+		// Close all current file descriptors
+		// We don't have a sandbox-safe way to share
+		// file descriptors between VMs, so just close.
+		for (auto& [fd, entry] : m_fds) {
+			if (entry.real_fd >= 0) {
+				close(entry.real_fd);
+			}
+		}
+		// Clear the current file descriptors
 		m_fds.clear();
 		m_next_file_fd = other.m_next_file_fd;
 		m_next_socket_fd = other.m_next_socket_fd;
@@ -92,7 +107,7 @@ namespace tinykvm
 
 	void FileDescriptors::add_readonly_file(const std::string& path)
 	{
-		this->m_allowed_readable_paths.insert(path);
+		this->m_allowed_readable_paths->insert(path);
 	}
 
 	bool FileDescriptors::is_readable_path(std::string& modifiable_path) const noexcept
@@ -102,8 +117,8 @@ namespace tinykvm
 			if (m_open_readable(modifiable_path))
 				return true;
 		}
-		auto it = m_allowed_readable_paths.find(modifiable_path);
-		return (it != m_allowed_readable_paths.end());
+		auto it = m_allowed_readable_paths->find(modifiable_path);
+		return (it != m_allowed_readable_paths->end());
 	}
 
 	bool FileDescriptors::is_writable_path(std::string& modifiable_path) const noexcept
