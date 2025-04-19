@@ -22,11 +22,14 @@ set (SOURCES
 	tinykvm/memory_bank.cpp
 	tinykvm/page_streaming.cpp
 	tinykvm/remote.cpp
-	tinykvm/signals.cpp
 	tinykvm/smp.cpp
-	tinykvm/threads.cpp
 	tinykvm/vcpu.cpp
 	tinykvm/vcpu_run.cpp
+
+	tinykvm/linux/fds.cpp
+	tinykvm/linux/signals.cpp
+	tinykvm/linux/system_calls.cpp
+	tinykvm/linux/threads.cpp
 	)
 if (TINYKVM_ARCH STREQUAL "AMD64")
 	list(APPEND SOURCES

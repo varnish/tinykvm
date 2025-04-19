@@ -37,8 +37,6 @@ int main(int argc, char** argv)
 	vms.reserve(NUM_GUESTS);
 
 	tinykvm::Machine::init();
-	extern void setup_kvm_system_calls();
-	setup_kvm_system_calls();
 
 	/* Warmup */
 	uint64_t vmcall_address = 0x0;

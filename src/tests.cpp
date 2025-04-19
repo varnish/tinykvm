@@ -32,8 +32,6 @@ int main(int argc, char** argv)
 	const auto binary = load_file(argv[1]);
 
 	tinykvm::Machine::init();
-	extern void setup_kvm_system_calls();
-	setup_kvm_system_calls();
 
 	/* Setup */
 	const tinykvm::MachineOptions options {

@@ -1,6 +1,6 @@
 #include "threads.hpp"
 
-#include "machine.hpp"
+#include "../machine.hpp"
 #include <linux/kvm.h>
 #include <linux/futex.h>
 #include <cassert>

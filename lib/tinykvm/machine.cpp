@@ -1,6 +1,6 @@
 #include "machine.hpp"
 
-#include "threads.hpp"
+#include "linux/threads.hpp"
 #include "smp.hpp"
 #include "util/threadpool.h"
 #include <cassert>
@@ -352,6 +352,9 @@ int kvm_open()
 
 	extern void initialize_vcpu_stuff(int kvm_fd);
 	initialize_vcpu_stuff(fd);
+
+	/* Setup the default syscall table */
+	Machine::setup_linux_system_calls();
 
 	return fd;
 }
