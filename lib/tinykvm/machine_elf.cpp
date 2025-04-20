@@ -12,23 +12,35 @@ namespace tinykvm {
 static constexpr bool VERBOSE_LOADER = false;
 static constexpr int MAX_LOADABLE_SEGMENTS = 16;
 
-bool is_dynamic_elf(std::string_view binary)
+bool is_dynamic_elf(std::string_view binary, bool require_interpreter)
 {
 	if (binary.size() < sizeof(Elf64_Ehdr))
 	{
 		throw MachineException("ELF binary too short");
 	}
-	const auto *elf = (Elf64_Ehdr *)binary.data();
-	if (elf->e_type == ET_DYN)
+	const auto* elf = (Elf64_Ehdr *)binary.data();
+	// Bounds-check program headers
+	if (elf->e_phoff + sizeof(Elf64_Phdr) * elf->e_phnum > binary.size())
 	{
-		return true;
+		throw MachineException("ELF binary too short");
 	}
-	else if (elf->e_type == ET_EXEC)
+	// Check for interpreter section
+	const auto* phdr = (Elf64_Phdr *)(binary.data() + elf->e_phoff);
+	bool has_interpreter = false;
+	for (int i = 0; i < elf->e_phnum; ++i)
 	{
-		return false;
+		if (phdr[i].p_type == PT_INTERP)
+		{
+			has_interpreter = true;
+			break;
+		}
 	}
-	else
-	{
+
+	if (elf->e_type == ET_DYN || elf->e_type == ET_EXEC) {
+		return (has_interpreter && require_interpreter)
+			|| (elf->e_type == ET_DYN && !require_interpreter);
+	}
+	else {
 		throw MachineException("Invalid ELF type: Not a static or dynamic executable");
 	}
 }
@@ -42,7 +54,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	if (UNLIKELY(!validate_header(elf))) {
 		throw MachineException("Invalid ELF header! Not a 64-bit program?");
 	}
-	bool is_dynamic = is_dynamic_elf(binary);
+	bool is_dynamic = is_dynamic_elf(binary, false);
 	this->m_image_base = (is_dynamic) ? DYLINK_BASE : 0x0;
 
 	// enumerate & load loadable segments
@@ -71,6 +83,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	this->m_start_address = this->m_image_base + elf->e_entry;
 	this->m_stack_address = this->m_image_base + program_begin;
 	this->m_heap_address = 0x0;
+	this->m_has_interpreter = false;
 
 	int seg = 0;
 	for (const auto* hdr = phdr; hdr < phdr + program_headers; hdr++)
@@ -108,6 +121,9 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 			case PT_GNU_RELRO:
 				//throw MachineException(
 				//	"Dynamically linked ELF binaries are not supported");
+				break;
+			case PT_INTERP:
+				this->m_has_interpreter = true;
 				break;
 		}
 

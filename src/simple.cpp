@@ -33,11 +33,11 @@ int main(int argc, char** argv)
 
 	const bool is_dynamic = tinykvm::is_dynamic_elf(
 		std::string_view{(const char*)binary.data(), binary.size()});
-	if (is_dynamic)
-	{
+	if (is_dynamic) {
 		// Add ld-linux.so.2 as first argument
-		binary = load_file("/lib64/ld-linux-x86-64.so.2");
-		args.push_back("/lib64/ld-linux-x86-64.so.2");
+		static const std::string ld_linux_so = "/lib64/ld-linux-x86-64.so.2";
+		binary = load_file(ld_linux_so);
+		args.push_back(ld_linux_so);
 	}
 
 	for (int i = 1; i < argc; i++)

@@ -52,7 +52,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		0, [] (vCPU& cpu) { // READ
+		SYS_read, [] (vCPU& cpu) { // READ
 			auto& regs = cpu.registers();
 			SYSPRINT("READ to fd=%lld, data=0x%llX, size=%llu\n",
 				regs.rdi, regs.rsi, regs.rdx);
@@ -67,10 +67,12 @@ void Machine::setup_linux_system_calls()
 				regs.rsi, regs.rdx);
 
 			regs.rax = readv(fd, (struct iovec *)&buffers[0], bufcount);
+			if (regs.rax < 0)
+				regs.rax = -errno;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		1, [] (vCPU& cpu) { // WRITE
+		SYS_write, [] (vCPU& cpu) { // WRITE
 			auto& regs = cpu.registers();
 			const int    fd = regs.rdi;
 			const size_t bytes = regs.rdx;
@@ -112,9 +114,8 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		3, [] (vCPU& cpu) { // CLOSE
+		SYS_close, [] (vCPU& cpu) { // CLOSE
 			auto& regs = cpu.registers();
-
 			auto opt_entry = cpu.machine().fds().entry_for_vfd(regs.rdi);
 			if (opt_entry.has_value()) {
 				auto& entry = *opt_entry;
@@ -131,13 +132,15 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		4, [] (vCPU& cpu) { // STAT
+		SYS_stat, [] (vCPU& cpu) { // STAT
 			auto& regs = cpu.registers();
 			const auto vpath = regs.rdi;
 
 			std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
 			if (!cpu.machine().fds().is_readable_path(path)) {
 				regs.rax = -EACCES;
+				SYSPRINT("STAT to path=%s, data=0x%llX = %lld\n",
+					path.c_str(), regs.rsi, regs.rax);
 				cpu.set_registers(regs);
 				return;
 			}
@@ -152,7 +155,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		5, [] (vCPU& cpu) { // FSTAT
+		SYS_fstat, [] (vCPU& cpu) { // FSTAT
 			auto& regs = cpu.registers();
 
 			int fd = regs.rdi;
@@ -169,14 +172,14 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		8, [] (vCPU& cpu) { // LSEEK
+		SYS_lseek, [] (vCPU& cpu) { // LSEEK
 			auto& regs = cpu.registers();
 			const int fd = cpu.machine().fds().translate(regs.rdi);
 			regs.rax = lseek(fd, regs.rsi, regs.rdx);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		7, [](vCPU& cpu) { // POLL
+		SYS_poll, [](vCPU& cpu) { // POLL
 			auto& regs = cpu.registers();
 			struct pollfd
 			{
@@ -200,7 +203,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		9, [](vCPU& cpu) { // MMAP
+		SYS_mmap, [](vCPU& cpu) { // MMAP
 			auto& regs = cpu.registers();
 			const uint64_t address = regs.rdi & ~PageMask;
 			const uint64_t length = (regs.rsi + PageMask) & ~PageMask;
@@ -295,7 +298,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		10, [](vCPU& cpu) { // MPROTECT
+		SYS_mprotect, [](vCPU& cpu) { // MPROTECT
 			/* SYS mprotect */
 			auto& regs = cpu.registers();
 			PRINTMMAP("mprotect(0x%llX, %llu, 0x%llX)\n",
@@ -306,7 +309,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		11, [](vCPU &cpu) { // MUNMAP
+		SYS_munmap, [](vCPU &cpu) { // MUNMAP
 			auto& regs = cpu.registers();
 			// We don't support MMAP fully, but we can try to relax the mapping.
 			const uint64_t old_base = regs.rdi;
@@ -319,7 +322,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		12, [](vCPU& cpu) { // BRK
+		SYS_brk, [](vCPU& cpu) { // BRK
 			auto& regs = cpu.registers();
 			if (regs.rdi > cpu.machine().heap_address() + Machine::BRK_MAX)
 			{
@@ -337,7 +340,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		13, [](vCPU& cpu)
+		SYS_rt_sigaction, [](vCPU& cpu)
 		{
 			/* SYS rt_sigaction */
 			auto& regs = cpu.registers();
@@ -380,7 +383,7 @@ void Machine::setup_linux_system_calls()
 				sig, regs.rsi, regs.rdx, regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		14, [](vCPU& cpu)
+		SYS_rt_sigprocmask, [](vCPU& cpu)
 		{
 			/* SYS rt_sigprocmask */
 			auto& regs = cpu.registers();
@@ -407,7 +410,7 @@ void Machine::setup_linux_system_calls()
 					 how, g_set, g_oldset, size, regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		131, [](vCPU& cpu)
+		SYS_sigaltstack, [](vCPU& cpu)
 		{
 			/* SYS sigaltstack */
 			auto& regs = cpu.registers();
@@ -425,10 +428,9 @@ void Machine::setup_linux_system_calls()
 				regs.rdi, regs.rsi, regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		16, [](vCPU& cpu) { // IOCTL
+		SYS_ioctl, [](vCPU& cpu) {
 			auto& regs = cpu.registers();
-			switch (regs.rsi)
-			{
+			switch (regs.rsi) {
 			case 0x5401: /* TCGETS */
 				regs.rax = 0;
 				break;
@@ -443,7 +445,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		17, [](vCPU& cpu) { // PREAD64
+		SYS_pread64, [](vCPU& cpu) {
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
 			const auto g_buf = regs.rsi;
@@ -468,7 +470,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		20, [](vCPU& cpu) { // WRITEV
+		SYS_writev, [](vCPU& cpu) {
 			/* SYS writev */
 			auto& regs = cpu.registers();
 			struct g_iovec
@@ -546,7 +548,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		21, [](vCPU& cpu) { // ACCESS
+		SYS_access, [](vCPU& cpu) { // ACCESS
 			auto& regs = cpu.registers();
 			regs.rax = -EPERM;
 			SYSPRINT("access(0x%llX 0x%llX) = %lld\n",
@@ -554,15 +556,15 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		293, [](vCPU& cpu) { // PIPE2
+		SYS_pipe2, [](vCPU& cpu) { // PIPE2
 			auto& regs = cpu.registers();
 			regs.rax = 0;
-			SYSPRINT("pipe(0x%llX, 0x%X) = %lld\n",
+			SYSPRINT("pipe2(0x%llX, 0x%X) = %lld\n",
 					 regs.rdi, int(regs.rsi), regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		25, [](vCPU& cpu) { // MREMAP
+		SYS_mremap, [](vCPU& cpu) { // MREMAP
 			auto& regs = cpu.registers();
 			auto &mm = cpu.machine().mmap();
 			uint64_t old_addr = regs.rdi & ~(uint64_t)0xFFF;
@@ -604,7 +606,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		28, [](vCPU& cpu) { // MADVISE
+		SYS_madvise, [](vCPU& cpu) { // MADVISE
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			PRINTMMAP("madvise(0x%llX, %llu, 0x%llx) = %lld\n",
@@ -618,7 +620,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		35, [](vCPU& cpu) { // nanosleep
+		SYS_nanosleep, [](vCPU& cpu) { // nanosleep
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("nanosleep(...) = %lld\n",
@@ -626,14 +628,14 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		39, [](vCPU& cpu) { // GETPID
+		SYS_getpid, [](vCPU& cpu) { // GETPID
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("getpid() = %lld\n", regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		60, [](vCPU& cpu) { // EXIT
+		SYS_exit, [](vCPU& cpu) { // EXIT
 #ifdef VERBOSE_GUEST_EXITS
 			auto& regs = cpu.registers();
 			printf("Machine exited with return value 0x%llX\n", regs.rdi);
@@ -641,7 +643,7 @@ void Machine::setup_linux_system_calls()
 			cpu.stop();
 		});
 	Machine::install_syscall_handler(
-		48, [] (vCPU& cpu) { // SHUTDOWN
+		SYS_shutdown, [] (vCPU& cpu) { // SHUTDOWN
 			auto& regs = cpu.registers();
 
 			const int fd = cpu.machine().fds().translate(regs.rdi);
@@ -651,7 +653,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		63, [](vCPU& cpu) { // UTSNAME
+		SYS_uname, [](vCPU& cpu) { // UTSNAME
 			auto& regs = cpu.registers();
 			if (cpu.machine().memory_safe_at(regs.rdi, sizeof(struct utsname)))
 			{
@@ -669,7 +671,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		72, [](vCPU& cpu) { // FCNTL
+		SYS_fcntl, [](vCPU& cpu) { // FCNTL
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("fcntl(...) = %lld\n",
@@ -677,7 +679,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		79, [](vCPU& cpu) { // GETCWD
+		SYS_getcwd, [](vCPU& cpu) { // GETCWD
 			auto& regs = cpu.registers();
 
 			const char fakepath[] = "/";
@@ -690,7 +692,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		89, [](vCPU& cpu) { // READLINK
+		SYS_readlink, [](vCPU& cpu) { // READLINK
 			auto& regs = cpu.registers();
 			regs.rax = -ENOENT;
 			SYSPRINT("readlink(0x%llX, bufd=0x%llX, size=%llu) = %lld\n",
@@ -698,7 +700,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		96, [](vCPU& cpu) { // gettimeofday
+		SYS_gettimeofday, [](vCPU& cpu) { // gettimeofday
 			auto& regs = cpu.registers();
 			struct timeval tv;
 			regs.rax = gettimeofday(&tv, nullptr);
@@ -715,27 +717,27 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		102, [](vCPU& cpu) { // GETUID
+		SYS_getuid, [](vCPU& cpu) { // GETUID
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler( // sched_getparam
-		143, [](vCPU& cpu)
+		SYS_sched_getparam, [](vCPU& cpu)
 		{
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("sched_getparam(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler( // sched_getscheduler
-		145, [](vCPU& cpu)
+		SYS_sched_getscheduler, [](vCPU& cpu)
 		{
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("sched_getscheduler(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		157, [](vCPU& cpu)
+		SYS_prctl, [](vCPU& cpu)
 		{
 			/* SYS prctl */
 			auto& regs = cpu.registers();
@@ -746,7 +748,7 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("prctl(opt=%d) = %lld\n", option, regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		158, [](vCPU& cpu)
+		SYS_arch_prctl, [](vCPU& cpu)
 		{
 			/* SYS arch_prctl */
 			auto& regs = cpu.registers();
@@ -758,19 +760,19 @@ void Machine::setup_linux_system_calls()
 			regs.rax = -22; // EINVAL
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		200, [](auto &) { // tkill
+		SYS_tkill, [](auto &) { // tkill
 			/* Normally, we would invoke signal w/altstack here */
 			throw MachineException("TKILL system call received");
 		});
 	Machine::install_syscall_handler(
-		201, [](vCPU& cpu) { // time
+		SYS_time, [](vCPU& cpu) { // time
 			auto& regs = cpu.registers();
 			regs.rax = time(NULL);
 			SYSPRINT("time(NULL) = %lld\n", regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		204, [](vCPU& cpu) { // sched_getaffinity
+		SYS_sched_getaffinity, [](vCPU& cpu) { // sched_getaffinity
 			/* SYS sched_getaffinity */
 			auto& regs = cpu.registers();
 			regs.rax = 0;
@@ -778,7 +780,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		217, [](vCPU& cpu) { // GETDENTS64
+		SYS_getdents64, [](vCPU& cpu) { // GETDENTS64
 			auto& regs = cpu.registers();
 
 			int fd = cpu.machine().fds().translate(regs.rdi);
@@ -794,7 +796,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		228, [](vCPU& cpu) { // clock_gettime
+		SYS_clock_gettime, [](vCPU& cpu) { // clock_gettime
 			auto& regs = cpu.registers();
 			struct timespec ts;
 			regs.rax = clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -807,16 +809,17 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		231, [](vCPU& cpu)
+		SYS_exit_group, [](vCPU& cpu)
 		{
 	/* SYS exit_group */
 #ifdef VERBOSE_GUEST_EXITS
 			auto& regs = cpu.registers();
 			printf("Machine exits: _exit(%lld)\n", regs.rdi);
 #endif
-			cpu.stop(); });
+			cpu.stop();
+		});
 	Machine::install_syscall_handler(
-		257, [] (vCPU& cpu) { // OPENAT
+		SYS_openat, [] (vCPU& cpu) { // OPENAT
 			auto& regs = cpu.registers();
 
 			const auto vpath = regs.rsi;
@@ -872,7 +875,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		262, [] (vCPU& cpu) { // NEWFSTATAT
+		SYS_newfstatat, [] (vCPU& cpu) { // NEWFSTATAT
 			auto& regs = cpu.registers();
 			const auto vpath  = regs.rsi;
 			const auto buffer = regs.rdx;
@@ -914,7 +917,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		273, [](vCPU& cpu)
+		SYS_set_robust_list, [](vCPU& cpu)
 		{
 			/* SYS set_robust_list */
 			auto& regs = cpu.registers();
@@ -922,7 +925,7 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("set_robust_list(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		290, [](vCPU& cpu)
+		SYS_eventfd2, [](vCPU& cpu)
 		{
 			/* SYS eventfd2 */
 			auto& regs = cpu.registers();
@@ -930,7 +933,7 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("eventfd2(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		291, [](vCPU& cpu)
+		SYS_epoll_create1, [](vCPU& cpu)
 		{
 			/* SYS epoll_create1 */
 			auto& regs = cpu.registers();
@@ -938,7 +941,7 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("epoll_create1(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		230, [](vCPU& cpu)
+		SYS_nanosleep, [](vCPU& cpu)
 		{
 			/* SYS nanosleep */
 			auto& regs = cpu.registers();
@@ -946,7 +949,7 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("nanosleep(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		233, [](vCPU& cpu)
+		SYS_epoll_ctl, [](vCPU& cpu)
 		{
 			/* SYS epoll_ctl */
 			auto& regs = cpu.registers();
@@ -954,7 +957,7 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("epoll_ctl(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
-		302, [](vCPU& cpu) { // prlimit64
+		SYS_prlimit64, [](vCPU& cpu) { // prlimit64
 			auto& regs = cpu.registers();
 			struct rlimit64
 			{
@@ -993,7 +996,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		318, [](vCPU& cpu) { // getrandom
+		SYS_getrandom, [](vCPU& cpu) { // getrandom
 			auto& regs = cpu.registers();
 			const uint64_t g_buf = regs.rdi;
 			const uint32_t bytes = regs.rsi;
@@ -1018,7 +1021,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		332, [] (vCPU& cpu) { // STATX
+		SYS_statx, [] (vCPU& cpu) { // STATX
 			auto& regs = cpu.registers();
 			long fd = AT_FDCWD; // rdi
 			const auto vpath  = regs.rsi;
@@ -1051,7 +1054,7 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		334, [](vCPU& cpu) { // faccessat
+		SYS_faccessat, [](vCPU& cpu) { // faccessat
 			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
 			SYSPRINT("faccessat(...) = %lld\n",

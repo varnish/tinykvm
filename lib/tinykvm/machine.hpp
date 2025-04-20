@@ -147,6 +147,7 @@ struct Machine
 	uint64_t translate(uint64_t virt) const;
 
 	bool is_dynamic() const noexcept { return m_image_base != 0x0; }
+	bool is_interpreted_dynamic() const noexcept { return m_has_interpreter; }
 	address_t image_base() const noexcept { return this->m_image_base; }
 	address_t start_address() const noexcept { return this->m_start_address; }
 	address_t stack_address() const noexcept { return this->m_stack_address; }
@@ -158,7 +159,7 @@ struct Machine
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
 
-	static constexpr uint64_t BRK_MAX = 0x40000;
+	static constexpr uint64_t BRK_MAX = 0x20000;
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t mmap_allocate(size_t bytes);
 	bool      mmap_unmap(uint64_t addr, size_t size);
@@ -262,6 +263,7 @@ private:
 	bool  m_forked = false;
 	bool  m_just_reset = false;
 	bool  m_relocate_fixed_mmap = false;
+	bool  m_has_interpreter = false;
 	void* m_userdata = nullptr;
 
 	std::string_view m_binary;

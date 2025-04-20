@@ -393,12 +393,12 @@ std::string Machine::memcstring(address_t src, size_t maxlen) const
 	std::string result;
 	while (result.size() < maxlen)
 	{
-		const size_t max_size = std::min(vMemory::PageSize(), maxlen - result.size());
 		const size_t offset = src & PageMask();
+		const size_t max_size = std::min(vMemory::PageSize() - offset, maxlen - result.size());
 		const auto* page = memory.get_userpage_at(src & ~PageMask());
 
 		const auto* start = (const char *)&page[offset];
-		const auto* end = (const char *)&page[max_size];
+		const auto* end = start + max_size;
 
 		const char* reader = start + strnlen(start, max_size);
 		result.append(start, reader);
