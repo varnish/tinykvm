@@ -118,7 +118,25 @@ namespace tinykvm
 				return true;
 		}
 		auto it = m_allowed_readable_paths->find(modifiable_path);
-		return (it != m_allowed_readable_paths->end());
+		if (it != m_allowed_readable_paths->end())
+		{
+			return true;
+		}
+		// Iterate over the allowed paths and check if a path
+		// starts with modifiable_path, however path cannot contain
+		// any parent-directory components (..)
+		if (modifiable_path.find("..") != std::string::npos)
+		{
+			return false;
+		}
+		for (const auto& path : *m_allowed_readable_paths)
+		{
+			if (modifiable_path.find(path) == 0)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	bool FileDescriptors::is_writable_path(std::string& modifiable_path) const noexcept

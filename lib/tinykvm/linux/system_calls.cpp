@@ -166,7 +166,10 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_lseek, [] (vCPU& cpu) { // LSEEK
 			auto& regs = cpu.registers();
-			const int fd = cpu.machine().fds().translate(regs.rdi);
+			int fd = regs.rdi;
+			if (fd > 2) {
+				fd = cpu.machine().fds().translate(regs.rdi);
+			}
 			regs.rax = lseek(fd, regs.rsi, regs.rdx);
 			cpu.set_registers(regs);
 		});
@@ -612,6 +615,27 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_dup, [](vCPU& cpu) { // DUP
+			auto& regs = cpu.registers();
+			int fd = regs.rdi;
+			if (fd > 2)
+			{
+				fd = cpu.machine().fds().translate(fd);
+			}
+			const int new_fd = dup(fd);
+			if (new_fd < 0)
+			{
+				regs.rax = -errno;
+			}
+			else
+			{
+				regs.rax = cpu.machine().fds().manage(new_fd, false, false);
+			}
+			SYSPRINT("dup(vfd=%lld fd=%d) = %lld\n",
+					 regs.rdi, fd, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_nanosleep, [](vCPU& cpu) { // nanosleep
 			auto& regs = cpu.registers();
 			regs.rax = 0;
@@ -665,7 +689,14 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_fcntl, [](vCPU& cpu) { // FCNTL
 			auto& regs = cpu.registers();
+			const int fd = cpu.machine().fds().translate(regs.rdi);
+			const int cmd = regs.rsi;
 			regs.rax = 0;
+			if (cmd == F_GETFD)
+			{
+				//const int flags = fcntl(fd, cmd);
+				regs.rax = 0x1;
+			}
 			SYSPRINT("fcntl(...) = %lld\n",
 					 regs.rax);
 			cpu.set_registers(regs);
@@ -871,40 +902,38 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const auto vpath  = regs.rsi;
 			const auto buffer = regs.rdx;
-			const int  flags  = regs.r8;
+			const int  flags  = 0; // regs.r10;
 			int fd = AT_FDCWD;
 			std::string path;
 
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
 
-				if (regs.rdi != AT_FDCWD) {
+				if (int(regs.rdi) >= 0) {
 					// Use existing vfd
-					fd = cpu.machine().fds().translate(regs.rdi);
+					fd = cpu.machine().fds().translate(int(regs.rdi));
+				} else {
+					// Use AT_FDCWD
+					fd = AT_FDCWD;
+				}
 
+				if (!cpu.machine().fds().is_readable_path(path)) {
+					regs.rax = -EPERM;
+				} else {
 					struct stat64 vstat;
-					// We don't use path here, as a security measure
-					regs.rax = fstatat64(fd, "", &vstat, flags);
+					// Path is in allow-list
+					regs.rax = fstatat64(fd, path.c_str(), &vstat, flags);
 					if (regs.rax == 0) {
 						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
-					}
-				} else {
-					if (!cpu.machine().fds().is_readable_path(path)) {
-						regs.rax = -EPERM;
 					} else {
-						struct stat64 vstat;
-						// Path is in allow-list
-						regs.rax = fstatat64(AT_FDCWD, path.c_str(), &vstat, flags);
-						if (regs.rax == 0) {
-							cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
-						}
+						regs.rax = -errno;
 					}
 				}
 			} catch (...) {
 				regs.rax = -1;
 			}
 
-			SYSPRINT("NEWFSTATAT to vfd=%lld, vfd=%d, path=%s, data=0x%llX, flags=0x%X = %lld\n",
+			SYSPRINT("NEWFSTATAT to vfd=%lld, fd=%d, path=%s, data=0x%llX, flags=0x%X = %lld\n",
 				regs.rdi, fd, path.c_str(), buffer, flags, regs.rax);
 			cpu.set_registers(regs);
 		});
@@ -1048,26 +1077,22 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_readlinkat, [](vCPU& cpu) { // READLINKAT
 			auto& regs = cpu.registers();
+			const int  vfd      = regs.rdi;
 			const auto vpath    = regs.rsi;
 			const auto g_buffer = regs.rdx;
 			const int  flags    = regs.r8;
-			int fd = AT_FDCWD;
 			std::string path;
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
 				if (!cpu.machine().fds().is_readable_path(path)) {
-					fd = cpu.machine().fds().translate(regs.rdi);
-
-					char buffer[PATH_MAX];
-					regs.rax = readlinkat(fd, "", buffer, sizeof(buffer));
-					if (regs.rax > 0) {
-						cpu.machine().copy_to_guest(g_buffer, buffer, regs.rax);
-					} else {
-						regs.rax = -errno;
-					}
+					regs.rax = -EPERM;
 				} else {
+					int fd = vfd;
+					// Translate from vfd when fd != AT_FDCWD
+					if (vfd != AT_FDCWD)
+						fd = cpu.machine().fds().translate(vfd);
 					// Path is in allow-list
-					regs.rax = readlinkat(AT_FDCWD, path.c_str(), (char *)g_buffer, regs.rdx);
+					regs.rax = readlinkat(fd, path.c_str(), (char *)g_buffer, regs.rdx);
 					if (regs.rax > 0) {
 						cpu.machine().copy_to_guest(g_buffer, path.c_str(), regs.rax);
 					} else {
