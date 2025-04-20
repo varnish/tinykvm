@@ -119,4 +119,14 @@ namespace tinykvm
 		int userval2;
 		int userval3;
 	};
+
+	struct DynamicElf {
+		std::string interpreter;
+		bool is_dynamic;
+
+		bool has_interpreter() const noexcept {
+			return !interpreter.empty();
+		}
+	};
+	extern DynamicElf is_dynamic_elf(std::string_view bin);
 }

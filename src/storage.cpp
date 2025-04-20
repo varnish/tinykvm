@@ -35,8 +35,6 @@ int main(int argc, char** argv)
 	printf(">>> Guest: %s  >>> Storage: %s\n", argv[1], argv[2]);
 
 	tinykvm::Machine::init();
-	extern void setup_kvm_system_calls();
-	setup_kvm_system_calls();
 
 	tinykvm::Machine::install_unhandled_syscall_handler(
 	[] (tinykvm::vCPU& cpu, unsigned scall) {

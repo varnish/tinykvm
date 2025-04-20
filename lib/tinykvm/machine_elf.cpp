@@ -10,7 +10,46 @@
 
 namespace tinykvm {
 static constexpr bool VERBOSE_LOADER = false;
-static constexpr int MAX_LOADABLE_SEGMENTS = 8;
+static constexpr int MAX_LOADABLE_SEGMENTS = 16;
+
+DynamicElf is_dynamic_elf(std::string_view binary)
+{
+	if (binary.size() < sizeof(Elf64_Ehdr))
+	{
+		throw MachineException("ELF binary too short");
+	}
+	const auto* elf = (Elf64_Ehdr *)binary.data();
+	// Bounds-check program headers
+	if (elf->e_phoff + sizeof(Elf64_Phdr) * elf->e_phnum > binary.size())
+	{
+		throw MachineException("ELF binary too short");
+	}
+	// Check for interpreter section
+	const auto* phdr = (Elf64_Phdr *)(binary.data() + elf->e_phoff);
+	std::string interpreter;
+	for (int i = 0; i < elf->e_phnum; ++i)
+	{
+		if (phdr[i].p_type == PT_INTERP)
+		{
+			if (phdr[i].p_offset + phdr[i].p_filesz > binary.size())
+			{
+				throw MachineException("ELF interpreter section too short");
+			}
+			interpreter = std::string(
+				(const char *)binary.data() + phdr[i].p_offset,
+				phdr[i].p_filesz);
+			break;
+		}
+	}
+
+	const bool is_dynamic = (elf->e_type == ET_DYN) || !interpreter.empty();
+	if (elf->e_type == ET_DYN || elf->e_type == ET_EXEC) {
+		return DynamicElf{interpreter, is_dynamic};
+	}
+	else {
+		throw MachineException("Invalid ELF type: Not a static or dynamic executable");
+	}
+}
 
 void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 {
@@ -21,16 +60,13 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	if (UNLIKELY(!validate_header(elf))) {
 		throw MachineException("Invalid ELF header! Not a 64-bit program?");
 	}
-	bool is_dynamic = false;
-	if (elf->e_type == ET_DYN) {
-		is_dynamic = true;
-		this->m_image_base = DYLINK_BASE;
+	const DynamicElf elf_dynamic = is_dynamic_elf(binary);
+	const bool is_dynamic = elf_dynamic.is_dynamic;
+	if (UNLIKELY(elf_dynamic.has_interpreter())) {
+		throw MachineException(
+			"ELF w/interpreter must be loaded by the interpreter itself");
 	}
-	else if (elf->e_type == ET_EXEC) {
-		this->m_image_base = 0x0;
-	} else {
-		throw MachineException("Invalid ELF type: Not a static or dynamic executable!");
-	}
+	this->m_image_base = (is_dynamic) ? DYLINK_BASE : 0x0;
 
 	// enumerate & load loadable segments
 	const auto program_headers = elf->e_phnum;

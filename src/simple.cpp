@@ -27,11 +27,25 @@ int main(int argc, char** argv)
 		fprintf(stderr, "Missing argument: 64-bit ELF binary\n");
 		exit(1);
 	}
-	const auto binary = load_file(argv[1]);
+	std::vector<uint8_t> binary;
+	std::vector<std::string> args;
+	binary = load_file(argv[1]);
+
+	const tinykvm::DynamicElf dyn_elf = tinykvm::is_dynamic_elf(
+		std::string_view{(const char*)binary.data(), binary.size()});
+	if (dyn_elf.is_dynamic) {
+		// Add ld-linux.so.2 as first argument
+		static const std::string ld_linux_so = "/lib64/ld-linux-x86-64.so.2";
+		binary = load_file(ld_linux_so);
+		args.push_back(ld_linux_so);
+	}
+
+	for (int i = 1; i < argc; i++)
+	{
+		args.push_back(argv[i]);
+	}
 
 	tinykvm::Machine::init();
-	extern void setup_kvm_system_calls();
-	setup_kvm_system_calls();
 
 	tinykvm::Machine::install_unhandled_syscall_handler(
 	[] (tinykvm::vCPU& cpu, unsigned scall) {
@@ -66,16 +80,15 @@ int main(int argc, char** argv)
 		.reset_free_work_mem = 0,
 		.vmem_base_address = uint64_t(getenv("UPPER") != nullptr ? 0x40000000 : 0x0),
 		.remappings {remappings},
-		.verbose_loader = (getenv("VERBOSE") != nullptr),
+		.verbose_loader = true,
 		.hugepages = (getenv("HUGE") != nullptr),
 		.relocate_fixed_mmap = (getenv("GO") == nullptr),
+		.executable_heap = dyn_elf.is_dynamic,
 	};
 	tinykvm::Machine master_vm {binary, options};
 	//master_vm.print_pagetables();
-
-	std::vector<std::string> args;
-	for (int i = 1; i < argc; i++) {
-		args.push_back(argv[i]);
+	if (dyn_elf.is_dynamic) {
+		master_vm.fds().add_readonly_file(argv[1]);
 	}
 
 	master_vm.setup_linux(

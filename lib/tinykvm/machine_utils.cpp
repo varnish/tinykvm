@@ -388,4 +388,26 @@ std::string Machine::buffer_to_string(address_t src, size_t len, size_t maxlen) 
 	return result;
 }
 
+std::string Machine::memcstring(address_t src, size_t maxlen) const
+{
+	std::string result;
+	while (result.size() < maxlen)
+	{
+		const size_t offset = src & PageMask();
+		const size_t max_size = std::min(vMemory::PageSize() - offset, maxlen - result.size());
+		const auto* page = memory.get_userpage_at(src & ~PageMask());
+
+		const auto* start = (const char *)&page[offset];
+		const auto* end = start + max_size;
+
+		const char* reader = start + strnlen(start, max_size);
+		result.append(start, reader);
+
+		if (reader < end)
+			return result;
+		src += max_size;
+	}
+	return result;
+}
+
 } // tinykvm

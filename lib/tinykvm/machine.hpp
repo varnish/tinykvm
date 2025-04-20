@@ -3,7 +3,8 @@
 #include "memory.hpp"
 #include "memory_bank.hpp"
 #include "mmap_cache.hpp"
-#include "signals.hpp"
+#include "linux/fds.hpp"
+#include "linux/signals.hpp"
 #include "vcpu.hpp"
 #include <array>
 #include <cassert>
@@ -81,6 +82,8 @@ struct Machine
 	T* writable_memarray(address_t src, size_t elements = 1) {
 		return reinterpret_cast<T*>(writable_memview(src, elements * sizeof(T)).data());
 	}
+	/* Build a std::string from a zero-terminated string in memory. */
+	std::string memcstring(address_t src, size_t maxlen = 65535u) const;
 
 	struct StringOrView {
 		const char* begin() const noexcept { return sv.begin(); }
@@ -184,7 +187,11 @@ struct Machine
 
 	/* Signal structure, lazily created */
 	Signals& signals();
-	SignalAction& sigaction(int sig) { return signals().get(sig); }
+	SignalAction& sigaction(int sig);
+
+	/* File descriptors, lazily created */
+	FileDescriptors& fds();
+	const FileDescriptors& fds() const;
 
 	void set_printer(printer_func pf = m_default_printer) { m_printer = std::move(pf); }
 	void print(const char*, size_t);
@@ -228,6 +235,7 @@ struct Machine
 	   one thread, and using it in another. */
 	void migrate_to_this_thread();
 	static void init();
+	static void setup_linux_system_calls();
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);
 	Machine(const Machine& other, const MachineOptions&);
@@ -272,6 +280,7 @@ private:
 
 	mutable std::unique_ptr<SMP> m_smp;
 	std::unique_ptr<Signals> m_signals = nullptr;
+	mutable std::unique_ptr<FileDescriptors> m_fds = nullptr;
 
 	Machine* m_remote = nullptr;
 
