@@ -151,13 +151,17 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 
 			int fd = regs.rdi;
-			if (fd > 2) {
-				fd = cpu.machine().fds().translate(regs.rdi);
-			}
-			struct stat vstat;
-			regs.rax = fstat(fd, &vstat);
-			if (regs.rax == 0) {
-				cpu.machine().copy_to_guest(regs.rsi, &vstat, sizeof(vstat));
+			try {
+				if (fd > 2) {
+					fd = cpu.machine().fds().translate(regs.rdi);
+				}
+				struct stat vstat;
+				regs.rax = fstat(fd, &vstat);
+				if (regs.rax == 0) {
+					cpu.machine().copy_to_guest(regs.rsi, &vstat, sizeof(vstat));
+				}
+			} catch (...) {
+				regs.rax = -EBADF;
 			}
 			SYSPRINT("FSTAT to vfd=%lld, fd=%d, data=0x%llX = %lld\n",
 				regs.rdi, fd, regs.rsi, regs.rax);
@@ -167,10 +171,17 @@ void Machine::setup_linux_system_calls()
 		SYS_lseek, [] (vCPU& cpu) { // LSEEK
 			auto& regs = cpu.registers();
 			int fd = regs.rdi;
-			if (fd > 2) {
-				fd = cpu.machine().fds().translate(regs.rdi);
+			try {
+				if (fd > 2) {
+					fd = cpu.machine().fds().translate(regs.rdi);
+				}
+				regs.rax = lseek(fd, regs.rsi, regs.rdx);
+				if (regs.rax < 0) {
+					regs.rax = -errno;
+				}
+			} catch (...) {
+				regs.rax = -EBADF;
 			}
-			regs.rax = lseek(fd, regs.rsi, regs.rdx);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -523,7 +534,7 @@ void Machine::setup_linux_system_calls()
 						const size_t n = cpu.machine().gather_buffers_from_range(
 								buffers.size(), buffers.data(),
 								vecs[i].iov_base, vecs[i].iov_len);
-						
+
 						ssize_t result = writev((*opt_entry)->real_fd,
 							(const struct iovec *)buffers.data(), n);
 						if (result < 0)
@@ -539,7 +550,6 @@ void Machine::setup_linux_system_calls()
 				{
 					regs.rax = -EBADF;
 				}
-				
 			}
 			SYSPRINT("writev(%d) = %lld\n",
 					 vfd, regs.rax);
@@ -621,18 +631,22 @@ void Machine::setup_linux_system_calls()
 		SYS_dup, [](vCPU& cpu) { // DUP
 			auto& regs = cpu.registers();
 			int fd = regs.rdi;
-			if (fd > 2)
-			{
-				fd = cpu.machine().fds().translate(fd);
-			}
-			const int new_fd = dup(fd);
-			if (new_fd < 0)
-			{
-				regs.rax = -errno;
-			}
-			else
-			{
-				regs.rax = cpu.machine().fds().manage(new_fd, false, false);
+			try {
+				if (fd > 2)
+				{
+					fd = cpu.machine().fds().translate(fd);
+				}
+				const int new_fd = dup(fd);
+				if (new_fd < 0)
+				{
+					regs.rax = -errno;
+				}
+				else
+				{
+					regs.rax = cpu.machine().fds().manage(new_fd, false, false);
+				}
+			} catch (...) {
+				regs.rax = -EBADF;
 			}
 			SYSPRINT("dup(vfd=%lld fd=%d) = %lld\n",
 					 regs.rdi, fd, regs.rax);
@@ -671,9 +685,14 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_shutdown, [] (vCPU& cpu) { // SHUTDOWN
 			auto& regs = cpu.registers();
-
-			const int fd = cpu.machine().fds().translate(regs.rdi);
-			regs.rax = ::shutdown(fd, regs.rsi);
+			try {
+				const int fd = cpu.machine().fds().translate(regs.rdi);
+				regs.rax = ::shutdown(fd, regs.rsi);
+				if (regs.rax < 0)
+					regs.rax = -errno;
+			} catch (...) {
+				regs.rax = -EBADF;
+			}
 			SYSPRINT("SHUTDOWN(fd=%lld) = %lld\n",
 				regs.rdi, regs.rax);
 			cpu.set_registers(regs);
@@ -699,13 +718,21 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_fcntl, [](vCPU& cpu) { // FCNTL
 			auto& regs = cpu.registers();
-			const int fd = cpu.machine().fds().translate(regs.rdi);
-			const int cmd = regs.rsi;
-			regs.rax = 0;
-			if (cmd == F_GETFD)
-			{
-				//const int flags = fcntl(fd, cmd);
-				regs.rax = 0x1;
+			try {
+				int fd = regs.rdi;
+				if (fd > 2)
+				{
+					fd = cpu.machine().fds().translate(regs.rdi);
+				}
+				const int cmd = regs.rsi;
+				regs.rax = 0;
+				if (cmd == F_GETFD)
+				{
+					//const int flags = fcntl(fd, cmd);
+					regs.rax = 0x1;
+				}
+			} catch (...) {
+				regs.rax = -EBADF;
 			}
 			SYSPRINT("fcntl(...) = %lld\n",
 					 regs.rax);
