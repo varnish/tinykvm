@@ -147,7 +147,6 @@ struct Machine
 	uint64_t translate(uint64_t virt) const;
 
 	bool is_dynamic() const noexcept { return m_image_base != 0x0; }
-	bool is_interpreted_dynamic() const noexcept { return m_has_interpreter; }
 	address_t image_base() const noexcept { return this->m_image_base; }
 	address_t start_address() const noexcept { return this->m_start_address; }
 	address_t stack_address() const noexcept { return this->m_stack_address; }
@@ -263,7 +262,6 @@ private:
 	bool  m_forked = false;
 	bool  m_just_reset = false;
 	bool  m_relocate_fixed_mmap = false;
-	bool  m_has_interpreter = false;
 	void* m_userdata = nullptr;
 
 	std::string_view m_binary;

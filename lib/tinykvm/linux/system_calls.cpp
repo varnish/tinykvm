@@ -32,14 +32,6 @@
 namespace tinykvm {
 static constexpr uint64_t PageMask = vMemory::PageSize() - 1;
 
-static void syscall_unknown(vCPU& cpu, unsigned scall)
-{
-	fprintf(stderr, "Unhandled system call %u\n", scall);
-	auto& regs = cpu.registers();
-	regs.rax = -ENOSYS;
-	cpu.set_registers(regs);
-}
-
 void Machine::setup_linux_system_calls()
 {
 	Machine::install_unhandled_syscall_handler(
@@ -465,7 +457,7 @@ void Machine::setup_linux_system_calls()
 			else {
 				regs.rax = bytes;
 			}
-			SYSPRINT("pread64(fd=%lld, buf=0x%llX, size=%llu, offset=%llu) = %lld\n",
+			SYSPRINT("pread64(fd=%d, buf=0x%llX, size=%llu, offset=%llu) = %lld\n",
 					 vfd, g_buf, bytes, offset, regs.rax);
 			cpu.set_registers(regs);
 		});
@@ -1058,6 +1050,14 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
 			SYSPRINT("faccessat(...) = %lld\n",
+					 regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_rseq, [](vCPU& cpu) { // rseq
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			SYSPRINT("rseq(...) = %lld\n",
 					 regs.rax);
 			cpu.set_registers(regs);
 		});
