@@ -651,6 +651,13 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_socket, [](vCPU& cpu) { // SOCKET
+			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			SYSPRINT("socket(...) = %lld\n", regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_exit, [](vCPU& cpu) { // EXIT
 #ifdef VERBOSE_GUEST_EXITS
 			auto& regs = cpu.registers();
@@ -740,7 +747,25 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_getgid, [](vCPU& cpu) { // GETGID
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_getuid, [](vCPU& cpu) { // GETUID
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_geteuid, [](vCPU& cpu) { // GETEUID
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_getegid, [](vCPU& cpu) { // GETEGID
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			cpu.set_registers(regs);
