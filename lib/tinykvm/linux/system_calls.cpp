@@ -1046,6 +1046,42 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_readlinkat, [](vCPU& cpu) { // READLINKAT
+			auto& regs = cpu.registers();
+			const auto vpath    = regs.rsi;
+			const auto g_buffer = regs.rdx;
+			const int  flags    = regs.r8;
+			int fd = AT_FDCWD;
+			std::string path;
+			try {
+				path = cpu.machine().memcstring(vpath, PATH_MAX);
+				if (!cpu.machine().fds().is_readable_path(path)) {
+					fd = cpu.machine().fds().translate(regs.rdi);
+
+					char buffer[PATH_MAX];
+					regs.rax = readlinkat(fd, "", buffer, sizeof(buffer));
+					if (regs.rax > 0) {
+						cpu.machine().copy_to_guest(g_buffer, buffer, regs.rax);
+					} else {
+						regs.rax = -errno;
+					}
+				} else {
+					// Path is in allow-list
+					regs.rax = readlinkat(AT_FDCWD, path.c_str(), (char *)g_buffer, regs.rdx);
+					if (regs.rax > 0) {
+						cpu.machine().copy_to_guest(g_buffer, path.c_str(), regs.rax);
+					} else {
+						regs.rax = -errno;
+					}
+				}
+			} catch (...) {
+				regs.rax = -1;
+			}
+			SYSPRINT("readlinkat(0x%llX, bufd=0x%llX, size=%llu) = %lld\n",
+					 regs.rdi, regs.rsi, regs.rdx, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_faccessat, [](vCPU& cpu) { // faccessat
 			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;

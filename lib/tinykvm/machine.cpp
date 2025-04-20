@@ -97,6 +97,11 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 		m_mt.reset(new MultiThreading{*this});
 		m_mt->reset_to(*other.m_mt);
 	}
+	/* Loan file descriptors from the master machine */
+	if (other.m_fds != nullptr) {
+		m_fds.reset(new FileDescriptors{*this});
+		m_fds->reset_to(*other.m_fds);
+	}
 
 	/* Copy register state from the master machine */
 	auto& m_regs = other.registers();

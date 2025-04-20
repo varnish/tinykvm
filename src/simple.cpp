@@ -31,9 +31,9 @@ int main(int argc, char** argv)
 	std::vector<std::string> args;
 	binary = load_file(argv[1]);
 
-	const bool is_dynamic = tinykvm::is_dynamic_elf(
+	const tinykvm::DynamicElf dyn_elf = tinykvm::is_dynamic_elf(
 		std::string_view{(const char*)binary.data(), binary.size()});
-	if (is_dynamic) {
+	if (dyn_elf.is_dynamic) {
 		// Add ld-linux.so.2 as first argument
 		static const std::string ld_linux_so = "/lib64/ld-linux-x86-64.so.2";
 		binary = load_file(ld_linux_so);
@@ -83,11 +83,11 @@ int main(int argc, char** argv)
 		.verbose_loader = true,
 		.hugepages = (getenv("HUGE") != nullptr),
 		.relocate_fixed_mmap = (getenv("GO") == nullptr),
-		.executable_heap = is_dynamic,
+		.executable_heap = dyn_elf.is_dynamic,
 	};
 	tinykvm::Machine master_vm {binary, options};
 	//master_vm.print_pagetables();
-	if (is_dynamic) {
+	if (dyn_elf.is_dynamic) {
 		master_vm.fds().add_readonly_file(argv[1]);
 	}
 
