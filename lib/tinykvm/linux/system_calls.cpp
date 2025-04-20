@@ -427,7 +427,10 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			switch (regs.rsi) {
 			case 0x5401: /* TCGETS */
-				regs.rax = 0;
+				if (regs.rdi >= 0 && regs.rdi < 3)
+					regs.rax = 0;
+				else
+					regs.rax = -EPERM;
 				break;
 			case 0x5413: /* TIOCGWINSZ */
 				regs.rax = 80;
@@ -927,7 +930,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const auto vpath  = regs.rsi;
 			const auto buffer = regs.rdx;
-			const int  flags  = 0; // regs.r10;
+			int  flags  = 0; // regs.r10;
 			int fd = AT_FDCWD;
 			std::string path;
 
@@ -942,9 +945,12 @@ void Machine::setup_linux_system_calls()
 					fd = AT_FDCWD;
 				}
 
-				if (!cpu.machine().fds().is_readable_path(path)) {
+				if (!cpu.machine().fds().is_readable_path(path) && !path.empty()) {
 					regs.rax = -EPERM;
 				} else {
+					// If path is empty, use AT_EMPTY_PATH to operate on the fd
+					flags = (path.empty() && fd != AT_FDCWD) ? AT_EMPTY_PATH : 0;
+
 					struct stat64 vstat;
 					// Path is in allow-list
 					regs.rax = fstatat64(fd, path.c_str(), &vstat, flags);

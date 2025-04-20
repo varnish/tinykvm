@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <cstring>
 #include <sys/stat.h>
+#include <stdexcept>
 #include <unistd.h>
 
 namespace tinykvm
@@ -26,6 +27,8 @@ namespace tinykvm
 	{
 		m_allowed_readable_paths =
 			std::make_shared<std::unordered_set<std::string>>();
+		m_allowed_readable_paths_starts_with =
+			std::make_shared<std::vector<std::string>>();
 		// Add all common standard libraries to the list of allowed readable paths
 		this->add_readonly_file("/lib64/ld-linux-x86-64.so.2");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/libgcc_s.so.1");
@@ -107,11 +110,24 @@ namespace tinykvm
 
 	void FileDescriptors::add_readonly_file(const std::string& path)
 	{
-		this->m_allowed_readable_paths->insert(path);
+		if (path.empty())
+			throw std::runtime_error("Empty path in FileDescriptors::add_readonly_file");
+		if (path.find("..") != std::string::npos)
+			throw std::runtime_error("Path contains parent directory in FileDescriptors::add_readonly_file");
+		// We allow paths that start with $ to be treated as
+		// a prefix for the allowed paths. This is useful for
+		// allowing directories and other prefixes.
+		if (path.front() == '$')
+			this->m_allowed_readable_paths_starts_with->push_back(path.substr(1));
+		else
+			this->m_allowed_readable_paths->insert(path);
 	}
 
 	bool FileDescriptors::is_readable_path(std::string& modifiable_path) const noexcept
 	{
+		if (modifiable_path.empty())
+			return false;
+
 		if (m_open_readable)
 		{
 			if (m_open_readable(modifiable_path))
@@ -129,7 +145,7 @@ namespace tinykvm
 		{
 			return false;
 		}
-		for (const auto& path : *m_allowed_readable_paths)
+		for (const auto& path : *m_allowed_readable_paths_starts_with)
 		{
 			if (modifiable_path.find(path) == 0)
 			{
