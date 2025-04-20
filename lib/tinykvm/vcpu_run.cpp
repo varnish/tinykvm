@@ -223,6 +223,10 @@ long vCPU::run_once()
 				auto& memory = machine().main_memory();
 				if (UNLIKELY(regs.rip >= memory.physbase + INTR_ASM_ADDR+0x1000)) {
 					Machine::machine_exception("Security violation", intr);
+				} else if (UNLIKELY(addr < 0x2000)) {
+					/* Kernel space page fault */
+					this->handle_exception(intr);
+					Machine::machine_exception("Kernel or zero page fault", intr);
 				}
 
 				machine().memory.get_writable_page(addr, PDE64_USER | PDE64_RW, false);
