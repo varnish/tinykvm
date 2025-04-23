@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/random.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -351,13 +352,16 @@ void Machine::setup_linux_system_calls()
 			/* SYS rt_sigaction */
 			auto& regs = cpu.registers();
 			const int sig = regs.rdi;
+			const uint64_t g_act = regs.rsi;
+			const uint64_t g_oldact = regs.rdx;
+			//const int flags = regs.r10;
 
 			/* Silently ignore signal 0 */
 			if (sig == 0) {
 				regs.rax = 0;
 				cpu.set_registers(regs);
-				SYSPRINT("rt_sigaction(signum=%x, act=0x%llX, oldact=0x%llx) = 0x%llX (ignored)\n",
-					sig, regs.rsi, regs.rdx, regs.rax);
+				SYSPRINT("rt_sigaction(signum=%x, act=0x%lX, oldact=0x%lx) = 0x%llX (ignored)\n",
+					sig, g_act, g_oldact, regs.rax);
 				return;
 			}
 
@@ -366,27 +370,30 @@ void Machine::setup_linux_system_calls()
 			struct kernel_sigaction {
 				uint64_t handler;
 				uint64_t flags;
+				uint64_t restorer;
 				uint64_t mask;
 			} sa {};
 			/* Old action */
-			if (regs.rdx != 0x0) {
+			if (g_oldact != 0x0) {
 				sa.handler = sigact.handler & ~0xFLL;
 				sa.flags   = (sigact.altstack ? SA_ONSTACK : 0x0);
 				sa.mask    = sigact.mask;
-				cpu.machine().copy_to_guest(regs.rdx, &sa, sizeof(sa));
+				sa.restorer = sigact.restorer;
+				cpu.machine().copy_to_guest(g_oldact, &sa, sizeof(sa));
 			}
 			/* New action */
-			if (regs.rsi != 0x0) {
-				cpu.machine().copy_from_guest(&sa, regs.rsi, sizeof(sa));
+			if (g_act != 0x0) {
+				cpu.machine().copy_from_guest(&sa, g_act, sizeof(sa));
 				SYSPRINT("rt_sigaction(action handler=0x%lX  flags=0x%lX  mask=0x%lX)\n",
 					sa.handler, sa.flags, sa.mask);
 				sigact.handler  = sa.handler;
 				sigact.altstack = (sa.flags & SA_ONSTACK) != 0;
 				sigact.mask     = sa.mask;
+				sigact.restorer = sa.restorer;
 			}
 			regs.rax = 0;
-			SYSPRINT("rt_sigaction(signum=%x, act=0x%llX, oldact=0x%llx) = 0x%llX\n",
-				sig, regs.rsi, regs.rdx, regs.rax);
+			SYSPRINT("rt_sigaction(signum=%x, act=0x%lX, oldact=0x%lx) = 0x%llX\n",
+				sig, g_act, g_oldact, regs.rax);
 			cpu.set_registers(regs); });
 	Machine::install_syscall_handler(
 		SYS_rt_sigprocmask, [](vCPU& cpu)
@@ -1010,7 +1017,8 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			regs.rax = 42;
 			SYSPRINT("eventfd2(...) = %lld\n", regs.rax);
-			cpu.set_registers(regs); });
+			cpu.set_registers(regs);
+		});
 	Machine::install_syscall_handler(
 		SYS_epoll_create1, [](vCPU& cpu)
 		{
@@ -1018,7 +1026,8 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("epoll_create1(...) = %lld\n", regs.rax);
-			cpu.set_registers(regs); });
+			cpu.set_registers(regs);
+		});
 	Machine::install_syscall_handler(
 		SYS_nanosleep, [](vCPU& cpu)
 		{
@@ -1026,7 +1035,8 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("nanosleep(...) = %lld\n", regs.rax);
-			cpu.set_registers(regs); });
+			cpu.set_registers(regs);
+		});
 	Machine::install_syscall_handler(
 		SYS_epoll_ctl, [](vCPU& cpu)
 		{
@@ -1034,15 +1044,19 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("epoll_ctl(...) = %lld\n", regs.rax);
-			cpu.set_registers(regs); });
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_getrlimit, [](vCPU& cpu) { // getrlimit
+			auto& regs = cpu.registers();
+			const auto g_rlim = regs.rsi;
+			regs.rax = -ENOSYS;
+			SYSPRINT("getrlimit(0x%llX) = %lld\n", g_rlim, regs.rax);
+			cpu.set_registers(regs);
+		});
 	Machine::install_syscall_handler(
 		SYS_prlimit64, [](vCPU& cpu) { // prlimit64
 			auto& regs = cpu.registers();
-			struct rlimit64
-			{
-				__u64 cur = 0;
-				__u64 max = 0;
-			} __attribute__((packed));
 			const auto newptr = regs.rcx;
 			const auto oldptr = regs.rdx;
 
@@ -1056,14 +1070,16 @@ void Machine::setup_linux_system_calls()
 				if (oldptr != 0x0)
 				{
 					struct rlimit64 lim{};
-					lim.cur = cpu.machine().stack_address() - (4UL << 20);
-					lim.max = cpu.machine().stack_address();
+					lim.rlim_cur = cpu.machine().stack_address() - (4UL << 20);
+					lim.rlim_max = cpu.machine().stack_address();
 					cpu.machine().copy_to_guest(oldptr, &lim, sizeof(lim));
 				}
 				else if (newptr != 0x0)
 				{
-					// struct rlimit64 lim {};
-					// cpu.machine().copy_from_guest(&lim, newptr, sizeof(lim));
+					//struct rlimit64 lim {};
+					//cpu.machine().copy_from_guest(&lim, newptr, sizeof(lim));
+					//printf("prlimit64: new stack limit 0x%llX max 0x%llX\n",
+					//	lim.rlim_cur, lim.rlim_max);
 				}
 				regs.rax = 0;
 				break;
@@ -1138,7 +1154,7 @@ void Machine::setup_linux_system_calls()
 			const int  vfd      = regs.rdi;
 			const auto vpath    = regs.rsi;
 			const auto g_buffer = regs.rdx;
-			const int  flags    = regs.r8;
+			//const int  flags    = regs.r8;
 			std::string path;
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);

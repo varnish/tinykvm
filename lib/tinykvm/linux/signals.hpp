@@ -24,6 +24,7 @@ struct SignalAction {
 	uint64_t handler = SIG_UNSET;
 	bool altstack = false;
 	unsigned mask = 0x0;
+	uint64_t restorer = 0x0;
 };
 
 struct SignalReturn {
