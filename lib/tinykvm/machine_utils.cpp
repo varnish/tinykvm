@@ -4,9 +4,6 @@
 #include "amd64/paging.hpp"
 
 namespace tinykvm {
-static constexpr uint64_t PageMask() {
-	return vMemory::PageSize() - 1UL;
-}
 
 void Machine::memzero(address_t addr, size_t len)
 {

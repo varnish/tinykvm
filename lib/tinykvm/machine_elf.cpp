@@ -5,6 +5,7 @@
 #include <stdexcept>
 #ifdef TINYKVM_ARCH_AMD64
 #include "amd64/idt.hpp" // interrupt_header()
+#include "amd64/paging.hpp"
 #endif
 #include "util/elf.hpp"
 
@@ -134,18 +135,19 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 				break;
 		}
 
-		uint64_t endm = hdr->p_vaddr + hdr->p_memsz;
-		endm += vMemory::PageSize()-1; endm &= ~(vMemory::PageSize()-1);
+		const uint64_t endm = hdr->p_vaddr + hdr->p_memsz;
 		if (this->m_heap_address < endm)
 			this->m_heap_address = endm;
 	}
 
 	/* Make sure mmap starts at a sane offset */
 	this->m_heap_address += this->m_image_base;
+	this->m_heap_address = (this->m_heap_address + PageMask()) & ~PageMask();
+	this->m_brk_address = this->m_heap_address;
 	this->m_mm = this->mmap_start();
 
 	/* If there is not enough room for stack, move it */
-	const uint32_t STACK_SIZE = options.stack_size & ~0xFFFLL;
+	const uint32_t STACK_SIZE = (options.stack_size + PageMask()) & ~PageMask();
 	if (this->m_stack_address < STACK_SIZE) {
 		this->m_stack_address = this->mmap_allocate(STACK_SIZE) + STACK_SIZE;
 	}
@@ -157,7 +159,8 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 
 	if (options.verbose_loader) {
 	printf("* Entry is at %p\n", (void*) m_start_address);
-	printf("* Stack is at %p\n", (void*) m_stack_address);
+	printf("* Stack is at %p -> %p\n", (void*) (m_stack_address - STACK_SIZE),
+		(void*) (m_stack_address));
 	}
 }
 

@@ -158,7 +158,10 @@ struct Machine
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
 
-	static constexpr uint64_t BRK_MAX = 0x20000;
+	static constexpr uint64_t BRK_MAX = 0x22000;
+	address_t brk_address() const noexcept { return this->m_brk_address; }
+	address_t brk_end_address() const noexcept { return this->m_heap_address + BRK_MAX; }
+	void set_brk_address(address_t addr) { this->m_brk_address = addr; }
 	address_t mmap_start() const noexcept { return this->m_heap_address + BRK_MAX; }
 	address_t mmap_allocate(size_t bytes);
 	bool      mmap_unmap(uint64_t addr, size_t size);
@@ -271,6 +274,7 @@ private:
 	address_t m_image_base = 0x0;
 	address_t m_stack_address;
 	address_t m_heap_address;
+	address_t m_brk_address;
 	address_t m_start_address;
 	address_t m_kernel_end;
 

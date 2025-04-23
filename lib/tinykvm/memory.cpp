@@ -16,9 +16,6 @@
 
 namespace tinykvm {
 #define USERMODE_FLAGS (0x7 | 1UL << 63) /* USER, READ/WRITE, PRESENT, NX */
-static constexpr uint64_t PageMask() {
-	return vMemory::PageSize() - 1UL;
-}
 
 vMemory::vMemory(Machine& m, const MachineOptions& options,
 	uint64_t ph, uint64_t sf, char* p, size_t s, bool own)

@@ -244,7 +244,7 @@ void Machine::setup_linux_system_calls()
 				} else {
 					regs.rax = dst;
 				}
-				PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
+				PRINTMMAP("mmap(0x%lX, %lu, prot=%llX, flags=%llX) = 0x%llX\n",
 						  address, length, regs.rdx, regs.r10, regs.rax);
 				cpu.set_registers(regs);
 				return;
@@ -300,7 +300,7 @@ void Machine::setup_linux_system_calls()
 			{
 				cpu.machine().memzero(regs.rax, length);
 			}
-			PRINTMMAP("mmap(0x%llX, %llu, prot=%llX, flags=%llX) = 0x%llX\n",
+			PRINTMMAP("mmap(0x%lX, %lu, prot=%llX, flags=%llX) = 0x%llX\n",
 					  address, length, regs.rdx, regs.r10, regs.rax);
 			cpu.set_registers(regs);
 		});
@@ -331,17 +331,16 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_brk, [](vCPU& cpu) { // BRK
 			auto& regs = cpu.registers();
-			if (regs.rdi > cpu.machine().heap_address() + Machine::BRK_MAX)
-			{
-				regs.rax = cpu.machine().heap_address() + Machine::BRK_MAX;
-			}
-			else if (regs.rdi < cpu.machine().heap_address())
-			{
-				regs.rax = cpu.machine().heap_address();
-			}
-			else
-			{
-				regs.rax = regs.rdi;
+			const uint64_t old_brk = cpu.machine().brk_address();
+			uint64_t new_brk = regs.rdi;
+			if (new_brk < old_brk) {
+				// brk() to a lower address, keep the old one
+				// We can only grow the heap, not shrink it.
+				regs.rax = old_brk;
+			} else {
+				// clamp brk() outside to the heap range
+				new_brk = std::min(new_brk, cpu.machine().brk_end_address());
+				regs.rax = new_brk;
 			}
 			SYSPRINT("brk(0x%llX) = 0x%llX\n", regs.rdi, regs.rax);
 			cpu.set_registers(regs);
@@ -1049,7 +1048,7 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_getrlimit, [](vCPU& cpu) { // getrlimit
 			auto& regs = cpu.registers();
-			const auto g_rlim = regs.rsi;
+			[[maybe_unused]] const auto g_rlim = regs.rsi;
 			regs.rax = -ENOSYS;
 			SYSPRINT("getrlimit(0x%llX) = %lld\n", g_rlim, regs.rax);
 			cpu.set_registers(regs);

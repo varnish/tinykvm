@@ -28,4 +28,8 @@ static inline bool page_is_zeroed(const uint64_t* page) {
 	return true;
 }
 
+static constexpr inline uint64_t PageMask() {
+	return vMemory::PageSize() - 1UL;
+}
+
 } // tinykvm
