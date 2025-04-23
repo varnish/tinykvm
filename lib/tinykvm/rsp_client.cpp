@@ -423,12 +423,12 @@ void RSPClient::handle_readmem()
 	uint64_t addr = 0;
 	uint32_t len = 0;
 	sscanf(buffer.c_str(), "m%lx,%x", &addr, &len);
-	if (len >= 500) {
+	if (len >= 8192) {
 		send("E01");
 		return;
 	}
 
-	char data[1024];
+	char data[16384 + 1];
 	char* d = data;
 	try {
 		for (unsigned i = 0; i < len; i++) {
