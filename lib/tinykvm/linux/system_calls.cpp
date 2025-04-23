@@ -340,6 +340,7 @@ void Machine::setup_linux_system_calls()
 			} else {
 				// clamp brk() outside to the heap range
 				new_brk = std::min(new_brk, cpu.machine().brk_end_address());
+				cpu.machine().set_brk_address(new_brk);
 				regs.rax = new_brk;
 			}
 			SYSPRINT("brk(0x%llX) = 0x%llX\n", regs.rdi, regs.rax);
