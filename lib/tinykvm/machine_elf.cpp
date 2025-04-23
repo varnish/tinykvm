@@ -93,7 +93,6 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	const auto* phdr = (Elf64_Phdr*) (binary.data() + elf->e_phoff);
 	const auto program_begin = phdr->p_vaddr;
 	this->m_start_address = this->m_image_base + elf->e_entry;
-	this->m_stack_address = this->m_image_base + program_begin;
 	this->m_heap_address = 0x0;
 
 	int seg = 0;
@@ -146,11 +145,11 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	this->m_brk_address = this->m_heap_address;
 	this->m_mm = this->mmap_start();
 
-	/* If there is not enough room for stack, move it */
+	/* Always allocate stack on heap, because we don't know where
+	   the kernel ends yet, and some run-times even depend on the
+	   stack being above the image base. */
 	const uint32_t STACK_SIZE = (options.stack_size + PageMask()) & ~PageMask();
-	if (this->m_stack_address < STACK_SIZE) {
-		this->m_stack_address = this->mmap_allocate(STACK_SIZE) + STACK_SIZE;
-	}
+	this->m_stack_address = this->mmap_allocate(STACK_SIZE) + STACK_SIZE;
 
 	/* Dynamic executables require some extra work, like relocation */
 	if (is_dynamic) {
