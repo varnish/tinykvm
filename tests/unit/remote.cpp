@@ -6,7 +6,6 @@ extern std::pair<
 	std::string,
 	std::vector<uint8_t>
 > build_and_load(const std::string& code, const std::string& args);
-extern void setup_kvm_system_calls();
 static const uint64_t MAX_MEMORY = 8ul << 20; /* 8MB */
 static const uint64_t MAX_COWMEM = 1ul << 20; /* 1MB */
 static const std::vector<std::string> env {
@@ -17,8 +16,6 @@ TEST_CASE("Initialize KVM", "[Remote]")
 {
 	// Create KVM file descriptors etc.
 	tinykvm::Machine::init();
-	// Install Linux and POSIX system call handlers
-	setup_kvm_system_calls();
 }
 
 TEST_CASE("Print from remote VM", "[Remote]")

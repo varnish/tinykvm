@@ -61,7 +61,7 @@ std::string build(const std::string& code, const std::string& compiler_args)
 	(void)snprintf(bin_filename, sizeof(bin_filename),
 		"/tmp/binary-%08X", checksum);
 
-	auto cc = env_with_default("cc", "gcc");
+	auto cc = env_with_default("CC", "gcc");
 	auto command = compile_command(cc, bin_filename, code_filename, compiler_args);
 	if constexpr (VERBOSE_COMPILER) {
 		printf("Command: %s\n", command.c_str());

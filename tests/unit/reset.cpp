@@ -3,7 +3,6 @@
 
 #include <tinykvm/machine.hpp>
 extern std::vector<uint8_t> build_and_load(const std::string& code);
-extern void setup_kvm_system_calls();
 static const uint64_t MAX_MEMORY = 32ul << 20; /* 32MB */
 static const uint64_t MAX_COWMEM =  8ul << 20; /* 8MB */
 static const std::vector<std::string> env {
@@ -14,8 +13,6 @@ TEST_CASE("Initialize KVM", "[Initialize]")
 {
 	// Create KVM file descriptors etc.
 	tinykvm::Machine::init();
-	// Install Linux and POSIX system call handlers
-	setup_kvm_system_calls();
 }
 
 TEST_CASE("Execute function in reset VM", "[Reset]")
@@ -100,11 +97,13 @@ extern long some_syscall();
 
 extern long hello_world(const char *arg) {
 	printf("%s\n", arg);
+	fflush(stdout);
 	return some_syscall();
 }
 extern void crash(const char *arg) {
 	some_syscall();
 	printf("%s\n", arg);
+	fflush(stdout);
 	some_syscall();
 	assert(0);
 })M");
@@ -139,7 +138,7 @@ extern void crash(const char *arg) {
 	bool output_is_hello_world = false;
 	fork.set_printer([&] (const char* data, size_t size) {
 		std::string text{data, data + size};
-		if (text == "Hello World!\n")
+		if (text == "Hello World!")
 			output_is_hello_world = true;
 	});
 

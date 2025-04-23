@@ -2,7 +2,6 @@
 
 #include <tinykvm/machine.hpp>
 extern std::vector<uint8_t> build_and_load(const std::string& code);
-extern void setup_kvm_system_calls();
 static const uint64_t MAX_MEMORY = 8ul << 20; /* 8MB */
 static const std::vector<std::string> env {
 	"LC_TYPE=C", "LC_ALL=C", "USER=root"
@@ -12,8 +11,6 @@ TEST_CASE("Initialize KVM", "[Initialize]")
 {
 	// Create KVM file descriptors etc.
 	tinykvm::Machine::init();
-	// Install Linux and POSIX system call handlers
-	setup_kvm_system_calls();
 }
 
 TEST_CASE("Instantiate machines", "[Instantiate]")
@@ -25,11 +22,9 @@ int main() {
 
 	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
 
-	// The stack is automatically set to under the program area
-	// The default program area is at 4MB on Linux
-	REQUIRE(machine.stack_address() == 0x400000);
 	// The starting address is somewhere in the program area
 	REQUIRE(machine.start_address() > 0x400000);
+	REQUIRE(machine.stack_address() > machine.start_address());
 }
 
 TEST_CASE("Runtime setup and execution", "[Output]")

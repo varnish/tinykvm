@@ -4,7 +4,6 @@
 
 #include <tinykvm/machine.hpp>
 extern std::vector<uint8_t> build_and_load(const std::string& code);
-extern void setup_kvm_system_calls();
 static const uint64_t MAX_MEMORY = 32ul << 20; /* 32MB */
 static const uint64_t MAX_COWMEM =  8ul << 20; /* 8MB */
 static const std::vector<std::string> env {
@@ -15,8 +14,6 @@ TEST_CASE("Initialize KVM", "[Initialize]")
 {
 	// Create KVM file descriptors etc.
 	tinykvm::Machine::init();
-	// Install Linux and POSIX system call handlers
-	setup_kvm_system_calls();
 }
 
 TEST_CASE("Multiple timeouts inside guest", "[Timeout]")

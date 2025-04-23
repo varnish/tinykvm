@@ -2,7 +2,6 @@
 
 #include <tinykvm/machine.hpp>
 extern std::vector<uint8_t> build_and_load(const std::string&);
-extern void setup_kvm_system_calls();
 static const uint64_t MAX_MEMORY = 8ul << 20; /* 8MB */
 static const std::vector<std::string> env{
 	"LC_TYPE=C", "LC_ALL=C", "USER=root"};
@@ -11,8 +10,6 @@ TEST_CASE("Initialize KVM", "[Initialize]")
 {
 	// Create KVM file descriptors etc.
 	tinykvm::Machine::init();
-	// Install Linux and POSIX system call handlers
-	setup_kvm_system_calls();
 }
 
 TEST_CASE("Writes to kernel memory", "[Integrity]")
@@ -45,7 +42,7 @@ void still_works()
 	bool output_is_hello_world = false;
 	machine.set_printer([&] (const char* data, size_t size) {
 		std::string text{data, data + size};
-		if (text == "Hello World!\n")
+		if (text == "Hello World!")
 			output_is_hello_world = true;
 	});
 
@@ -97,7 +94,7 @@ void still_works()
 	bool output_is_hello_world = false;
 	machine.set_printer([&] (const char* data, size_t size) {
 		std::string text{data, data + size};
-		if (text == "Hello World!\n")
+		if (text == "Hello World!")
 			output_is_hello_world = true;
 	});
 

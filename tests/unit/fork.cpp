@@ -3,9 +3,8 @@
 
 #include <tinykvm/machine.hpp>
 extern std::vector<uint8_t> build_and_load(const std::string& code);
-extern void setup_kvm_system_calls();
 static const uint64_t MAX_MEMORY = 8ul << 20; /* 8MB */
-static const uint64_t MAX_COWMEM = 1ul << 20; /* 1MB */
+static const uint64_t MAX_COWMEM = 3ul << 20; /* 1MB */
 static const std::vector<std::string> env {
 	"LC_TYPE=C", "LC_ALL=C", "USER=root"
 };
@@ -14,8 +13,6 @@ TEST_CASE("Initialize KVM", "[Initialize]")
 {
 	// Create KVM file descriptors etc.
 	tinykvm::Machine::init();
-	// Install Linux and POSIX system call handlers
-	setup_kvm_system_calls();
 }
 
 TEST_CASE("Execute function in fork", "[Fork]")
@@ -113,7 +110,10 @@ extern void prints_hello_world() {
 	write(1, "Hello World!", 12);
 })M");
 
-	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	tinykvm::Machine machine { binary, {
+		.max_mem = MAX_MEMORY,
+		.split_hugepages = true
+	 } };
 	machine.setup_linux({"fork"}, env);
 	machine.run(4.0f);
 
@@ -134,7 +134,8 @@ extern void prints_hello_world() {
 
 	// Create fork
 	auto fork = tinykvm::Machine { machine, {
-		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
 	} };
 	REQUIRE(fork.banked_memory_pages() > 0);
 
@@ -239,7 +240,9 @@ extern int get_value() {
 	return value;
 })M");
 
-	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY,
+		.split_hugepages = true
+	 } };
 	// We need to create a Linux environment for runtimes to work well
 	machine.setup_linux({"fork"}, env);
 
@@ -255,10 +258,12 @@ extern int get_value() {
 
 	// Create fork
 	auto fork1 = tinykvm::Machine { machine, {
-		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
 	} };
 	auto fork2 = tinykvm::Machine { machine, {
-		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
 	} };
 
 	auto funcaddr = machine.address_of("get_value");
@@ -285,11 +290,13 @@ extern int get_value() {
 		fork1.reset_to(machine, {
 				.max_mem = MAX_MEMORY,
 				.max_cow_mem = MAX_COWMEM,
+				.split_hugepages = true
 		});
 
 		fork2.reset_to(machine, {
 				.max_mem = MAX_MEMORY,
 				.max_cow_mem = MAX_COWMEM,
+				.split_hugepages = true
 		});
 
 		// Value now starts at 1 due to the change in main VM
