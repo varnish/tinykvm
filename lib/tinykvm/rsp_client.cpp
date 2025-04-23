@@ -560,7 +560,8 @@ void RSPClient::handle_readreg()
 {
 	uint32_t idx = 0;
 	sscanf(buffer.c_str(), "p%x", &idx);
-	if (idx > 58) {
+	if (idx > 59) {
+		printf("Invalid register index: %u\n", idx);
 		send("E01");
 		return;
 	}
@@ -589,9 +590,15 @@ void RSPClient::handle_readreg()
 			vallen = 4;
 			uint32_t value = 0;
 			std::memcpy(valdata, &value, vallen);
-		} else if (idx == 58) {
-			vallen = 8;
-			uint64_t value = 0;
+		} else if (idx == 58) { // FS_BASE
+			vallen = sizeof(uint64_t);
+			auto fsgs = machine().get_fsgs();
+			uint64_t value = fsgs.first;
+			std::memcpy(valdata, &value, vallen);
+		} else if (idx == 59) { // GS_BASE
+			vallen = sizeof(uint64_t);
+			auto fsgs = machine().get_fsgs();
+			uint64_t value = fsgs.second;
 			std::memcpy(valdata, &value, vallen);
 		} else {
 			const auto* fpreg = &fpu.fcw;
