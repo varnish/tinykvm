@@ -255,8 +255,8 @@ void Machine::setup_multithreading()
 
 			Thread& parent = cpu.machine().threads().get_thread();
 			Thread& thread = cpu.machine().threads().create(flags, ctid, ptid, stack, tls);
-			THPRINT(">>> clone3(stack=0x%llX, flags=%llX,"
-					" parent=%d, ctid=0x%llX ptid=0x%llX, tls=0x%llX) = %d\n",
+			THPRINT(">>> clone3(stack=0x%lX, flags=%lX,"
+					" parent=%d, ctid=0x%lX ptid=0x%lX, tls=0x%lX) = %d\n",
 					stack, flags, parent.tid, ctid, ptid, tls, thread.tid);
 			if (args.set_tid_count > 0) {
 				uint64_t set_tid = 0;
@@ -319,6 +319,7 @@ void Machine::setup_multithreading()
 					}
 					// Deadlock reached. XXX: Force-unlock to continue
 					// execution.
+					THPRINT("FUTEX: Deadlock reached on uaddr=0x%lX, val=%u\n", (long) addr, val);
 					futexVal = 0;
 					cpu.machine().copy_to_guest(addr, &futexVal, sizeof(futexVal));
 					regs.rax = 0;
@@ -364,15 +365,10 @@ void Machine::setup_multithreading()
 				THPRINT("tgkill(sig=0) called from tid=%d\n", tid);
 				regs.rax = 0;
 				cpu.set_registers(regs);
-				return;
 			} else {
 				THPRINT("tgkill(sig=%d) called from tid=%d\n", sig, tid);
 				cpu.machine().signals().enter(cpu, sig);
-				return;
 			}
-
-			fprintf(stderr, "ERROR: tgkill called from tid=%d\n", tid);
-			throw MachineException("tgkill called (signal)", sig);
 		});
 } // setup_multithreading
 
