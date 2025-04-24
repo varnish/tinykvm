@@ -84,7 +84,7 @@ void Thread::exit()
 MultiThreading::MultiThreading(Machine& m)
 	: machine(m)
 {
-	auto it = m_threads.try_emplace(0, *this, 0, 0x0, 0x0);
+	auto it = m_threads.try_emplace(1, *this, 1, 0x0, 0x0);
 	m_current = &it.first->second;
 }
 
@@ -279,7 +279,7 @@ void Machine::setup_multithreading()
 				auto& thread = cpu.machine().threads().get_thread();
 				THPRINT(">>> Exit on tid=%d, exit code = %d\n",
 					thread.tid, (int) status);
-				if (thread.tid != 0) {
+				if (thread.tid != 1) {
 					thread.exit();
 					return;
 				}
@@ -296,7 +296,7 @@ void Machine::setup_multithreading()
 				regs.rax = cpu.machine().threads().get_thread().tid;
 				THPRINT("gettid() = %lld\n", regs.rax);
 			} else {
-				regs.rax = 0; /* Main thread */
+				regs.rax = 1; /* Main thread */
 			}
 			cpu.set_registers(regs);
 		});
@@ -343,13 +343,12 @@ void Machine::setup_multithreading()
 		218, [] (vCPU& cpu) {
 			/* SYS set_tid_address */
 			auto& regs = cpu.registers();
-#ifdef ENABLE_GUEST_VERBOSE
-			THPRINT("Set TID address: clear_child_tid=0x%llX\n", regs.rdi);
-#endif
 			auto& thread = cpu.machine().threads().get_thread();
 			/* Sets clear_tid and returns tid */
 			thread.clear_tid = regs.rdi;
 			regs.rax = thread.tid;
+			THPRINT("set_tid_address(clear_tid=0x%lX) = %d\n",
+				regs.rdi, thread.tid);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(

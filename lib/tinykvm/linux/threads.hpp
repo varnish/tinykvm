@@ -43,7 +43,7 @@ private:
 	std::map<int, Thread> m_threads;
 	std::vector<Thread*> m_suspended;
 	Thread* m_current = nullptr;
-	int thread_counter = 0;
+	int thread_counter = 1;
 	friend struct Thread;
 };
 
