@@ -90,6 +90,13 @@ namespace tinykvm
 		/// may be modified by the callback, indicating which real path to open.
 		bool is_writable_path(std::string& modifiable_path) const noexcept;
 
+		/// @brief Set verbose mode. This will print out information about
+		/// file descriptor management.
+		/// @param verbose True to enable verbose mode, false to disable it.
+		void set_verbose(bool verbose) noexcept {
+			m_verbose = verbose;
+		}
+
 	private:
 		Machine& m_machine;
 		std::map<int, Entry> m_fds;
@@ -97,7 +104,7 @@ namespace tinykvm
 		std::shared_ptr<std::vector<std::string>> m_allowed_readable_paths_starts_with;
 		int m_next_file_fd = 0x1000;
 		int m_next_socket_fd = 0x1000 | SOCKET_BIT;
-		bool m_verbose = true;
+		bool m_verbose = false;
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;
 	};

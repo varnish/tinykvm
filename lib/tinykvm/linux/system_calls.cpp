@@ -32,6 +32,7 @@
 #endif
 namespace tinykvm {
 static constexpr uint64_t PageMask = vMemory::PageSize() - 1;
+static constexpr size_t MMAP_COLLISION_TRESHOLD = 512ULL << 20; // 512MB
 
 void Machine::setup_linux_system_calls()
 {
@@ -228,11 +229,23 @@ void Machine::setup_linux_system_calls()
 				const int real_fd = cpu.machine().fds().translate(vfd);
 
 				uint64_t dst = 0x0;
-				if (address == 0x0) {
-					dst = cpu.machine().mmap_allocate(length);
+				if (address != 0x0 && address >= cpu.machine().mmap_start()) {
+					dst = address;
+					// If the mapping is within a certain range, we should adjust
+					// the current mmap address to the end of the new mapping. This is
+					// to avoid future collisions when allocating.
+					if (address >= cpu.machine().mmap_current() && address + length <= cpu.machine().mmap_current() + MMAP_COLLISION_TRESHOLD)
+					{
+						PRINTMMAP("Adjusting mmap current address to 0x%lX\n",
+							address + length);
+						cpu.machine().mmap() = address + length;
+					} else {
+						PRINTMMAP("Not adjusting mmap current address to 0x%lX\n",
+							address + length);
+					}
 				}
 				else {
-					dst = address;
+					dst = cpu.machine().mmap_allocate(length);
 				}
 				// Readv into the area
 				const uint64_t read_length = regs.rsi; // Don't align the read length
@@ -251,33 +264,32 @@ void Machine::setup_linux_system_calls()
 				{
 					cpu.machine().memzero(dst + read_length, zero_length);
 				}
-				PRINTMMAP("mmap(0x%lX, %lu, prot=%llX, flags=%llX) = 0x%llX\n",
-						  address, read_length, regs.rdx, regs.r10, regs.rax);
+				PRINTMMAP("mmap(0x%lX (0x%llX), %lu, prot=%llX, flags=%llX) = 0x%llX\n",
+						  address, regs.rdi, read_length, regs.rdx, regs.r10, regs.rax);
 				cpu.set_registers(regs);
 				return;
 			}
-			else if ((flags & 0x4) != 0)
-			{
-				// Executable mappings are supported if there is an execute-range in vMemory
-				auto& memory = cpu.machine().main_memory();
-				if (memory.vmem_exec_begin != 0x0)
-				{
-					regs.rax = memory.vmem_exec_begin;
-					memory.vmem_exec_begin += length;
-				}
-				else
-				{
-					regs.rax = ~0LL; /* MAP_FAILED */
-				}
-			}
-			else if (address != 0x0 && !cpu.machine().relocate_fixed_mmap())
-			{
-				regs.rax = address;
-			}
-			else if (address != 0x0 && address >= cpu.machine().heap_address() && address < cpu.machine().mmap_start())
+			else if (address != 0x0 && address >= cpu.machine().heap_address() && address + length <= cpu.machine().mmap_current())
 			{
 				// Existing range already mmap'ed
 				regs.rax = address;
+			}
+			else if (address != 0x0 && address >= cpu.machine().mmap_current() && !cpu.machine().relocate_fixed_mmap())
+			{
+				// Force mmap to a specific address
+				regs.rax = address;
+				// If the mapping is within a certain range, we should adjust
+				// the current mmap address to the end of the new mapping. This is
+				// to avoid future collisions when allocating.
+				if (address + length <= cpu.machine().mmap_current() + MMAP_COLLISION_TRESHOLD)
+				{
+					PRINTMMAP("Adjusting mmap current address to 0x%lX\n",
+						address + length);
+					cpu.machine().mmap() = address + length;
+				} else {
+					PRINTMMAP("Not adjusting mmap current address to 0x%lX\n",
+						address + length);
+				}
 			}
 			else
 			{
@@ -592,7 +604,7 @@ void Machine::setup_linux_system_calls()
 			uint64_t old_addr = regs.rdi & ~(uint64_t)0xFFF;
 			uint64_t old_len = (regs.rsi + 0xFFF) & ~(uint64_t)0xFFF;
 			uint64_t new_len = (regs.rdx + 0xFFF) & ~(uint64_t)0xFFF;
-			unsigned flags = regs.rcx;
+			unsigned flags = regs.r10;
 
 			if (old_addr + old_len == mm)
 			{
@@ -1064,8 +1076,8 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_prlimit64, [](vCPU& cpu) { // prlimit64
 			auto& regs = cpu.registers();
-			const auto newptr = regs.rcx;
 			const auto oldptr = regs.rdx;
+			const auto newptr = regs.r10;
 
 			switch (regs.rsi)
 			{
@@ -1073,12 +1085,11 @@ void Machine::setup_linux_system_calls()
 				regs.rax = -ENOSYS;
 				break;
 			case 3: // RLIMIT_STACK
-				/* TODO: We currently do not accept new limits. */
 				if (oldptr != 0x0)
 				{
 					struct rlimit64 lim{};
-					lim.rlim_cur = cpu.machine().stack_address() - (4UL << 20);
-					lim.rlim_max = cpu.machine().stack_address();
+					lim.rlim_cur = 4UL << 20;
+					lim.rlim_max = 4UL << 20;
 					SYSPRINT("prlimit64: current stack limit 0x%llX max 0x%llX\n",
 						lim.rlim_cur, lim.rlim_max);
 					cpu.machine().copy_to_guest(oldptr, &lim, sizeof(lim));

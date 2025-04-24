@@ -39,6 +39,7 @@ namespace tinykvm
 		this->add_readonly_file("/lib/x86_64-linux-gnu/libstdc++.so.6");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v2/libstdc++.so.6");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3/libstdc++.so.6");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v4/libstdc++.so.6");
 	}
 
 	FileDescriptors::~FileDescriptors()
@@ -152,6 +153,9 @@ namespace tinykvm
 				return true;
 			}
 		}
+		if (this->m_verbose) {
+			fprintf(stderr, "TinyKVM: %s is not a readable path\n", modifiable_path.c_str());
+		}
 		return false;
 	}
 
@@ -159,6 +163,9 @@ namespace tinykvm
 	{
 		if (m_open_writable) {
 			return m_open_writable(modifiable_path);
+		}
+		if (this->m_verbose) {
+			fprintf(stderr, "TinyKVM: %s is not a writable path\n", modifiable_path.c_str());
 		}
 		return false;
 	}

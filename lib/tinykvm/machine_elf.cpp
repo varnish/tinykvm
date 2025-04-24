@@ -139,17 +139,19 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 			this->m_heap_address = endm;
 	}
 
-	/* Make sure mmap starts at a sane offset */
 	this->m_heap_address += this->m_image_base;
 	this->m_heap_address = (this->m_heap_address + PageMask()) & ~PageMask();
-	this->m_brk_address = this->m_heap_address;
-	this->m_mm = this->mmap_start();
 
 	/* Always allocate stack on heap, because we don't know where
 	   the kernel ends yet, and some run-times even depend on the
 	   stack being above the image base. */
 	const uint32_t STACK_SIZE = (options.stack_size + PageMask()) & ~PageMask();
-	this->m_stack_address = this->mmap_allocate(STACK_SIZE) + STACK_SIZE;
+	this->m_stack_address = this->m_heap_address + STACK_SIZE;
+	this->m_heap_address = this->m_stack_address;
+
+	/* Make sure mmap starts at a sane offset */
+	this->m_brk_address = this->m_heap_address;
+	this->m_mm = this->mmap_start();
 
 	/* Dynamic executables require some extra work, like relocation */
 	if (is_dynamic) {
@@ -160,6 +162,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	printf("* Entry is at %p\n", (void*) m_start_address);
 	printf("* Stack is at %p -> %p\n", (void*) (m_stack_address - STACK_SIZE),
 		(void*) (m_stack_address));
+	this->fds().set_verbose(options.verbose_loader);
 	}
 }
 
