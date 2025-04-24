@@ -266,8 +266,8 @@ uint64_t setup_amd64_paging(vMemory& memory,
 
 				/* TODO: Prevent extremely high addresses */
 				/* XXX: Prevent crossing gigabyte boundries */
-				auto base = load_address & ~0xFFFLL;
-				auto end  = ((load_address + len) + 0xFFFLL) & ~0xFFFLL;
+				auto base = load_address & ~PageMask();
+				auto end  = ((load_address + len) + PageMask()) & ~PageMask();
 	#if 0
 				printf("0x%lX->0x%lX --> 0x%lX:0x%lX\n",
 					load_address, load_address + len, base, end);
