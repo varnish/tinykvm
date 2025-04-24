@@ -143,12 +143,19 @@ void Machine::setup_linux(__u64& rsp,
 	push_aux(argv, {AT_ENTRY, entry_address});
 	push_aux(argv, {AT_HWCAP,  getauxval(AT_HWCAP)});
 	push_aux(argv, {AT_HWCAP2, getauxval(AT_HWCAP2)});
+#ifdef AT_HWCAP3
+	push_aux(argv, {AT_HWCAP3, getauxval(AT_HWCAP3)});
+# ifdef AT_HWCAP4
+	push_aux(argv, {AT_HWCAP4, getauxval(AT_HWCAP4)});
+# endif
+#endif
 	push_aux(argv, {AT_UID, 1000});
 	push_aux(argv, {AT_EUID, 0});
 	push_aux(argv, {AT_GID, 0});
 	push_aux(argv, {AT_EGID, 0});
 	push_aux(argv, {AT_SECURE, 0});
 	push_aux(argv, {AT_PLATFORM, platform_addr});
+	push_aux(argv, {AT_MINSIGSTKSZ, getauxval(AT_MINSIGSTKSZ)});
 
 	push_aux(argv, {AT_DCACHEBSIZE, getauxval(AT_DCACHEBSIZE)});
 	push_aux(argv, {AT_ICACHEBSIZE, getauxval(AT_ICACHEBSIZE)});
