@@ -355,7 +355,7 @@ void Machine::setup_multithreading()
 	Machine::install_syscall_handler(
 		234, [] (vCPU& cpu) { // TGKILL
 			auto& regs = cpu.registers();
-			int tid = 0;
+			[[maybe_unused]] int tid = 0;
 			if (cpu.machine().has_threads()) {
 				tid = cpu.machine().threads().get_thread().tid;
 			}
