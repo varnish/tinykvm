@@ -168,17 +168,18 @@ long vCPU::run_once()
 						regs_copy.rdx != this->registers().rdx ||
 						regs_copy.rcx != this->registers().rcx ||
 						regs_copy.r8  != this->registers().r8  ||
-						regs_copy.r9  != this->registers().r9))
+						regs_copy.r9  != this->registers().r9  ||
+						regs_copy.r10 != this->registers().r10))
 					{
 						fprintf(stderr,
 							"System call %u changed registers: "
 							"RDI 0x%llX, RSI 0x%llX, RDX 0x%llX, "
-							"RCX 0x%llX, R8  0x%llX, R9  0x%llX\n",
+							"R10 0x%llX, R8  0x%llX, R9  0x%llX\n",
 							intr,
 							this->registers().rdi,
 							this->registers().rsi,
 							this->registers().rdx,
-							this->registers().rcx,
+							this->registers().r10,
 							this->registers().r8,
 							this->registers().r9);
 						Machine::machine_exception("System call changed registers", intr);
