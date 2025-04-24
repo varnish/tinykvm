@@ -235,17 +235,24 @@ void Machine::setup_linux_system_calls()
 					dst = address;
 				}
 				// Readv into the area
+				const uint64_t read_length = regs.rsi; // Don't align the read length
 				std::array<Machine::WrBuffer, 256> buffers;
 				const size_t cnt =
-					cpu.machine().writable_buffers_from_range(buffers.size(), buffers.data(), dst, length);
+					cpu.machine().writable_buffers_from_range(buffers.size(), buffers.data(), dst, read_length);
 				// Seek to the given offset in the file and read the contents into guest memory
 				if (preadv64(real_fd, (const iovec *)&buffers[0], cnt, voff) < 0) {
 					regs.rax = ~0LL; /* MAP_FAILED */
 				} else {
 					regs.rax = dst;
 				}
+				// Zero the remaining area
+				const size_t zero_length = length - read_length;
+				if (zero_length > 0)
+				{
+					cpu.machine().memzero(dst + read_length, zero_length);
+				}
 				PRINTMMAP("mmap(0x%lX, %lu, prot=%llX, flags=%llX) = 0x%llX\n",
-						  address, length, regs.rdx, regs.r10, regs.rax);
+						  address, read_length, regs.rdx, regs.r10, regs.rax);
 				cpu.set_registers(regs);
 				return;
 			}
@@ -1072,14 +1079,18 @@ void Machine::setup_linux_system_calls()
 					struct rlimit64 lim{};
 					lim.rlim_cur = cpu.machine().stack_address() - (4UL << 20);
 					lim.rlim_max = cpu.machine().stack_address();
+					SYSPRINT("prlimit64: current stack limit 0x%llX max 0x%llX\n",
+						lim.rlim_cur, lim.rlim_max);
 					cpu.machine().copy_to_guest(oldptr, &lim, sizeof(lim));
 				}
 				else if (newptr != 0x0)
 				{
-					//struct rlimit64 lim {};
-					//cpu.machine().copy_from_guest(&lim, newptr, sizeof(lim));
-					//printf("prlimit64: new stack limit 0x%llX max 0x%llX\n",
-					//	lim.rlim_cur, lim.rlim_max);
+#ifdef VERBOSE_SYSCALLS
+					struct rlimit64 lim {};
+					cpu.machine().copy_from_guest(&lim, newptr, sizeof(lim));
+					SYSPRINT("prlimit64: new stack limit 0x%llX max 0x%llX\n",
+						lim.rlim_cur, lim.rlim_max);
+#endif
 				}
 				regs.rax = 0;
 				break;
