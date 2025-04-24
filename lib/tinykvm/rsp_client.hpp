@@ -23,6 +23,7 @@ struct RSPClient
 {
 	using StopFunc = void(*)(RSPClient&);
 	bool is_closed() const noexcept { return m_closed; }
+	bool is_connected() const noexcept { return !m_closed; }
 
 	bool process_one();
 	bool send(const char* str);
