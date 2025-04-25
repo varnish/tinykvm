@@ -1105,6 +1105,18 @@ void Machine::setup_linux_system_calls()
 				}
 				regs.rax = 0;
 				break;
+			case 7: // RLIMIT_NOFILE
+				if (oldptr != 0x0)
+				{
+					struct rlimit64 lim{};
+					lim.rlim_cur = 4096;
+					lim.rlim_max = 4096;
+					SYSPRINT("prlimit64: current nofile limit 0x%llX max 0x%llX\n",
+						lim.rlim_cur, lim.rlim_max);
+					cpu.machine().copy_to_guest(oldptr, &lim, sizeof(lim));
+				}
+				regs.rax = 0;
+				break;
 			default:
 				regs.rax = -ENOSYS;
 			}
