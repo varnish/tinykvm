@@ -57,12 +57,20 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 		// from the master VM to this forked VM. This is a gamble
 		// that it's cheaper to copy than the TLB flushes that happen
 		// from the mov cr3.
-		/// XXX: TODO: If we are resetting with a lower working memory than
-		/// what is currently allocated, we cannot re-use the memory banks
-		/// anymore and we have to do a full reset. Although, we could have
-		/// a rule that says if you are above the limit, it just means you
-		/// have nowhere to go. If you need one more page, a fault will be
-		/// triggered which again triggers a full reset. Oh well.
+		if (options.reset_free_work_mem != 0) {
+			// When reset_free_work_mem is non-zero, we will compare the
+			// memory bank working memory usage against the limit.
+			// If the limit is exceeded, we will return true to indicate
+			// that a full reset is to be performed, which will release
+			// memory back to the system, keeping memory usage in check.
+			const uint64_t used = this->machine.banked_memory_pages() *
+				vMemory::PageSize();
+			if (used > uint64_t(options.reset_free_work_mem)) {
+				//fprintf(stderr, "Freeing %zu bytes of work memory\n", used);
+				this->banks.reset(options);
+				return true;
+			}
+		}
 		try {
 		foreach_page(*this, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
 			// If the page is writable, we will restore the original
