@@ -701,6 +701,17 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_socketpair, [](vCPU& cpu) { // SOCKETPAIR
+			auto& regs = cpu.registers();
+			// int socketpair(int domain, int type, int protocol, int sv[2]);
+			const int g_sv = regs.r10;
+			int sv[2] = { 0, 0 };
+			cpu.machine().copy_to_guest(g_sv, sv, sizeof(sv));
+			regs.rax = 0;
+			SYSPRINT("socketpair(..., 0x%lX) = %lld\n", g_sv, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_exit, [](vCPU& cpu) { // EXIT
 #ifdef VERBOSE_GUEST_EXITS
 			auto& regs = cpu.registers();
