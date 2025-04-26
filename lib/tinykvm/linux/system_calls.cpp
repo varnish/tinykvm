@@ -61,7 +61,7 @@ void Machine::setup_linux_system_calls()
 				regs.rsi, regs.rdx);
 
 			regs.rax = readv(fd, (struct iovec *)&buffers[0], bufcount);
-			if (regs.rax < 0)
+			if (int(regs.rax) < 0)
 				regs.rax = -errno;
 			cpu.set_registers(regs);
 		});
@@ -178,7 +178,7 @@ void Machine::setup_linux_system_calls()
 					fd = cpu.machine().fds().translate(regs.rdi);
 				}
 				regs.rax = lseek(fd, regs.rsi, regs.rdx);
-				if (regs.rax < 0) {
+				if (int(regs.rax) < 0) {
 					regs.rax = -errno;
 				}
 			} catch (...) {
@@ -464,7 +464,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			switch (regs.rsi) {
 			case 0x5401: /* TCGETS */
-				if (regs.rdi >= 0 && regs.rdi < 3)
+				if (int(regs.rdi) >= 0 && int(regs.rdi) < 3)
 					regs.rax = 0;
 				else
 					regs.rax = -EPERM;
@@ -725,7 +725,7 @@ void Machine::setup_linux_system_calls()
 			try {
 				const int fd = cpu.machine().fds().translate(regs.rdi);
 				regs.rax = ::shutdown(fd, regs.rsi);
-				if (regs.rax < 0)
+				if (int(regs.rax) < 0)
 					regs.rax = -errno;
 			} catch (...) {
 				regs.rax = -EBADF;
@@ -801,7 +801,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			struct timeval tv;
 			regs.rax = gettimeofday(&tv, nullptr);
-			if (regs.rax < 0)
+			if (int(regs.rax) < 0)
 			{
 				regs.rax = -errno;
 			}
@@ -915,7 +915,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			struct timespec ts;
 			regs.rax = clock_gettime(CLOCK_MONOTONIC, &ts);
-			if (regs.rax < 0)
+			if (int(regs.rax) < 0)
 				regs.rax = -errno;
 			else
 				cpu.machine().copy_to_guest(regs.rsi, &ts, sizeof(ts));

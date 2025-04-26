@@ -91,7 +91,6 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	this->m_binary = binary;
 
 	const auto* phdr = (Elf64_Phdr*) (binary.data() + elf->e_phoff);
-	const auto program_begin = phdr->p_vaddr;
 	this->m_start_address = this->m_image_base + elf->e_entry;
 	this->m_heap_address = 0x0;
 
