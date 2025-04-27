@@ -4,6 +4,8 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
+#include <sys/eventfd.h>
+#include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/random.h>
 #include <sys/resource.h>
@@ -11,7 +13,6 @@
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <sys/uio.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -702,7 +703,7 @@ void Machine::setup_linux_system_calls()
 		SYS_socketpair, [](vCPU& cpu) { // SOCKETPAIR
 			auto& regs = cpu.registers();
 			// int socketpair(int domain, int type, int protocol, int sv[2]);
-			const int g_sv = regs.r10;
+			const uint64_t g_sv = regs.r10;
 			int sv[2] = { 0, 0 };
 			cpu.machine().copy_to_guest(g_sv, sv, sizeof(sv));
 			regs.rax = 0;
@@ -733,6 +734,34 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_recvfrom, [] (vCPU& cpu) { // RECVFROM
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			const auto g_buf = regs.rsi;
+			const auto bytes = regs.rdx;
+			[[maybe_unused]] const auto flags = regs.r10;
+			try {
+				const int fd = cpu.machine().fds().translate(regs.rdi);
+				std::array<Machine::WrBuffer, 256> buffers;
+				const size_t cnt =
+					cpu.machine().writable_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
+				ssize_t result = readv(fd, (const iovec *)&buffers[0], cnt);
+				if (result < 0)
+				{
+					regs.rax = -errno;
+				}
+				else
+				{
+					regs.rax = result;
+				}
+			} catch (...) {
+				regs.rax = -EBADF;
+			}
+			SYSPRINT("recvfrom(fd=%lld, buf=0x%llX, size=%llu) = %lld\n",
+					 vfd, g_buf, bytes, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_uname, [](vCPU& cpu) { // UTSNAME
 			auto& regs = cpu.registers();
 			if (cpu.machine().memory_safe_at(regs.rdi, sizeof(struct utsname)))
@@ -755,7 +784,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
 			try {
-				int fd = cpu.machine().fds().translate(vfd);
+				[[maybe_unused]] int fd = cpu.machine().fds().translate(vfd);
 				const int cmd = regs.rsi;
 				regs.rax = 0;
 				if (cmd == F_GETFD)
@@ -784,11 +813,27 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_mkdir, [](vCPU& cpu) { // MKDIR
+			auto& regs = cpu.registers();
+			regs.rax = -EPERM;
+			SYSPRINT("mkdir(0x%llX, 0x%llX) = %lld\n",
+					 regs.rdi, regs.rsi, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_readlink, [](vCPU& cpu) { // READLINK
 			auto& regs = cpu.registers();
 			regs.rax = -ENOENT;
 			SYSPRINT("readlink(0x%llX, bufd=0x%llX, size=%llu) = %lld\n",
 					 regs.rdi, regs.rsi, regs.rdx, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_unlink, [](vCPU& cpu) { // UNLINK
+			auto& regs = cpu.registers();
+			regs.rax = -ENOENT;
+			SYSPRINT("unlink(0x%llX) = %lld\n",
+					 regs.rdi, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -955,7 +1000,8 @@ void Machine::setup_linux_system_calls()
 						regs.rdi, path.c_str(), real_path.c_str(), fd, regs.rax);
 					cpu.set_registers(regs);
 					return;
-				} catch (...) {
+				} catch (const std::exception& e) {
+					SYSPRINT("OPENAT failed: %s\n", e.what());
 					SYSPRINT("OPENAT fd=%lld path=%s flags=%X = %d\n",
 						regs.rdi, path.c_str(), flags, -1);
 					regs.rax = -1;
@@ -1040,8 +1086,16 @@ void Machine::setup_linux_system_calls()
 		{
 			/* SYS eventfd2 */
 			auto& regs = cpu.registers();
-			regs.rax = 42;
-			SYSPRINT("eventfd2(...) = %lld\n", regs.rax);
+			const int real_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+			const int vfd = cpu.machine().fds().manage(real_fd, false);
+			if (vfd < 0) {
+				regs.rax = -errno;
+			}
+			else {
+				regs.rax = vfd;
+			}
+			SYSPRINT("eventfd2(...) = %d (%lld)\n",
+				real_fd, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -1063,13 +1117,34 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		SYS_epoll_ctl, [](vCPU& cpu)
+		SYS_epoll_ctl, [](vCPU& cpu) // epoll_ctl
 		{
-			/* SYS epoll_ctl */
 			auto& regs = cpu.registers();
+			const uint64_t g_event = regs.r10;
+			struct epoll_event event;
+			cpu.machine().copy_from_guest(&event, g_event, sizeof(event));
 			regs.rax = 0;
-			SYSPRINT("epoll_ctl(...) = %lld\n", regs.rax);
+			SYSPRINT("epoll_ctl(fd=%d op=%d event=0x%llX event u64=0x%llX) = %lld\n",
+				int(regs.rdi), int(regs.rsi), event.events, event.data.u64, regs.rax);
 			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_epoll_wait, [](vCPU& cpu) // epoll_wait
+		{
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			[[maybe_unused]] const uint64_t g_events = regs.rsi;
+			[[maybe_unused]] const int maxevents = regs.rdx;
+			[[maybe_unused]] const int timeout = regs.r10;
+			// Create fake event
+			struct epoll_event event;
+			event.events = EPOLLIN;
+			event.data.fd = 1;
+			cpu.machine().copy_to_guest(regs.rsi, &event, sizeof(event));
+			regs.rax = 1;
+			SYSPRINT("epoll_wait(...) = %lld\n", regs.rax);
+			cpu.set_registers(regs);
+			//cpu.machine().threads().suspend_and_yield();
 		});
 	Machine::install_syscall_handler(
 		SYS_getrlimit, [](vCPU& cpu) { // getrlimit

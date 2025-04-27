@@ -103,7 +103,7 @@ namespace tinykvm
 		if (it != m_fds.end()) {
 			return it->second.real_fd;
 		}
-		throw std::runtime_error("Invalid virtual file descriptor");
+		throw std::runtime_error("Invalid virtual file descriptor: " + std::to_string(vfd));
 	}
 
 	void FileDescriptors::free(int vfd)
