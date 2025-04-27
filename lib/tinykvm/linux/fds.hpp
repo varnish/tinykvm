@@ -104,6 +104,7 @@ namespace tinykvm
 		std::shared_ptr<std::vector<std::string>> m_allowed_readable_paths_starts_with;
 		int m_next_file_fd = 0x1000;
 		int m_next_socket_fd = 0x1000 | SOCKET_BIT;
+		std::array<int, 3> m_stdout_redirects { 0, 1, 2 };
 		bool m_verbose = false;
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;

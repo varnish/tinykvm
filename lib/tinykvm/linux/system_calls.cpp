@@ -110,17 +110,22 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_close, [] (vCPU& cpu) { // CLOSE
 			auto& regs = cpu.registers();
-			auto opt_entry = cpu.machine().fds().entry_for_vfd(regs.rdi);
-			if (opt_entry.has_value()) {
-				auto& entry = *opt_entry;
-				const int res = close(entry->real_fd);
-				cpu.machine().fds().free(regs.rdi);
-				if (res < 0)
-					regs.rax = -errno;
-				else
-					regs.rax = 0;
+			if (regs.rdi >= 0 && regs.rdi < 3) {
+				/* Silently ignore close on stdin/stdout/stderr */
+				regs.rax = 0;
 			} else {
-				regs.rax = -EBADF;
+				auto opt_entry = cpu.machine().fds().entry_for_vfd(regs.rdi);
+				if (opt_entry.has_value()) {
+					auto& entry = *opt_entry;
+					const int res = close(entry->real_fd);
+					cpu.machine().fds().free(regs.rdi);
+					if (res < 0)
+						regs.rax = -errno;
+					else
+						regs.rax = 0;
+				} else {
+					regs.rax = -EBADF;
+				}
 			}
 			SYSPRINT("CLOSE(fd=%lld) = %lld\n", regs.rdi, regs.rax);
 			cpu.set_registers(regs);
@@ -154,9 +159,7 @@ void Machine::setup_linux_system_calls()
 
 			int fd = regs.rdi;
 			try {
-				if (fd > 2) {
-					fd = cpu.machine().fds().translate(regs.rdi);
-				}
+				fd = cpu.machine().fds().translate(regs.rdi);
 				struct stat vstat;
 				regs.rax = fstat(fd, &vstat);
 				if (regs.rax == 0) {
@@ -174,9 +177,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			int fd = regs.rdi;
 			try {
-				if (fd > 2) {
-					fd = cpu.machine().fds().translate(regs.rdi);
-				}
+				fd = cpu.machine().fds().translate(regs.rdi);
 				regs.rax = lseek(fd, regs.rsi, regs.rdx);
 				if (int(regs.rax) < 0) {
 					regs.rax = -errno;
@@ -658,10 +659,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			int fd = regs.rdi;
 			try {
-				if (fd > 2)
-				{
-					fd = cpu.machine().fds().translate(fd);
-				}
+				fd = cpu.machine().fds().translate(fd);
 				const int new_fd = dup(fd);
 				if (new_fd < 0)
 				{
@@ -755,12 +753,9 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_fcntl, [](vCPU& cpu) { // FCNTL
 			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
 			try {
-				int fd = regs.rdi;
-				if (fd > 2)
-				{
-					fd = cpu.machine().fds().translate(regs.rdi);
-				}
+				int fd = cpu.machine().fds().translate(vfd);
 				const int cmd = regs.rsi;
 				regs.rax = 0;
 				if (cmd == F_GETFD)
@@ -771,8 +766,8 @@ void Machine::setup_linux_system_calls()
 			} catch (...) {
 				regs.rax = -EBADF;
 			}
-			SYSPRINT("fcntl(...) = %lld\n",
-					 regs.rax);
+			SYSPRINT("fcntl(%d, ...) = %lld\n",
+					 vfd, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -994,7 +989,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const auto vpath  = regs.rsi;
 			const auto buffer = regs.rdx;
-			int  flags  = 0; // regs.r10;
+			int flags  = 0; // regs.r10;
 			int fd = AT_FDCWD;
 			std::string path;
 

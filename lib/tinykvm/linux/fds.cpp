@@ -40,6 +40,9 @@ namespace tinykvm
 		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v2/libstdc++.so.6");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3/libstdc++.so.6");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v4/libstdc++.so.6");
+
+		// XXX: TODO: Create proper redirects for stdout/stderr by
+		// for example providing a pipe to stdout/stderr.
 	}
 
 	FileDescriptors::~FileDescriptors()
@@ -93,6 +96,9 @@ namespace tinykvm
 
 	int FileDescriptors::translate(int vfd) const
 	{
+		if (vfd >= 0 && vfd < 3) {
+			return this->m_stdout_redirects.at(vfd);
+		}
 		auto it = m_fds.find(vfd);
 		if (it != m_fds.end()) {
 			return it->second.real_fd;
@@ -131,12 +137,19 @@ namespace tinykvm
 
 		if (m_open_readable)
 		{
-			if (m_open_readable(modifiable_path))
+			if (m_open_readable(modifiable_path)) {
+				if (this->m_verbose) {
+					fprintf(stderr, "TinyKVM: %s is allowed (read, callback)\n", modifiable_path.c_str());
+				}
 				return true;
+			}
 		}
 		auto it = m_allowed_readable_paths->find(modifiable_path);
 		if (it != m_allowed_readable_paths->end())
 		{
+			if (this->m_verbose) {
+				fprintf(stderr, "TinyKVM: %s is allowed (read)\n", modifiable_path.c_str());
+			}
 			return true;
 		}
 		// Iterate over the allowed paths and check if a path
@@ -150,6 +163,9 @@ namespace tinykvm
 		{
 			if (modifiable_path.find(path) == 0)
 			{
+				if (this->m_verbose) {
+					fprintf(stderr, "TinyKVM: %s is allowed (read, prefixed)\n", modifiable_path.c_str());
+				}
 				return true;
 			}
 		}
@@ -162,7 +178,11 @@ namespace tinykvm
 	bool FileDescriptors::is_writable_path(std::string& modifiable_path) const noexcept
 	{
 		if (m_open_writable) {
-			return m_open_writable(modifiable_path);
+			bool success = m_open_writable(modifiable_path);
+			if (this->m_verbose && success) {
+				fprintf(stderr, "TinyKVM: %s is allowed (write, callback)\n", modifiable_path.c_str());
+			}
+			return success;
 		}
 		if (this->m_verbose) {
 			fprintf(stderr, "TinyKVM: %s is not a writable path\n", modifiable_path.c_str());
