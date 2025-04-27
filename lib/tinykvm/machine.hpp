@@ -114,6 +114,8 @@ struct Machine
 	uint64_t stack_push(__u64& sp, const void*, size_t);
 	uint64_t stack_push(__u64& sp, const std::string&);
 	uint64_t stack_push_cstr(__u64& sp, const char*);
+	template <typename T>
+	uint64_t stack_push_std_array(__u64& sp, const T&, size_t N = T::size());
 
 	/* Debugging */
 	long step_one();

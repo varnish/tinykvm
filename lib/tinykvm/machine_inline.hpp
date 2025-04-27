@@ -192,6 +192,11 @@ inline uint64_t Machine::stack_push(__u64& sp, const T& type)
 {
 	return stack_push(sp, &type, sizeof(T));
 }
+template <typename T>
+inline uint64_t Machine::stack_push_std_array(__u64& sp, const T& type, size_t N)
+{
+	return stack_push(sp, type.data(), N * sizeof(typename T::value_type));
+}
 
 inline vMemory& Machine::main_memory() noexcept
 {
