@@ -1013,6 +1013,30 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("clock_gettime(clk=%lld, buf=0x%llX) = %lld\n",
 					 regs.rdi, regs.rsi, regs.rax);
 			cpu.set_registers(regs);
+			//cpu.machine().threads().suspend_and_yield();
+		});
+	Machine::install_syscall_handler(
+		SYS_clock_nanosleep, [](vCPU& cpu) { // clock_nanosleep
+			auto& regs = cpu.registers();
+			// We don't allow sleeping in the guest
+			// but we can set the remaining time to the requested value
+			const uint64_t g_buf = regs.rdx;
+			const uint64_t g_rem = regs.r10;
+			struct timespec ts;
+			struct timespec ts_rem {};
+			cpu.machine().copy_from_guest(&ts, g_buf, sizeof(ts));
+			const int result =
+				clock_nanosleep(CLOCK_MONOTONIC, regs.rsi, &ts, &ts_rem);
+			if (result < 0) {
+				regs.rax = -errno;
+			} else {
+				if (g_rem != 0x0)
+					cpu.machine().copy_to_guest(g_rem, &ts_rem, sizeof(ts_rem));
+				regs.rax = 0;
+			}
+			SYSPRINT("clock_nanosleep(clk=%lld, flags=%lld, req=0x%llX, rem=%lld) = %lld\n",
+					 regs.rdi, regs.rsi, regs.rdx, regs.r10, regs.rax);
+			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		SYS_exit_group, [](vCPU& cpu)
@@ -1218,9 +1242,14 @@ void Machine::setup_linux_system_calls()
 				return;
 			}
 			std::array<struct epoll_event, 1024> guest_events;
+			// Only wait for 150ns, as we are *not* pre-empting the guest
+			const struct timespec ts {
+				.tv_sec = 0,
+				.tv_nsec = 150,
+			};
 			const int epollfd = cpu.machine().fds().translate(vfd);
 			const int result =
-				epoll_wait(epollfd, guest_events.data(), maxevents, timeout);
+				epoll_pwait2(epollfd, guest_events.data(), maxevents, &ts, nullptr);
 			// Copy events back to guest
 			if (result > 0)
 			{
@@ -1238,7 +1267,8 @@ void Machine::setup_linux_system_calls()
 				// XXX: This is a giga hack.
 				cpu.machine().threads().suspend_and_yield();
 			}
-			SYSPRINT("epoll_wait(...) = %lld\n", regs.rax);
+			SYSPRINT("epoll_wait(fd=%d (%lld), g_events=0x%lX, maxevents=%d, timeout=%d) = %lld\n",
+				vfd, regs.rdi, g_events, maxevents, timeout, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
