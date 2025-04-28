@@ -221,6 +221,21 @@ uint64_t Machine::stack_push_cstr(__u64& sp, const char* string)
 {
 	return stack_push(sp, string, strlen(string)+1);
 }
+uint64_t Machine::stack_push_cstr(__u64& sp, const char* string, size_t length)
+{
+	const size_t buffer_length = length + 1;
+	sp = (sp - buffer_length) & ~(uint64_t) 0x7; // maintain word alignment
+	if (string[length] == 0) {
+		copy_to_guest(sp, string, length + 1, true);
+	} else {
+		// Fallback: copy the string and zero out the last byte
+		copy_to_guest(sp, string, length, true);
+		// Zero out the last byte
+		uint8_t zero = 0;
+		copy_to_guest(sp + length, &zero, sizeof(zero), true);
+	}
+	return sp;
+}
 
 void Machine::install_memory(uint32_t idx, const VirtualMem& mem,
 	[[maybe_unused]] bool readonly)
