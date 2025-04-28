@@ -180,6 +180,27 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_lstat, [] (vCPU& cpu) { // LSTAT
+			auto& regs = cpu.registers();
+			const auto vpath = regs.rdi;
+			std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
+			if (!cpu.machine().fds().is_readable_path(path)) {
+				regs.rax = -EPERM;
+			} else {
+				struct stat vstat;
+				const int result = lstat(path.c_str(), &vstat);
+				if (result == 0) {
+					cpu.machine().copy_to_guest(regs.rsi, &vstat, sizeof(vstat));
+					regs.rax = 0;
+				} else {
+					regs.rax = -errno;
+				}
+			}
+			SYSPRINT("LSTAT to path=%s, data=0x%llX = %lld\n",
+				path.c_str(), regs.rsi, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_lseek, [] (vCPU& cpu) { // LSEEK
 			auto& regs = cpu.registers();
 			int fd = regs.rdi;
