@@ -1226,7 +1226,9 @@ void Machine::setup_linux_system_calls()
 			{
 				cpu.machine().copy_to_guest(g_events, guest_events.data(),
 					result * sizeof(struct epoll_event));
-			} else if (result < 0)
+				regs.rax = result;
+			}
+			else if (result < 0)
 			{
 				regs.rax = -errno;
 			}
