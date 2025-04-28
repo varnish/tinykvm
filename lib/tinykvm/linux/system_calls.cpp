@@ -643,6 +643,14 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_mincore, [](vCPU& cpu) { // mincore
+			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			SYSPRINT("mincore(0x%llX, %llu, 0x%llX) = %lld\n",
+					 regs.rdi, regs.rsi, regs.rdx, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_madvise, [](vCPU& cpu) { // MADVISE
 			auto& regs = cpu.registers();
 			regs.rax = 0;
@@ -893,6 +901,25 @@ void Machine::setup_linux_system_calls()
 		SYS_getegid, [](vCPU& cpu) { // GETEGID
 			auto& regs = cpu.registers();
 			regs.rax = 0;
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_getppid, [](vCPU& cpu) { // GETPPID
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_getpgrp, [](vCPU& cpu) { // GETPGRP
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_getgroups, [](vCPU& cpu) { // GETGROUPS
+			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			SYSPRINT("getgroups(...) = %lld\n", regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler( // sched_getparam
