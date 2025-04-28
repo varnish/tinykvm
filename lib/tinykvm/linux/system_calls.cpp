@@ -118,12 +118,18 @@ void Machine::setup_linux_system_calls()
 				auto opt_entry = cpu.machine().fds().entry_for_vfd(regs.rdi);
 				if (opt_entry.has_value()) {
 					auto& entry = *opt_entry;
-					const int res = close(entry->real_fd);
-					cpu.machine().fds().free(regs.rdi);
-					if (res < 0)
-						regs.rax = -errno;
-					else
+					if (!entry->is_forked) {
+						const int res = close(entry->real_fd);
+						cpu.machine().fds().free(regs.rdi);
+						if (res < 0)
+							regs.rax = -errno;
+						else
+							regs.rax = 0;
+					} else {
+						// Closing an fd on a fork shouldn't actually close the real fd
+						// but we will pretend it does.
 						regs.rax = 0;
+					}
 				} else {
 					regs.rax = -EBADF;
 				}

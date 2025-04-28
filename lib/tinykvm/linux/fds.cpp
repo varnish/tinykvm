@@ -48,7 +48,7 @@ namespace tinykvm
 	FileDescriptors::~FileDescriptors()
 	{
 		for (auto& [fd, entry] : m_fds) {
-			if (entry.real_fd >= 0) {
+			if (entry.real_fd >= 0 && !entry.is_forked) {
 				close(entry.real_fd);
 			}
 		}
@@ -56,11 +56,9 @@ namespace tinykvm
 
 	void FileDescriptors::reset_to(const FileDescriptors& other)
 	{
-		// Close all current file descriptors
-		// We don't have a sandbox-safe way to share
-		// file descriptors between VMs, so just close.
+		// Close all current file descriptors, except if forked
 		for (auto& [fd, entry] : m_fds) {
-			if (entry.real_fd >= 0) {
+			if (entry.real_fd >= 0 && !entry.is_forked) {
 				close(entry.real_fd);
 			}
 		}
@@ -108,20 +106,16 @@ namespace tinykvm
 			auto opt_entry = this->m_find_ro_master_vm_fd(vfd);
 			if (opt_entry) {
 				auto& entry = *opt_entry;
-				const int new_fd = dup(entry->real_fd);
-				if (new_fd < 0) {
-					throw std::runtime_error("Failed to duplicate file descriptor");
-				}
 				if (this->m_verbose) {
-					fprintf(stderr, "TinyKVM: %d -> %d\n", entry->real_fd, new_fd);
+					fprintf(stderr, "TinyKVM: Creating fork entry for %d (%d)\n", entry->real_fd, vfd);
 				}
 				// We need to manage the *same* virtual file descriptor as the main
 				// VM, so we need to set the real_fd of the new entry to the new fd.
-				m_fds[vfd] = {new_fd, entry->is_writable, true};
-				return new_fd;
+				m_fds[vfd] = {entry->real_fd, entry->is_writable, true};
+				return entry->real_fd;
 			}
 		}
-		throw std::runtime_error("Invalid virtual file descriptor: " + std::to_string(vfd));
+		return -1;
 	}
 
 	int FileDescriptors::translate_unless_forked(int vfd)
@@ -136,13 +130,15 @@ namespace tinykvm
 			}
 			return it->second.real_fd;
 		}
-		throw std::runtime_error("Invalid virtual file descriptor: " + std::to_string(vfd));
+		return -1;
 	}
 
 	void FileDescriptors::free(int vfd)
 	{
 		auto it = m_fds.find(vfd);
 		if (it != m_fds.end()) {
+			if (it->second.is_forked)
+				throw std::runtime_error("Cannot free a forked file descriptor");
 			close(it->second.real_fd);
 			m_fds.erase(it);
 		}
