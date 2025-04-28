@@ -19,9 +19,11 @@ namespace tinykvm
 		{
 			int real_fd = -1;
 			bool is_writable = false;
+			bool is_forked = false;
 		};
 		using open_readable_t = std::function<bool(std::string&)>;
 		using open_writable_t = std::function<bool(std::string&)>;
+		using find_readonly_master_vm_fd_t = std::function<std::optional<const Entry*>(int)>;
 
 		FileDescriptors(Machine& machine);
 		~FileDescriptors();
@@ -37,13 +39,22 @@ namespace tinykvm
 		/// @param vfd The virtual file descriptor to remove.
 		void free(int vfd);
 
-		std::optional<Entry*> entry_for_vfd(int vfd);
+		std::optional<const Entry*> entry_for_vfd(int vfd) const;
 
 		/// @brief Translate a virtual file descriptor to a real file descriptor,
 		/// or throw an exception, failing execution.
 		/// @param vfd The virtual file descriptor to translate.
 		/// @return The real file descriptor.
-		int translate(int vfd) const;
+		int translate(int vfd);
+
+		/// @brief Check if a file descriptor is a socket or a file. If this fd was
+		/// created by duplicating an fd from the main VM, this function instead
+		/// returns -1, preventing a disallowed operation on the fd. Eg. it's allowed
+		/// to close a duplicated fd, but not use epoll_ctl() on it.
+		/// @param vfd The virtual file descriptor to check.
+		/// @return The real file descriptor, or -1 if the fd was created by
+		/// duplicating an fd from the main VM.
+		int translate_unless_forked(int vfd);
 
 		bool is_socket_vfd(int vfd) const noexcept {
 			return (vfd & SOCKET_BIT) != 0;
@@ -97,6 +108,14 @@ namespace tinykvm
 			m_verbose = verbose;
 		}
 
+		/// @brief Set the callback for finding the read-only master VM file descriptor.
+		/// This is used to find the real file descriptor for a virtual file
+		/// descriptor that is a read-only master VM file descriptor.
+		/// @param callback The callback to set.
+		void set_find_readonly_master_vm_fd_callback(find_readonly_master_vm_fd_t callback) noexcept {
+			m_find_ro_master_vm_fd = callback;
+		}
+
 	private:
 		Machine& m_machine;
 		std::map<int, Entry> m_fds;
@@ -108,5 +127,6 @@ namespace tinykvm
 		bool m_verbose = false;
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;
+		find_readonly_master_vm_fd_t m_find_ro_master_vm_fd;
 	};
 }

@@ -1174,17 +1174,22 @@ void Machine::setup_linux_system_calls()
 		SYS_epoll_ctl, [](vCPU& cpu)
 		{
 			auto& regs = cpu.registers();
-			const int epollfd = cpu.machine().fds().translate(regs.rdi);
+			const int epollfd = cpu.machine().fds().translate_unless_forked(regs.rdi);
 			const int op = regs.rsi;
 			const int fd = cpu.machine().fds().translate(regs.rdx);
 			const uint64_t g_event = regs.r10;
-			struct epoll_event event;
-			cpu.machine().copy_from_guest(&event, g_event, sizeof(event));
-			if (epoll_ctl(epollfd, op, fd, &event) < 0) {
-				regs.rax = -errno;
-			}
-			else {
-				regs.rax = 0;
+			if (epollfd > 0 && fd > 0)
+			{
+				struct epoll_event event;
+				cpu.machine().copy_from_guest(&event, g_event, sizeof(event));
+				if (epoll_ctl(epollfd, op, fd, &event) < 0) {
+					regs.rax = -errno;
+				}
+				else {
+					regs.rax = 0;
+				}
+			} else {
+				regs.rax = -EBADF;
 			}
 			SYSPRINT("epoll_ctl(epollfd=%d (%lld), op=%d, fd=%d (%lld), g_event=0x%lX) = %lld\n",
 				epollfd, regs.rdi, op, fd, regs.rdx, g_event, regs.rax);

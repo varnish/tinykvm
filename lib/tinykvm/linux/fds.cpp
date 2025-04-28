@@ -77,15 +77,15 @@ namespace tinykvm
 			throw std::runtime_error("Invalid file descriptor in FileDescriptors::add()");
 		}
 		if (is_socket) {
-			m_fds[m_next_socket_fd] = {fd, is_writable};
+			m_fds[m_next_socket_fd] = {fd, is_writable, false};
 			return m_next_socket_fd++;
 		} else {
-			m_fds[m_next_file_fd] = {fd, is_writable};
+			m_fds[m_next_file_fd] = {fd, is_writable, false};
 			return m_next_file_fd++;
 		}
 	}
 
-	std::optional<FileDescriptors::Entry*> FileDescriptors::entry_for_vfd(int vfd)
+	std::optional<const FileDescriptors::Entry*> FileDescriptors::entry_for_vfd(int vfd) const
 	{
 		auto it = m_fds.find(vfd);
 		if (it != m_fds.end()) {
@@ -94,13 +94,46 @@ namespace tinykvm
 		return std::nullopt;
 	}
 
-	int FileDescriptors::translate(int vfd) const
+	int FileDescriptors::translate(int vfd)
 	{
 		if (vfd >= 0 && vfd < 3) {
 			return this->m_stdout_redirects.at(vfd);
 		}
 		auto it = m_fds.find(vfd);
 		if (it != m_fds.end()) {
+			return it->second.real_fd;
+		}
+
+		if (this->m_find_ro_master_vm_fd) {
+			auto opt_entry = this->m_find_ro_master_vm_fd(vfd);
+			if (opt_entry) {
+				auto& entry = *opt_entry;
+				const int new_fd = dup(entry->real_fd);
+				if (new_fd < 0) {
+					throw std::runtime_error("Failed to duplicate file descriptor");
+				}
+				if (this->m_verbose) {
+					fprintf(stderr, "TinyKVM: %d -> %d\n", entry->real_fd, new_fd);
+				}
+				// We need to manage the *same* virtual file descriptor as the main
+				// VM, so we need to set the real_fd of the new entry to the new fd.
+				m_fds[vfd] = {new_fd, entry->is_writable, true};
+				return new_fd;
+			}
+		}
+		throw std::runtime_error("Invalid virtual file descriptor: " + std::to_string(vfd));
+	}
+
+	int FileDescriptors::translate_unless_forked(int vfd)
+	{
+		if (vfd >= 0 && vfd < 3) {
+			return this->m_stdout_redirects.at(vfd);
+		}
+		auto it = m_fds.find(vfd);
+		if (it != m_fds.end()) {
+			if (it->second.is_forked) {
+				return -1;
+			}
 			return it->second.real_fd;
 		}
 		throw std::runtime_error("Invalid virtual file descriptor: " + std::to_string(vfd));
