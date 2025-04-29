@@ -68,17 +68,35 @@ namespace tinykvm
 		m_next_file_fd = other.m_next_file_fd;
 		m_next_socket_fd = other.m_next_socket_fd;
 		m_allowed_readable_paths = other.m_allowed_readable_paths;
+		this->m_max_files = other.m_max_files;
+		this->m_max_sockets = other.m_max_sockets;
+		this->m_total_fds_opened = other.m_total_fds_opened;
+		this->m_max_total_fds_opened = other.m_max_total_fds_opened;
 	}
 
 	int FileDescriptors::manage(int fd, bool is_socket, bool is_writable)
 	{
 		if (fd < 0) {
-			throw std::runtime_error("Invalid file descriptor in FileDescriptors::add()");
+			throw std::runtime_error("TinyKVM: Invalid file descriptor in FileDescriptors::add()");
 		}
+		if (this->m_total_fds_opened >= this->m_max_total_fds_opened) {
+			throw std::runtime_error("TinyKVM: Too many opened fds in total, max_total_fds_opened = " +
+				std::to_string(this->m_max_total_fds_opened));
+		}
+		this->m_total_fds_opened ++;
+
 		if (is_socket) {
+			if (this->m_fds.size() >= this->m_max_sockets) {
+				throw std::runtime_error("TinyKVM: Too many open sockets, max_sockets = " +
+					std::to_string(this->m_max_sockets));
+			}
 			m_fds[m_next_socket_fd] = {fd, is_writable, false};
 			return m_next_socket_fd++;
 		} else {
+			if (this->m_fds.size() >= this->m_max_files) {
+				throw std::runtime_error("TinyKVM: Too many open files, max_files = " +
+					std::to_string(this->m_max_files));
+			}
 			m_fds[m_next_file_fd] = {fd, is_writable, false};
 			return m_next_file_fd++;
 		}

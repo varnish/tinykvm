@@ -14,6 +14,7 @@ namespace tinykvm
 
 	struct FileDescriptors
 	{
+		static constexpr unsigned DEFAULT_MAX_FILES = 64;
 		static constexpr int SOCKET_BIT = 0x40000000;
 		struct Entry
 		{
@@ -128,5 +129,9 @@ namespace tinykvm
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;
 		find_readonly_master_vm_fd_t m_find_ro_master_vm_fd;
+		uint16_t m_max_files = DEFAULT_MAX_FILES;
+		uint16_t m_max_sockets = DEFAULT_MAX_FILES;
+		uint16_t m_total_fds_opened = 0;
+		uint16_t m_max_total_fds_opened = DEFAULT_MAX_FILES;
 	};
 }
