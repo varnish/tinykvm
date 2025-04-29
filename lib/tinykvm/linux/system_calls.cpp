@@ -171,6 +171,8 @@ void Machine::setup_linux_system_calls()
 				regs.rax = fstat(fd, &vstat);
 				if (regs.rax == 0) {
 					cpu.machine().copy_to_guest(regs.rsi, &vstat, sizeof(vstat));
+				} else {
+					regs.rax = -errno;
 				}
 			} catch (...) {
 				regs.rax = -EBADF;
@@ -1090,7 +1092,7 @@ void Machine::setup_linux_system_calls()
 					if (fd > 0) {
 						regs.rax = cpu.machine().fds().manage(fd, false);
 					} else {
-						regs.rax = -1;
+						regs.rax = -errno;
 					}
 					SYSPRINT("OPENAT fd=%lld path=%s (real_path=%s) = %d (%lld)\n",
 						regs.rdi, path.c_str(), real_path.c_str(), fd, regs.rax);
@@ -1118,7 +1120,7 @@ void Machine::setup_linux_system_calls()
 					if (fd > 0) {
 						regs.rax = cpu.machine().fds().manage(fd, false);
 					} else {
-						regs.rax = -1;
+						regs.rax = -errno;
 					}
 				} catch (...) {
 					regs.rax = -1;
@@ -1154,9 +1156,10 @@ void Machine::setup_linux_system_calls()
 
 					struct stat64 vstat;
 					// Path is in allow-list
-					regs.rax = fstatat64(fd, path.c_str(), &vstat, flags);
-					if (regs.rax == 0) {
+					const int result = fstatat64(fd, path.c_str(), &vstat, flags);
+					if (result == 0) {
 						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
+						regs.rax = 0;
 					} else {
 						regs.rax = -errno;
 					}
@@ -1379,12 +1382,13 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_statx, [] (vCPU& cpu) { // STATX
 			auto& regs = cpu.registers();
-			long fd = AT_FDCWD; // rdi
+			const int vfd = regs.rdi;
 			const auto vpath  = regs.rsi;
 			const auto flags  = regs.rdx;
 			const auto mask   = regs.r10;
 			const auto buffer = regs.r8;
 			std::string path;
+			int fd = AT_FDCWD;
 
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
@@ -1392,13 +1396,17 @@ void Machine::setup_linux_system_calls()
 					regs.rax = -EPERM;
 				} else {
 					// Translate from vfd when fd != AT_FDCWD
-					if ((long)regs.rdi != AT_FDCWD)
-						fd = cpu.machine().fds().translate(regs.rdi);
+					if (vfd != AT_FDCWD)
+						fd = cpu.machine().fds().translate(vfd);
 
 					struct statx vstat;
-					regs.rax = statx(fd, path.c_str(), flags, mask, &vstat);
-					if (regs.rax == 0) {
+					const int result =
+						statx(fd, path.c_str(), flags, mask, &vstat);
+					if (result == 0) {
 						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
+						regs.rax = 0;
+					} else {
+						regs.rax = -errno;
 					}
 				}
 			} catch (...) {
