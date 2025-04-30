@@ -5,13 +5,8 @@
 #include <linux/futex.h>
 #include <cassert>
 #include <stdexcept>
-//#define DEBUG_THREADS
-
-#ifdef DEBUG_THREADS
-#define THPRINT(fmt, ...) fprintf(stderr, fmt, __VA_ARGS__);
-#else
-#define THPRINT(fmt, ...) /* fmt */
-#endif
+#define THPRINT(fmt, ...) \
+	if (UNLIKELY(cpu.machine().m_verbose_thread_syscalls)) fprintf(stderr, fmt, __VA_ARGS__);
 
 namespace tinykvm {
 
@@ -56,16 +51,16 @@ void Thread::resume()
 	// restore registers
 	mt.machine.set_registers(this->stored_regs);
 	mt.machine.set_tls_base(this->fsbase);
-	THPRINT("Returning to tid=%d tls=0x%lX stack=0x%llX\n",
-			this->tid, this->fsbase, this->stored_regs.rsp);
+	//THPRINT("Returning to tid=%d tls=0x%lX stack=0x%llX\n",
+	//		this->tid, this->fsbase, this->stored_regs.rsp);
 }
 void Thread::exit()
 {
 	const bool exiting_myself = (mt.get_thread().tid == this->tid);
 	// CLONE_CHILD_CLEARTID: set userspace TID value to zero
 	if (this->clear_tid) {
-		THPRINT("Clearing thread value for tid=%d at 0x%lX\n",
-				this->tid, this->clear_tid);
+		//THPRINT("Clearing thread value for tid=%d at 0x%lX\n",
+		//		this->tid, this->clear_tid);
 		// clear the thread id in the parent
 		const uint32_t value = 0;
 		mt.machine.copy_to_guest(this->clear_tid, &value, sizeof(value));
@@ -128,20 +123,20 @@ Thread& MultiThreading::create(
 	Thread& thread = it.first->second;
 
 	if (flags & CLONE_SETTLS) {
-		THPRINT("CLONE_SETTLS 0x%lX\n", tls);
+		//THPRINT("CLONE_SETTLS 0x%lX\n", tls);
 	}
 	if (flags & CLONE_CHILD_SETTID) {
-		THPRINT("CHILD_SETTID at 0x%lX\n", ctid);
+		//THPRINT("CHILD_SETTID at 0x%lX\n", ctid);
 		// set the thread id in the child
 		machine.copy_to_guest(ctid, &tid, sizeof(tid));
 	}
 	if (flags & CLONE_PARENT_SETTID) {
-		THPRINT("PARENT_SETTID at 0x%lX\n", ptid);
+		//THPRINT("PARENT_SETTID at 0x%lX\n", ptid);
 		// set the thread id in the parent
 		machine.copy_to_guest(ptid, &tid, sizeof(tid));
 	}
 	if (flags & CLONE_CHILD_CLEARTID) {
-		THPRINT("CHILD_CLEARTID at 0x%lX\n", ctid);
+		//THPRINT("CHILD_CLEARTID at 0x%lX\n", ctid);
 		thread.clear_tid = ctid;
 	}
 

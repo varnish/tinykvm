@@ -19,20 +19,10 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 // #define VERBOSE_GUEST_EXITS
-// #define VERBOSE_MMAP
-// #define VERBOSE_SYSCALLS
-
-#ifdef VERBOSE_MMAP
-#define PRINTMMAP(fmt, ...) printf(fmt, __VA_ARGS__);
-#else
-#define PRINTMMAP(fmt, ...) /* */
-#endif
-
-#ifdef VERBOSE_SYSCALLS
-#define SYSPRINT(fmt, ...) printf(fmt, __VA_ARGS__);
-#else
-#define SYSPRINT(fmt, ...) /* */
-#endif
+#define PRINTMMAP(fmt, ...) \
+	if (UNLIKELY(cpu.machine().m_verbose_mmap_syscalls)) printf(fmt, __VA_ARGS__);
+#define SYSPRINT(fmt, ...) \
+	if (UNLIKELY(cpu.machine().m_verbose_system_calls)) printf(fmt, __VA_ARGS__);
 namespace tinykvm {
 static constexpr uint64_t PageMask = vMemory::PageSize() - 1;
 static constexpr size_t MMAP_COLLISION_TRESHOLD = 512ULL << 20; // 512MB

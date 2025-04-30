@@ -238,6 +238,25 @@ struct Machine
 	const Machine& remote() const;
 	Machine& remote();
 
+	/// @brief Enable/disable verbose system calls. When enabled, every system call
+	/// will be printed to the console, in a trace-like format.
+	/// @param verbose True to enable verbose system calls, false to disable it.
+	void set_verbose_system_calls(bool verbose) noexcept {
+		m_verbose_system_calls = verbose;
+	}
+	/// @brief Enable/disable verbose mmap calls. When enabled, every mmap
+	/// syscall will be printed to the console, in a trace-like format.
+	/// @param verbose True to enable verbose mmap syscalls, false to disable it.
+	void set_verbose_mmap_syscalls(bool verbose) noexcept {
+		m_verbose_mmap_syscalls = verbose;
+	}
+	/// @brief Enable/disable verbose thread syscalls. When enabled, every thread
+	/// syscall will be printed to the console, in a trace-like format.
+	/// @param verbose True to enable verbose thread syscalls, false to disable it.
+	void set_verbose_thread_syscalls(bool verbose) noexcept {
+		m_verbose_thread_syscalls = verbose;
+	}
+
 	/* Migrates the VM to the current thread. Allows creating in
 	   one thread, and using it in another. */
 	void migrate_to_this_thread();
@@ -269,6 +288,9 @@ private:
 	bool  m_forked = false;
 	bool  m_just_reset = false;
 	bool  m_relocate_fixed_mmap = false;
+	bool  m_verbose_system_calls = false;
+	bool  m_verbose_mmap_syscalls = false;
+	bool  m_verbose_thread_syscalls = false;
 	void* m_userdata = nullptr;
 
 	std::string_view m_binary;
