@@ -1651,7 +1651,12 @@ void Machine::setup_linux_system_calls()
 		SYS_clock_gettime, [](vCPU& cpu) { // clock_gettime
 			auto& regs = cpu.registers();
 			struct timespec ts;
-			regs.rax = clock_gettime(CLOCK_MONOTONIC, &ts);
+			clockid_t clk_id = regs.rdi;
+			if (clk_id == CLOCK_REALTIME)
+				clk_id = CLOCK_REALTIME;
+			else
+				clk_id = CLOCK_MONOTONIC;
+			regs.rax = clock_gettime(clk_id, &ts);
 			if (int(regs.rax) < 0)
 				regs.rax = -errno;
 			else
@@ -1659,13 +1664,10 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("clock_gettime(clk=%lld, buf=0x%llX) = %lld\n",
 					 regs.rdi, regs.rsi, regs.rax);
 			cpu.set_registers(regs);
-			//cpu.machine().threads().suspend_and_yield();
 		});
 	Machine::install_syscall_handler(
 		SYS_clock_nanosleep, [](vCPU& cpu) { // clock_nanosleep
 			auto& regs = cpu.registers();
-			// We don't allow sleeping in the guest
-			// but we can set the remaining time to the requested value
 			const uint64_t g_buf = regs.rdx;
 			const uint64_t g_rem = regs.r10;
 			struct timespec ts;
