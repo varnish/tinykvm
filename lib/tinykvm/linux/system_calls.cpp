@@ -856,20 +856,19 @@ void Machine::setup_linux_system_calls()
 			if (addrlen > sizeof(addr))
 			{
 				regs.rax = -EINVAL;
-				cpu.set_registers(regs);
-				return;
-			}
-			cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
-			// Validate the address
-			if (!cpu.machine().fds().validate_socket_address(fd, addr))
-			{
-				regs.rax = -EPERM;
 			} else {
-				if (connect(fd, &addr, addrlen) < 0) {
-					regs.rax = -errno;
-				}
-				else {
-					regs.rax = 0;
+				cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
+				// Validate the address
+				if (!cpu.machine().fds().validate_socket_address(fd, addr))
+				{
+					regs.rax = -EPERM;
+				} else {
+					if (connect(fd, &addr, addrlen) < 0) {
+						regs.rax = -errno;
+					}
+					else {
+						regs.rax = 0;
+					}
 				}
 			}
 			SYSPRINT("connect(fd=%d, addr=0x%lX, addrlen=%zu) = %lld\n",
@@ -1156,7 +1155,7 @@ void Machine::setup_linux_system_calls()
 						}
 						cpu.machine().copy_to_guest(iov.iov_base, buf.data() + offset, len_remaining);
 						offset += iov.iov_len;
-						if (offset >= result) {
+						if (offset >= size_t(result)) {
 							break;
 						}
 					}
@@ -1439,21 +1438,26 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_openat, [] (vCPU& cpu) { // OPENAT
 			auto& regs = cpu.registers();
-
+			const int vfd = regs.rdi;
 			const auto vpath = regs.rsi;
-			const int  flags = regs.rdx;
+			int flags = regs.rdx | AT_SYMLINK_NOFOLLOW;
 
 			std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
+			std::string real_path;
 			bool write_flags = (flags & (O_WRONLY | O_RDWR)) != 0x0;
 			if (!write_flags)
 			{
 				try {
-					std::string real_path = path;
+					int pfd = AT_FDCWD;
+					if (vfd != AT_FDCWD) {
+						pfd = cpu.machine().fds().translate(vfd);
+					}
+					real_path = path;
 					if (!cpu.machine().fds().is_readable_path(real_path)) {
 						throw std::runtime_error("Path not readable: " + real_path);
 					}
 
-					int fd = openat(AT_FDCWD, real_path.c_str(), flags);
+					int fd = openat(pfd, real_path.c_str(), flags);
 					if (fd > 0) {
 						regs.rax = cpu.machine().fds().manage(fd, false);
 					} else {
@@ -1473,12 +1477,18 @@ void Machine::setup_linux_system_calls()
 			if (write_flags || regs.rax == (__u64)-1)
 			{
 				try {
-					std::string real_path = path;
+					int pfd = AT_FDCWD;
+					if (vfd != AT_FDCWD) {
+						pfd = cpu.machine().fds().translate(vfd);
+					}
+
+					real_path = path;
 					if (!cpu.machine().fds().is_writable_path(real_path)) {
+						SYSPRINT("OPENAT path was not writable: %s\n", real_path.c_str());
 						throw std::runtime_error("Path not writable: " + real_path);
 					}
 
-					int fd = openat(AT_FDCWD, real_path.c_str(), flags, S_IWUSR | S_IRUSR);
+					int fd = openat(pfd, real_path.c_str(), flags, S_IWUSR | S_IRUSR);
 					SYSPRINT("OPENAT where=%lld path=%s (real_path=%s) flags=%X = fd %d\n",
 						regs.rdi, path.c_str(), real_path.c_str(), flags, fd);
 
@@ -1498,7 +1508,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const auto vpath  = regs.rsi;
 			const auto buffer = regs.rdx;
-			int flags  = 0; // regs.r10;
+			int flags  = AT_SYMLINK_NOFOLLOW; // regs.r10;
 			int fd = AT_FDCWD;
 			std::string path;
 
@@ -1822,7 +1832,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
 			const auto vpath  = regs.rsi;
-			const auto flags  = regs.rdx;
+			const auto flags  = regs.rdx | AT_SYMLINK_NOFOLLOW;
 			const auto mask   = regs.r10;
 			const auto buffer = regs.r8;
 			std::string path;
@@ -1830,22 +1840,23 @@ void Machine::setup_linux_system_calls()
 
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
-				if (!cpu.machine().fds().is_readable_path(path)) {
-					regs.rax = -EPERM;
-				} else {
-					// Translate from vfd when fd != AT_FDCWD
-					if (vfd != AT_FDCWD)
-						fd = cpu.machine().fds().translate(vfd);
-
-					struct statx vstat;
-					const int result =
-						statx(fd, path.c_str(), flags, mask, &vstat);
-					if (result == 0) {
-						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
-						regs.rax = 0;
-					} else {
-						regs.rax = -errno;
+				if (!path.empty()) {
+					if (!cpu.machine().fds().is_readable_path(path)) {
+						regs.rax = -EPERM;
 					}
+				}
+				// Translate from vfd when fd != AT_FDCWD
+				if (vfd != AT_FDCWD)
+					fd = cpu.machine().fds().translate(vfd);
+
+				struct statx vstat;
+				const int result =
+					statx(fd, path.c_str(), flags, mask, &vstat);
+				if (result == 0) {
+					cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
+					regs.rax = 0;
+				} else {
+					regs.rax = -errno;
 				}
 			} catch (...) {
 				regs.rax = -1;
