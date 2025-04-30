@@ -552,7 +552,7 @@ void Machine::setup_linux_system_calls()
 					 regs.rdi, fd, regs.rsi, regs.rax);
 			cpu.set_registers(regs);
 		});
-	Machine::install_syscall_handler(
+	Machine::install_syscall_handler( // pread64
 		SYS_pread64, [](vCPU& cpu) {
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
@@ -574,6 +574,31 @@ void Machine::setup_linux_system_calls()
 				regs.rax = bytes;
 			}
 			SYSPRINT("pread64(fd=%d, buf=0x%llX, size=%llu, offset=%llu) = %lld\n",
+					 vfd, g_buf, bytes, offset, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler( // pwrite64
+		SYS_pwrite64, [](vCPU& cpu) {
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			const auto g_buf = regs.rsi;
+			const auto bytes = regs.rdx;
+			const auto offset = regs.r10;
+			const int fd = cpu.machine().fds().translate(vfd);
+
+			// writev into the area
+			static constexpr size_t WRITEV_BUFFERS = 64;
+			tinykvm::Machine::Buffer buffers[WRITEV_BUFFERS];
+			const auto bufcount =
+				cpu.machine().gather_buffers_from_range(WRITEV_BUFFERS, buffers, g_buf, bytes);
+
+			if (pwritev64(fd, (const iovec *)&buffers[0], bufcount, offset) < 0) {
+				regs.rax = -errno;
+			}
+			else {
+				regs.rax = bytes;
+			}
+			SYSPRINT("pwrite64(fd=%d, buf=0x%llX, size=%llu, offset=%llu) = %lld\n",
 					 vfd, g_buf, bytes, offset, regs.rax);
 			cpu.set_registers(regs);
 		});
@@ -1196,14 +1221,39 @@ void Machine::setup_linux_system_calls()
 		SYS_fcntl, [](vCPU& cpu) { // FCNTL
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
+			const int cmd = regs.rsi;
+			int fd = -1;
 			try {
-				[[maybe_unused]] int fd = cpu.machine().fds().translate(vfd);
-				const int cmd = regs.rsi;
+				fd = cpu.machine().fds().translate(vfd);
 				regs.rax = 0;
 				if (cmd == F_GETFD)
 				{
 					//const int flags = fcntl(fd, cmd);
 					regs.rax = 0x1;
+				}
+				else if (cmd == F_GETLK64)
+				{
+					struct flock64 fl{};
+					int res = fcntl(fd, F_GETLK64, &fl);
+					if (res < 0) {
+						regs.rax = -errno;
+					}
+					else {
+						cpu.machine().copy_to_guest(regs.rdx, &fl, sizeof(fl));
+						regs.rax = 0;
+					}
+				}
+				else if (cmd == F_SETLK64)
+				{
+					struct flock64 fl{};
+					cpu.machine().copy_from_guest(&fl, regs.rdx, sizeof(fl));
+					int res = fcntl(fd, F_SETLK64, &fl);
+					if (res < 0) {
+						regs.rax = -errno;
+					}
+					else {
+						regs.rax = 0;
+					}
 				}
 				else if (cmd == F_DUPFD_CLOEXEC)
 				{
@@ -1214,7 +1264,30 @@ void Machine::setup_linux_system_calls()
 			} catch (...) {
 				regs.rax = -EBADF;
 			}
-			SYSPRINT("fcntl(%d, ...) = %lld\n",
+			SYSPRINT("fcntl(%d (%d), 0x%X, ...) = %lld\n",
+					 fd, vfd, cmd, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_fsync, [](vCPU& cpu) { // FSYNC
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			try {
+				const int fd = cpu.machine().fds().translate(vfd);
+				if (fd >= 0)
+				{
+					regs.rax = fsync(fd);
+					if (int(regs.rax) < 0)
+						regs.rax = -errno;
+				}
+				else
+				{
+					regs.rax = -EBADF;
+				}
+			} catch (...) {
+				regs.rax = -EBADF;
+			}
+			SYSPRINT("fsync(%d) = %lld\n",
 					 vfd, regs.rax);
 			cpu.set_registers(regs);
 		});
@@ -1508,7 +1581,7 @@ void Machine::setup_linux_system_calls()
 						regs.rdi, path.c_str(), real_path.c_str(), flags, fd);
 
 					if (fd > 0) {
-						regs.rax = cpu.machine().fds().manage(fd, false);
+						regs.rax = cpu.machine().fds().manage(fd, false, true);
 					} else {
 						regs.rax = -errno;
 					}
@@ -1919,6 +1992,35 @@ void Machine::setup_linux_system_calls()
 			regs.rax = -ENOSYS;
 			SYSPRINT("faccessat(...) = %lld\n",
 					 regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_fchown, [](vCPU& cpu) { // fchown
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			regs.rax = 0;
+			SYSPRINT("fchown(fd=%d, uid=%lld, gid=%lld) = %lld\n",
+					 vfd, regs.rsi, regs.rdx, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_ftruncate, [](vCPU& cpu) { // ftruncate
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			const std::optional<const tinykvm::FileDescriptors::Entry*> opt_entry
+				= cpu.machine().fds().entry_for_vfd(vfd);
+			if (opt_entry && (*opt_entry)->is_writable)
+			{
+				const int fd = (*opt_entry)->real_fd;
+				regs.rax = ftruncate(fd, regs.rsi);
+				if (int(regs.rax) < 0)
+					regs.rax = -errno;
+			}
+			else {
+				regs.rax = -EBADF;
+			}
+			SYSPRINT("ftruncate(fd=%d, size=%lld) = %lld\n",
+					 vfd, regs.rsi, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
