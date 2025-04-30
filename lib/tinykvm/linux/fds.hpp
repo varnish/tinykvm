@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+struct sockaddr;
 
 namespace tinykvm
 {
@@ -14,7 +15,8 @@ namespace tinykvm
 
 	struct FileDescriptors
 	{
-		static constexpr unsigned DEFAULT_MAX_FILES = 64;
+		static constexpr unsigned DEFAULT_MAX_FILES = 256;
+		static constexpr unsigned DEFAULT_TOTAL_FILES = 4096;
 		static constexpr int SOCKET_BIT = 0x40000000;
 		struct Entry
 		{
@@ -24,6 +26,7 @@ namespace tinykvm
 		};
 		using open_readable_t = std::function<bool(std::string&)>;
 		using open_writable_t = std::function<bool(std::string&)>;
+		using connect_socket_t = std::function<bool(int, struct sockaddr&)>;
 		using find_readonly_master_vm_fd_t = std::function<std::optional<const Entry*>(int)>;
 
 		FileDescriptors(Machine& machine);
@@ -102,6 +105,91 @@ namespace tinykvm
 		/// may be modified by the callback, indicating which real path to open.
 		bool is_writable_path(std::string& modifiable_path) const noexcept;
 
+		/// @brief Set the maximum number of file descriptors that can be opened.
+		/// @param max_files The maximum number of file descriptors that can be
+		/// opened.
+		void set_max_files(uint16_t max_files) noexcept {
+			m_max_files = max_files;
+		}
+
+		/// @brief Get the maximum number of file descriptors that can be opened.
+		/// @return The maximum number of file descriptors that can be opened.
+		uint16_t get_max_files() const noexcept {
+			return m_max_files;
+		}
+
+		/// @brief Set the maximum number of sockets that can be opened.
+		/// @param max_sockets The maximum number of sockets that can be opened.
+		void set_max_sockets(uint16_t max_sockets) noexcept {
+			m_max_sockets = max_sockets;
+		}
+
+		/// @brief Get the maximum number of sockets that can be opened.
+		/// @return The maximum number of sockets that can be opened.
+		uint16_t get_max_sockets() const noexcept {
+			return m_max_sockets;
+		}
+
+		/// @brief Set the maximum number of file descriptors that can be opened
+		/// in total. This is the sum of the maximum number of files and sockets
+		/// that can be opened.
+		/// @param max_total_fds_opened The maximum number of file descriptors
+		/// that can be opened in total.
+		void set_max_total_fds_opened(uint16_t max_total_fds_opened) noexcept {
+			m_max_total_fds_opened = max_total_fds_opened;
+		}
+
+		/// @brief Get the maximum number of file descriptors that can be opened
+		/// in total. This is the sum of the maximum number of files and sockets
+		/// that can be opened.
+		/// @return The maximum number of file descriptors that can be opened
+		/// in total.
+		uint16_t get_max_total_fds_opened() const noexcept {
+			return m_max_total_fds_opened;
+		}
+
+		/// @brief Get the number of file descriptors that have been opened
+		/// since the last reset. This is the number of file descriptors that
+		/// are currently open, plus the number of file descriptors that have
+		/// been closed. Includes files and sockets.
+		/// @return The number of file descriptors that have been opened since
+		/// the last reset. Includes files and sockets.
+		uint16_t get_total_fds_opened() const noexcept {
+			return m_total_fds_opened;
+		}
+
+		/// @brief Get the number of file descriptors that are currently open.
+		/// Does not include sockets.
+		/// @return The number of file descriptors that are currently open.
+		uint16_t get_current_fds_opened() const noexcept {
+			return m_fds.size();
+		}
+
+		/// @brief Get the number of sockets that are currently open.
+		/// @return The number of sockets that are currently open.
+		uint16_t get_current_sockets_opened() const noexcept {
+			return m_fds.size() - m_stdout_redirects.size();
+		}
+
+		/// @brief Set a callback for connecting a socket. This is used to check if a
+		/// socket is allowed to be connected. The callback should return true if the
+		/// socket is allowed, and false otherwise. The socket may be modified by the
+		/// callback, indicating which real socket to connect to. The argument is
+		/// a vector of bytes that contains the socket address, eg. a struct sockaddr.
+		/// @param callback The callback to set.
+		void set_connect_socket_callback(connect_socket_t callback) noexcept {
+			m_connect_socket = callback;
+		}
+
+		/// @brief Validate and modify the socket address. This is used to check if a
+		/// socket is allowed to be connected. The callback should return true if the
+		/// socket is allowed, and false otherwise. The socket may be modified by the
+		/// callback, indicating which real socket to connect to. The argument is
+		/// a vector of bytes that contains the socket address, eg. a struct sockaddr.
+		/// @param socket_address The socket address to validate and modify.
+		/// @return True if the socket address is allowed, false otherwise.
+		bool validate_socket_address(const int socket_fd, struct sockaddr& socket_address) const noexcept;
+
 		/// @brief Set verbose mode. This will print out information about
 		/// file descriptor management.
 		/// @param verbose True to enable verbose mode, false to disable it.
@@ -128,10 +216,11 @@ namespace tinykvm
 		bool m_verbose = false;
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;
+		connect_socket_t m_connect_socket;
 		find_readonly_master_vm_fd_t m_find_ro_master_vm_fd;
 		uint16_t m_max_files = DEFAULT_MAX_FILES;
 		uint16_t m_max_sockets = DEFAULT_MAX_FILES;
 		uint16_t m_total_fds_opened = 0;
-		uint16_t m_max_total_fds_opened = DEFAULT_MAX_FILES;
+		uint16_t m_max_total_fds_opened = DEFAULT_TOTAL_FILES;
 	};
 }

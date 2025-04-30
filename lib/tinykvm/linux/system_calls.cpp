@@ -6,7 +6,9 @@
 #include <signal.h>
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/poll.h>
 #include <sys/random.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -34,6 +36,11 @@
 namespace tinykvm {
 static constexpr uint64_t PageMask = vMemory::PageSize() - 1;
 static constexpr size_t MMAP_COLLISION_TRESHOLD = 512ULL << 20; // 512MB
+struct GuestIOvec
+{
+	uint64_t iov_base;
+	uint64_t iov_len;
+};
 
 void Machine::setup_linux_system_calls()
 {
@@ -220,23 +227,39 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_poll, [](vCPU& cpu) { // POLL
 			auto& regs = cpu.registers();
-			struct pollfd
-			{
-				int fd;        /* file descriptor */
-				short events;  /* requested events */
-				short revents; /* returned events */
-			};
 			const size_t bytes = sizeof(pollfd) * regs.rsi;
 			auto *fds = cpu.machine().template rw_memory_at<struct pollfd>(regs.rdi, bytes);
+			std::vector<struct pollfd> host_pollfds;
+			std::vector<unsigned> host_pollfd_indexes;
 			for (size_t i = 0; i < regs.rsi; i++)
 			{
 				// stdout/stderr
 				if (fds[i].fd == 1 || fds[i].fd == 2)
 					fds[i].revents = fds[i].events;
-				else
-					fds[i].revents = 0;
+				else {
+					// Translate the fd
+					const int fd = cpu.machine().fds().translate(fds[i].fd);
+					host_pollfds.push_back({fd, fds[i].events, 0});
+					host_pollfd_indexes.push_back(i);
+				}
 			}
-			regs.rax = 0;
+			if (host_pollfds.empty()) {
+				regs.rax = 0;
+			} else {
+				// Call poll on the host
+				regs.rax = poll(host_pollfds.data(), host_pollfds.size(), 50);
+				if (int(regs.rax) < 0) {
+					regs.rax = -errno;
+				} else {
+					// Copy back the results
+					const size_t count = std::min(size_t(regs.rax), size_t(host_pollfds.size()));
+					for (size_t i = 0; i < count; i++)
+					{
+						const unsigned index = host_pollfd_indexes.at(i);
+						fds[index].revents = host_pollfds[i].revents;
+					}
+				}
+			}
 			SYSPRINT("poll(0x%llX, %llu) = %lld\n",
 					 regs.rsi, regs.rdi, regs.rax);
 			cpu.set_registers(regs);
@@ -493,7 +516,7 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler( // ioctl
 		SYS_ioctl, [](vCPU& cpu) {
 			auto& regs = cpu.registers();
-			[[maybe_unused]] const int fd = cpu.machine().fds().translate(regs.rdi);
+			const int fd = cpu.machine().fds().translate(regs.rdi);
 			switch (regs.rsi) {
 			case 0x5401: /* TCGETS */
 				if (int(regs.rdi) >= 0 && int(regs.rdi) < 3)
@@ -503,6 +526,24 @@ void Machine::setup_linux_system_calls()
 				break;
 			case 0x5413: /* TIOCGWINSZ */
 				regs.rax = 80;
+				break;
+			case FIONREAD:
+				{
+					const uint64_t g_bytes = regs.rdx;
+					int bytes = 0;
+					if (int(regs.rdi) >= 0 && int(regs.rdi) < 3) {
+						cpu.machine().copy_to_guest(g_bytes, &bytes, sizeof(bytes));
+						regs.rax = 0;
+					} else {
+						const int result = ioctl(fd, FIONREAD, &bytes);
+						if (result < 0) {
+							regs.rax = -errno;
+						} else {
+							cpu.machine().copy_to_guest(g_bytes, &bytes, sizeof(bytes));
+							regs.rax = bytes;
+						}
+					}
+				}
 				break;
 			default:
 				regs.rax = EINVAL;
@@ -733,8 +774,164 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_socket, [](vCPU& cpu) { // SOCKET
 			auto& regs = cpu.registers();
-			regs.rax = -ENOSYS;
-			SYSPRINT("socket(...) = %lld\n", regs.rax);
+			// int socket(int domain, int type, int protocol);
+			const int domain = regs.rdi;
+			const int type = regs.rsi;
+			const int protocol = regs.rdx;
+			const int fd = socket(domain, type, protocol);
+			if (fd < 0)
+			{
+				regs.rax = -errno;
+			}
+			else
+			{
+				regs.rax = cpu.machine().fds().manage(fd, true, true);
+			}
+			SYSPRINT("socket(%d, %d, %d) = %lld\n",
+					 domain, type, protocol, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_setsockopt, [](vCPU& cpu) { // SETSOCKOPT
+			auto& regs = cpu.registers();
+			// int setsockopt(int sockfd, int level, int optname,
+			//                const void *optval, socklen_t optlen);
+			const int fd = cpu.machine().fds().translate(regs.rdi);
+			const int level = regs.rsi;
+			const int optname = regs.rdx;
+			const uint64_t g_optval = regs.r10;
+			const size_t optlen = regs.r8;
+			std::array<uint8_t, 256> optval;
+			if (optlen > optval.size())
+			{
+				regs.rax = -EINVAL;
+			} else {
+				cpu.machine().copy_from_guest(optval.data(), g_optval, optlen);
+				if (setsockopt(fd, level, optname, optval.data(), optlen) < 0) {
+					regs.rax = -errno;
+				} else {
+					regs.rax = 0;
+				}
+			}
+			SYSPRINT("setsockopt(fd=%d, level=%d, optname=%d, optval=0x%lX, optlen=%zu) = %lld\n",
+					 fd, level, optname, g_optval, optlen, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_getsockopt, [](vCPU& cpu) { // GETSOCKOPT
+			auto& regs = cpu.registers();
+			// int getsockopt(int sockfd, int level, int optname,
+			//                void *optval, socklen_t *optlen);
+			const int fd = cpu.machine().fds().translate(regs.rdi);
+			const int level = regs.rsi;
+			const int optname = regs.rdx;
+			const uint64_t g_optval = regs.r10;
+			const uint64_t g_optlen = regs.r8;
+			std::array<uint8_t, 256> optval;
+			socklen_t optlen_out = sizeof(optval);
+			if (getsockopt(fd, level, optname, optval.data(), &optlen_out) < 0) {
+				regs.rax = -errno;
+			} else {
+				regs.rax = 0;
+				if (g_optval) {
+					cpu.machine().copy_to_guest(g_optval, optval.data(), optlen_out);
+				}
+				if (g_optlen) {
+					cpu.machine().copy_to_guest(g_optlen, &optlen_out, sizeof(optlen_out));
+				}
+			}
+			SYSPRINT("getsockopt(fd=%d, level=%d, optname=%d, optval=0x%lX, optlen=0x%lX) = %lld\n",
+					 fd, level, optname, g_optval, g_optlen, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_connect, [](vCPU& cpu) { // CONNECT
+			auto& regs = cpu.registers();
+			// int connect(int sockfd, const struct sockaddr *addr,
+			//             socklen_t addrlen);
+			const int fd = cpu.machine().fds().translate(regs.rdi);
+			const uint64_t g_addr = regs.rsi;
+			const size_t addrlen = regs.rdx;
+			struct sockaddr addr {};
+			if (addrlen > sizeof(addr))
+			{
+				regs.rax = -EINVAL;
+				cpu.set_registers(regs);
+				return;
+			}
+			cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
+			// Validate the address
+			if (!cpu.machine().fds().validate_socket_address(fd, addr))
+			{
+				regs.rax = -EPERM;
+			} else {
+				if (connect(fd, &addr, addrlen) < 0) {
+					regs.rax = -errno;
+				}
+				else {
+					regs.rax = 0;
+				}
+			}
+			SYSPRINT("connect(fd=%d, addr=0x%lX, addrlen=%zu) = %lld\n",
+					 fd, g_addr, addrlen, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_bind, [](vCPU& cpu) { // BIND
+			auto& regs = cpu.registers();
+			// int bind(int sockfd, const struct sockaddr *addr,
+			//           socklen_t addrlen);
+			const int fd = cpu.machine().fds().translate(regs.rdi);
+			const uint64_t g_addr = regs.rsi;
+			const size_t addrlen = regs.rdx;
+			struct sockaddr addr {};
+			if (addrlen > sizeof(addr))
+			{
+				regs.rax = -EINVAL;
+				cpu.set_registers(regs);
+				return;
+			}
+			cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
+			// Validate the address
+			if (!cpu.machine().fds().validate_socket_address(fd, addr))
+			{
+				regs.rax = -EPERM;
+			} else {
+				if (bind(fd, &addr, addrlen) < 0) {
+					regs.rax = -errno;
+				}
+				else {
+					regs.rax = 0;
+				}
+			}
+			SYSPRINT("bind(fd=%d, addr=0x%lX, addrlen=%zu) = %lld\n",
+					 fd, g_addr, addrlen, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_getsockname, [](vCPU& cpu) { // GETSOCKNAME
+			auto& regs = cpu.registers();
+			// int getsockname(int sockfd, struct sockaddr *addr,
+			//                  socklen_t *addrlen);
+			const int fd = cpu.machine().fds().translate(regs.rdi);
+			const uint64_t g_addr = regs.rsi;
+			const size_t g_addrlen = regs.rdx;
+			struct sockaddr addr {};
+			socklen_t addrlen = sizeof(addr);
+			if (getsockname(fd, &addr, &addrlen) < 0)
+			{
+				regs.rax = -errno;
+			}
+			else
+			{
+				if (g_addr != 0x0) {
+					cpu.machine().copy_to_guest(g_addr, &addr, addrlen);
+				}
+				if (g_addrlen != 0x0) {
+					cpu.machine().copy_to_guest(g_addrlen, &addrlen, sizeof(addrlen));
+				}
+				regs.rax = 0;
+			}
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -783,31 +980,199 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_sendto, [] (vCPU& cpu) { // SENDTO
+			auto& regs = cpu.registers();
+			// int sendto(int sockfd, const void *buf, size_t len, int flags,
+			//            const struct sockaddr *dest_addr, socklen_t addrlen);
+			const int vfd = regs.rdi;
+			const uint64_t g_buf = regs.rsi;
+			const uint64_t bytes = regs.rdx;
+			const int flags = regs.r10;
+			const uint64_t g_addr = regs.r8;
+			const socklen_t addrlen = regs.r9;
+			int fd = -1;
+			try {
+				if (bytes > 512UL << 20) // 512MB
+				{
+					// Ignore too large buffers
+					regs.rax = -ENOMEM;
+					cpu.set_registers(regs);
+					return;
+				}
+				if (addrlen > sizeof(struct sockaddr))
+				{
+					regs.rax = -EINVAL;
+					cpu.set_registers(regs);
+					return;
+				}
+				fd = cpu.machine().fds().translate(vfd);
+				// Gather memory buffers from the guest
+				std::array<tinykvm::Machine::Buffer, 256> buffers;
+				const auto bufcount =
+					cpu.machine().gather_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
+
+				if (addrlen > 0 && g_addr != 0x0) {
+					struct sockaddr addr {};
+					cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
+					// Can't use writev here, because we need to send the address too
+					ssize_t total = 0;
+					for (size_t i = 0; i < bufcount; i++)
+					{
+						// TODO: Use sendmsg() instead of sendto()
+						ssize_t result = sendto(fd, buffers[i].ptr, buffers[i].len, flags, &addr, addrlen);
+						if (result < 0)
+						{
+							total = -errno;
+							break;
+						}
+						total += result;
+					}
+					regs.rax = total;
+				}
+				else {
+					// Use writev
+					ssize_t result = writev(fd, (const iovec *)&buffers[0], bufcount);
+					if (result < 0) {
+						regs.rax = -errno;
+					}
+					else {
+						regs.rax = result;
+					}
+				}
+			} catch (...) {
+				regs.rax = -EBADF;
+			}
+			SYSPRINT("sendto(fd=%d (%d), buf=0x%lX, len=%lu, flags=0x%X, dest_addr=0x%lX, addrlen=%zu) = %lld\n",
+					 vfd, fd, g_buf, bytes, flags, g_addr, addrlen, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_recvfrom, [] (vCPU& cpu) { // RECVFROM
 			auto& regs = cpu.registers();
+			// int recvfrom(int sockfd, void *buf, size_t len, int flags,
+			//			  struct sockaddr *src_addr, socklen_t *addrlen);
 			const int vfd = regs.rdi;
-			const auto g_buf = regs.rsi;
-			const auto bytes = regs.rdx;
-			[[maybe_unused]] const auto flags = regs.r10;
+			const uint64_t g_buf = regs.rsi;
+			const uint64_t bytes = regs.rdx;
+			const int flags = regs.r10;
+			const uint64_t g_addr = regs.r8;
+			const uint64_t g_addrlen = regs.r9;
+			int fd = -1;
 			try {
-				const int fd = cpu.machine().fds().translate(regs.rdi);
-				std::array<Machine::WrBuffer, 256> buffers;
-				const size_t cnt =
-					cpu.machine().writable_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
-				ssize_t result = readv(fd, (const iovec *)&buffers[0], cnt);
+				if (bytes > 64UL << 20) // 64MB
+				{
+					// Ignore too large buffers
+					regs.rax = -ENOMEM;
+					cpu.set_registers(regs);
+					return;
+				}
+				fd = cpu.machine().fds().translate(vfd);
+				std::vector<uint8_t> buf(bytes);
+				struct sockaddr addr {};
+				socklen_t addrlen = sizeof(addr);
+				ssize_t result = recvfrom(fd, buf.data(), bytes, flags, &addr, &addrlen);
 				if (result < 0)
 				{
 					regs.rax = -errno;
 				}
 				else
 				{
+					if (g_addrlen != 0x0) {
+						cpu.machine().copy_to_guest(g_addrlen, &addrlen, sizeof(addrlen));
+						cpu.machine().copy_to_guest(g_addr, &addr, addrlen);
+					}
+					// Copy the data to guest memory
+					if (g_buf != 0x0 && result > 0)
+					{
+						cpu.machine().copy_to_guest(g_buf, buf.data(), result);
+					}
 					regs.rax = result;
 				}
 			} catch (...) {
 				regs.rax = -EBADF;
 			}
-			SYSPRINT("recvfrom(fd=%d, buf=0x%llX, size=%llu) = %lld\n",
-					 vfd, g_buf, bytes, regs.rax);
+			SYSPRINT("recvfrom(fd=%d (%d), buf=0x%lX, len=%lu, flags=0x%X, src_addr=0x%lX, addrlen=0x%lX) = %lld\n",
+					 vfd, fd, g_buf, bytes, flags, g_addr, g_addrlen, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_recvmsg, [] (vCPU& cpu) { // RECVMSG
+			auto& regs = cpu.registers();
+			// int recvmsg(int sockfd, struct msghdr *msg, int flags);
+			const int vfd = regs.rdi;
+			const uint64_t g_msg = regs.rsi;
+			const int flags = regs.rdx;
+			int fd = -1;
+			try {
+				fd = cpu.machine().fds().translate(vfd);
+				struct msghdr msg {};
+				cpu.machine().copy_from_guest(&msg, g_msg, sizeof(msg));
+				std::array<GuestIOvec, 128> iovecs;
+				if (msg.msg_iovlen > iovecs.size())
+				{
+					regs.rax = -EINVAL;
+					cpu.set_registers(regs);
+					return;
+				}
+				// Copy the iovecs from guest memory
+				const uint64_t g_iov = (uintptr_t)msg.msg_iov;
+				cpu.machine().copy_from_guest(iovecs.data(), g_iov, msg.msg_iovlen * sizeof(GuestIOvec));
+				// Calculate the total size of the buffers
+				size_t total = 0;
+				for (size_t i = 0; i < msg.msg_iovlen; i++)
+				{
+					if (total + iovecs[i].iov_len < total) {
+						throw std::overflow_error("size_t overflow");
+					}
+					total += iovecs[i].iov_len;
+				}
+				if (total > 64UL << 20) // 64MB
+				{
+					// Ignore too large buffers
+					regs.rax = -ENOMEM;
+					cpu.set_registers(regs);
+					return;
+				}
+				std::vector<uint8_t> buf(total);
+				struct sockaddr addr {};
+				socklen_t addrlen = sizeof(addr);
+				ssize_t result = recvfrom(fd, buf.data(), total, flags, &addr, &addrlen);
+				if (result < 0) {
+					regs.rax = -errno;
+				}
+				else
+				{
+					// Copy the data to guest memory by going through the iovecs
+					size_t offset = 0;
+					for (size_t i = 0; i < msg.msg_iovlen; i++)
+					{
+						auto& iov = iovecs.at(i);
+						size_t len_remaining = std::min(size_t(result - offset), size_t(iov.iov_len));
+						if (offset + len_remaining > buf.size())
+						{
+							regs.rax = -EINVAL;
+							cpu.set_registers(regs);
+							return;
+						}
+						cpu.machine().copy_to_guest(iov.iov_base, buf.data() + offset, len_remaining);
+						offset += iov.iov_len;
+						if (offset >= result) {
+							break;
+						}
+					}
+					// Copy the msg_name and msg_namelen back to guest memory
+					const uint64_t g_name = (uintptr_t)msg.msg_name;
+					if (g_name != 0x0)
+					{
+						cpu.machine().copy_to_guest(g_name, &addr, addrlen);
+					}
+					regs.rax = result;
+				}
+			} catch (const std::exception& e) {
+				regs.rax = -EBADF;
+			}
+			SYSPRINT("recvmsg(fd=%d (%d), msg=0x%lX, flags=0x%X) = %lld\n",
+					 vfd, fd, g_msg, flags, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -1234,8 +1599,10 @@ void Machine::setup_linux_system_calls()
 			const uint64_t g_event = regs.r10;
 			if (epollfd > 0 && fd > 0)
 			{
-				struct epoll_event event;
-				cpu.machine().copy_from_guest(&event, g_event, sizeof(event));
+				struct epoll_event event {};
+				if (g_event != 0x0) {
+					cpu.machine().copy_from_guest(&event, g_event, sizeof(event));
+				}
 				if (epoll_ctl(epollfd, op, fd, &event) < 0) {
 					regs.rax = -errno;
 				}
@@ -1266,10 +1633,10 @@ void Machine::setup_linux_system_calls()
 				return;
 			}
 			std::array<struct epoll_event, 1024> guest_events;
-			// Only wait for 150ns, as we are *not* pre-empting the guest
+			// Only wait for 15us, as we are *not* pre-empting the guest
 			const struct timespec ts {
 				.tv_sec = 0,
-				.tv_nsec = 150,
+				.tv_nsec = 250000,
 			};
 			const int epollfd = cpu.machine().fds().translate(vfd);
 			const int result =
@@ -1355,6 +1722,77 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_sendmmsg, [](vCPU& cpu) { // sendmmsg
+			auto& regs = cpu.registers();
+			const int fd = cpu.machine().fds().translate(regs.rdi);
+			const uint64_t g_buf = regs.rsi;
+			const int vcnt = regs.rdx;
+			if (fd > 0 && vcnt > 0)
+			{
+				std::array<struct mmsghdr, 1024> guest_msgs;
+				std::array<GuestIOvec, 1024> guest_iovecs;
+				std::array<Machine::Buffer, 1024> buffers;
+				// Fetch the mmsghdrs from the guest
+				cpu.machine().copy_from_guest(guest_msgs.data(), g_buf, vcnt * sizeof(struct mmsghdr));
+				// For each mmsghdr, fetch the iovec and sockaddr
+				ssize_t messages_sent = 0;
+				for (int i = 0; i < vcnt; ++i)
+				{
+					const uint64_t g_iov = (uintptr_t)guest_msgs[i].msg_hdr.msg_iov;
+					const size_t  iovlen = guest_msgs[i].msg_hdr.msg_iovlen;
+					const uint64_t g_addr =  (uintptr_t)guest_msgs[i].msg_hdr.msg_name;
+					const int addrlen = guest_msgs[i].msg_hdr.msg_namelen;
+					// Fetch the iovec array from the guest
+					if (iovlen > guest_iovecs.size())
+					{
+						SYSPRINT("sendmmsg: iovlen %zu > %zu\n", iovlen, guest_iovecs.size());
+						regs.rax = -EINVAL;
+						break;
+					}
+					cpu.machine().copy_from_guest(guest_iovecs.data(), g_iov, iovlen * sizeof(GuestIOvec));
+					// Fetch the sockaddr from the guest
+					if (addrlen > 0)
+					{
+						throw MachineException("sendmmsg: sockaddr not supported");
+						// cpu.machine().copy_from_guest(guest_msgs[i].msg_hdr.msg_name, g_addr, addrlen);
+					}
+					// For each message, emulate sendto using writev
+					ssize_t total = 0;
+					for (size_t j = 0; j < iovlen; ++j)
+					{
+						auto& iov = guest_iovecs.at(j);
+						const size_t cnt =
+							cpu.machine().gather_buffers_from_range(
+								buffers.size(), buffers.data(), iov.iov_base, iov.iov_len);
+						ssize_t result = writev(fd, (const iovec *)&buffers[0], cnt);
+						if (result < 0)
+						{
+							total = -errno;
+							break;
+						} else {
+							total += result;
+						}
+					} // each iovec
+					// Update the msg_len field
+					guest_msgs[i].msg_len = total;
+					if (total > 0)
+					{
+						messages_sent++;
+					}
+				}
+				// Copy the mmsghdrs back to the guest
+				cpu.machine().copy_to_guest(g_buf, guest_msgs.data(), vcnt * sizeof(struct mmsghdr));
+				regs.rax = messages_sent;
+			}
+			else
+			{
+				regs.rax = -EBADF;
+			}
+			SYSPRINT("sendmmsg(fd=%d, buf=0x%lX, count=%d) = %lld\n",
+					 fd, g_buf, vcnt, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_getrandom, [](vCPU& cpu) { // getrandom
 			auto& regs = cpu.registers();
 			const uint64_t g_buf = regs.rdi;
@@ -1413,7 +1851,7 @@ void Machine::setup_linux_system_calls()
 				regs.rax = -1;
 			}
 
-			SYSPRINT("STATX to vfd=%lld, fd=%ld, path=%s, data=0x%llX, flags=0x%llX, mask=0x%llX = %lld\n",
+			SYSPRINT("STATX to vfd=%lld, fd=%d, path=%s, data=0x%llX, flags=0x%llX, mask=0x%llX = %lld\n",
 				regs.rdi, fd, path.c_str(), buffer, flags, mask, regs.rax);
 			cpu.set_registers(regs);
 		});

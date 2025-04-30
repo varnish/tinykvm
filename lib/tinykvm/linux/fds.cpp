@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <cstring>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -235,6 +236,15 @@ namespace tinykvm
 		if (this->m_verbose) {
 			fprintf(stderr, "TinyKVM: %s is not a writable path\n", modifiable_path.c_str());
 		}
+		return false;
+	}
+
+	bool FileDescriptors::validate_socket_address(const int socket_fd, struct sockaddr& socket_address) const noexcept
+	{
+		if (m_connect_socket) {
+			return m_connect_socket(socket_fd, socket_address);
+		}
+		// If no callback is set, we disallow all connect() calls.
 		return false;
 	}
 
