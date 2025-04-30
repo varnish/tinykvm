@@ -1250,9 +1250,24 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_unlink, [](vCPU& cpu) { // UNLINK
 			auto& regs = cpu.registers();
-			regs.rax = -ENOENT;
-			SYSPRINT("unlink(0x%llX) = %lld\n",
-					 regs.rdi, regs.rax);
+			std::string path = cpu.machine().memcstring(regs.rdi, PATH_MAX);
+			// Check if the path is writable (path can be modified)
+			if (cpu.machine().fds().is_writable_path(path))
+			{
+				// Unlink the file
+				if (unlink(path.c_str()) < 0) {
+					regs.rax = -errno;
+				}
+				else {
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EPERM;
+			}
+			SYSPRINT("unlink(%s (0x%llX)) = %lld\n",
+					 path.c_str(), regs.rdi, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
