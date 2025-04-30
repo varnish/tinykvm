@@ -1252,6 +1252,23 @@ void Machine::setup_linux_system_calls()
 					//const int flags = fcntl(fd, cmd);
 					regs.rax = 0x1;
 				}
+				else if (cmd == F_GETFL)
+				{
+					const int flags = fcntl(fd, cmd);
+					if (flags < 0)
+						regs.rax = -errno;
+					else
+						regs.rax = flags;
+				}
+				else if (cmd == F_SETFL)
+				{
+					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
+					const int flags = fcntl(writable_fd, cmd, regs.rdx);
+					if (flags < 0)
+						regs.rax = -errno;
+					else
+						regs.rax = 0;
+				}
 				else if (cmd == F_GETLK64)
 				{
 					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
