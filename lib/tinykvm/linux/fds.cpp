@@ -138,6 +138,21 @@ namespace tinykvm
 		return -1;
 	}
 
+	int FileDescriptors::translate_writable_vfd(int vfd)
+	{
+		if (vfd >= 0 && vfd < 3) {
+			return this->m_stdout_redirects.at(vfd);
+		}
+		auto it = m_fds.find(vfd);
+		if (it != m_fds.end()) {
+			if (!it->second.is_writable) {
+				throw std::runtime_error("TinyKVM: File descriptor is not writable");
+			}
+			return it->second.real_fd;
+		}
+		return -1;
+	}
+
 	int FileDescriptors::translate_unless_forked(int vfd)
 	{
 		if (vfd >= 0 && vfd < 3) {

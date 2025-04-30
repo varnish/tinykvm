@@ -51,6 +51,12 @@ namespace tinykvm
 		/// @return The real file descriptor.
 		int translate(int vfd);
 
+		/// @brief Translate a virtual file descriptor to a real file descriptor,
+		/// or throw an exception, failing execution. This is used for writable
+		/// file descriptors, and will throw an exception if the file descriptor
+		/// is not marked as writable.
+		int translate_writable_vfd(int vfd);
+
 		/// @brief Check if a file descriptor is a socket or a file. If this fd was
 		/// created by duplicating an fd from the main VM, this function instead
 		/// returns -1, preventing a disallowed operation on the fd. Eg. it's allowed

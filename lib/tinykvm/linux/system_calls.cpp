@@ -101,7 +101,7 @@ void Machine::setup_linux_system_calls()
 					cpu.machine().gather_buffers_from_range(WRITEV_BUFFERS, buffers, regs.rsi, bytes);
 
 				/* Complain about writes outside of existing FDs */
-				const int fd = cpu.machine().fds().translate(regs.rdi);
+				const int fd = cpu.machine().fds().translate_writable_vfd(regs.rdi);
 				regs.rax = writev(fd, (const struct iovec *)buffers, bufcount);
 			}
 			else {
@@ -584,7 +584,7 @@ void Machine::setup_linux_system_calls()
 			const auto g_buf = regs.rsi;
 			const auto bytes = regs.rdx;
 			const auto offset = regs.r10;
-			const int fd = cpu.machine().fds().translate(vfd);
+			const int fd = cpu.machine().fds().translate_writable_vfd(vfd);
 
 			// writev into the area
 			static constexpr size_t WRITEV_BUFFERS = 64;
@@ -602,9 +602,8 @@ void Machine::setup_linux_system_calls()
 					 vfd, g_buf, bytes, offset, regs.rax);
 			cpu.set_registers(regs);
 		});
-	Machine::install_syscall_handler(
+	Machine::install_syscall_handler( // writev
 		SYS_writev, [](vCPU& cpu) {
-			/* SYS writev */
 			auto& regs = cpu.registers();
 			struct g_iovec
 			{
@@ -612,7 +611,7 @@ void Machine::setup_linux_system_calls()
 				size_t iov_len;
 			};
 			const int vfd = regs.rdi;
-			const auto count = regs.rdx;
+			const unsigned count = regs.rdx;
 
 			if (count > 64)
 			{
@@ -645,8 +644,8 @@ void Machine::setup_linux_system_calls()
 			}
 			else
 			{
-				auto opt_entry = cpu.machine().fds().entry_for_vfd(vfd);
-				if (opt_entry.has_value() && (*opt_entry)->is_writable)
+				const int fd = cpu.machine().fds().translate_writable_vfd(vfd);
+				if (fd > 0)
 				{
 					std::array<g_iovec, 64> vecs;
 					cpu.machine().copy_from_guest(vecs.data(), regs.rsi, count * sizeof(g_iovec));
@@ -659,7 +658,7 @@ void Machine::setup_linux_system_calls()
 								buffers.size(), buffers.data(),
 								vecs[i].iov_base, vecs[i].iov_len);
 
-						ssize_t result = writev((*opt_entry)->real_fd,
+						ssize_t result = writev(fd,
 							(const struct iovec *)buffers.data(), n);
 						if (result < 0)
 						{
@@ -675,8 +674,8 @@ void Machine::setup_linux_system_calls()
 					regs.rax = -EBADF;
 				}
 			}
-			SYSPRINT("writev(%d) = %lld\n",
-					 vfd, regs.rax);
+			SYSPRINT("writev(%d, 0x%llX, %u) = %lld\n",
+					 vfd, regs.rsi, count, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -1029,7 +1028,7 @@ void Machine::setup_linux_system_calls()
 					cpu.set_registers(regs);
 					return;
 				}
-				fd = cpu.machine().fds().translate(vfd);
+				fd = cpu.machine().fds().translate_writable_vfd(vfd);
 				// Gather memory buffers from the guest
 				std::array<tinykvm::Machine::Buffer, 256> buffers;
 				const auto bufcount =
@@ -1233,8 +1232,9 @@ void Machine::setup_linux_system_calls()
 				}
 				else if (cmd == F_GETLK64)
 				{
+					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
 					struct flock64 fl{};
-					int res = fcntl(fd, F_GETLK64, &fl);
+					int res = fcntl(writable_fd, F_GETLK64, &fl);
 					if (res < 0) {
 						regs.rax = -errno;
 					}
@@ -1245,9 +1245,10 @@ void Machine::setup_linux_system_calls()
 				}
 				else if (cmd == F_SETLK64)
 				{
+					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
 					struct flock64 fl{};
 					cpu.machine().copy_from_guest(&fl, regs.rdx, sizeof(fl));
-					int res = fcntl(fd, F_SETLK64, &fl);
+					int res = fcntl(writable_fd, F_SETLK64, &fl);
 					if (res < 0) {
 						regs.rax = -errno;
 					}
@@ -1649,7 +1650,7 @@ void Machine::setup_linux_system_calls()
 			/* SYS eventfd2 */
 			auto& regs = cpu.registers();
 			const int real_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-			const int vfd = cpu.machine().fds().manage(real_fd, false);
+			const int vfd = cpu.machine().fds().manage(real_fd, false, true);
 			if (vfd < 0) {
 				regs.rax = -errno;
 			}
@@ -1822,7 +1823,7 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_sendmmsg, [](vCPU& cpu) { // sendmmsg
 			auto& regs = cpu.registers();
-			const int fd = cpu.machine().fds().translate(regs.rdi);
+			const int fd = cpu.machine().fds().translate_writable_vfd(regs.rdi);
 			const uint64_t g_buf = regs.rsi;
 			const int vcnt = regs.rdx;
 			if (fd > 0 && vcnt > 0)
@@ -2007,11 +2008,9 @@ void Machine::setup_linux_system_calls()
 		SYS_ftruncate, [](vCPU& cpu) { // ftruncate
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
-			const std::optional<const tinykvm::FileDescriptors::Entry*> opt_entry
-				= cpu.machine().fds().entry_for_vfd(vfd);
-			if (opt_entry && (*opt_entry)->is_writable)
+			const int fd = cpu.machine().fds().translate_writable_vfd(vfd);
+			if (fd > 0)
 			{
-				const int fd = (*opt_entry)->real_fd;
 				regs.rax = ftruncate(fd, regs.rsi);
 				if (int(regs.rax) < 0)
 					regs.rax = -errno;
