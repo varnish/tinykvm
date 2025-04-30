@@ -7,7 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
-struct sockaddr;
+struct sockaddr_storage;
 
 namespace tinykvm
 {
@@ -26,7 +26,7 @@ namespace tinykvm
 		};
 		using open_readable_t = std::function<bool(std::string&)>;
 		using open_writable_t = std::function<bool(std::string&)>;
-		using connect_socket_t = std::function<bool(int, struct sockaddr&)>;
+		using connect_socket_t = std::function<bool(int, struct sockaddr_storage&)>;
 		using find_readonly_master_vm_fd_t = std::function<std::optional<const Entry*>(int)>;
 
 		FileDescriptors(Machine& machine);
@@ -94,7 +94,25 @@ namespace tinykvm
 		}
 
 		/// @brief Add a read-only file
+		/// @note If the path starts with a $ character, it is treated as a prefix
+		/// for the allowed paths. This is useful for allowing directories and
+		/// other prefixes. The path must not contain any parent-directory
+		/// components (..).
+		/// @param path The path to add.
 		void add_readonly_file(const std::string& path);
+
+		/// @brief Add a read-only file that starts with a prefix. This is used
+		/// to allow directories and other prefixes. The path must not contain
+		/// any parent-directory components (..).
+		/// @param path The prefix path to add.
+		void add_readonly_prefix(const std::string& path);
+
+		/// @brief Add a writable prefix path
+		/// @note The path must not contain any parent-directory components (..).
+		/// @note This is not passed to forks, so it is not accessible in forked
+		/// VMs. Can only be used in the main VM (during startup).
+		/// @param path The prefix path to add.
+		void add_writable_prefix(const std::string& path);
 
 		/// @brief Check if a path is allowed to be opened for reading.
 		/// @param modifiable_path The path to check. This may be modified by
@@ -191,10 +209,10 @@ namespace tinykvm
 		/// socket is allowed to be connected. The callback should return true if the
 		/// socket is allowed, and false otherwise. The socket may be modified by the
 		/// callback, indicating which real socket to connect to. The argument is
-		/// a vector of bytes that contains the socket address, eg. a struct sockaddr.
+		/// a vector of bytes that contains the socket address, eg. a sockaddr_storage.
 		/// @param socket_address The socket address to validate and modify.
 		/// @return True if the socket address is allowed, false otherwise.
-		bool validate_socket_address(const int socket_fd, struct sockaddr& socket_address) const noexcept;
+		bool validate_socket_address(const int socket_fd, struct sockaddr_storage& socket_address) const noexcept;
 
 		/// @brief Set verbose mode. This will print out information about
 		/// file descriptor management.
@@ -216,6 +234,7 @@ namespace tinykvm
 		std::map<int, Entry> m_fds;
 		std::shared_ptr<std::unordered_set<std::string>> m_allowed_readable_paths;
 		std::shared_ptr<std::vector<std::string>> m_allowed_readable_paths_starts_with;
+		std::vector<std::string> m_allowed_writable_paths_starts_with; // Not passed to forks
 		int m_next_file_fd = 0x1000;
 		int m_next_socket_fd = 0x1000 | SOCKET_BIT;
 		std::array<int, 3> m_stdout_redirects { 0, 1, 2 };

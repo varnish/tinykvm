@@ -194,6 +194,23 @@ namespace tinykvm
 			this->m_allowed_readable_paths->insert(path);
 	}
 
+	void FileDescriptors::add_readonly_prefix(const std::string& path)
+	{
+		if (path.empty())
+			throw std::runtime_error("Empty path in FileDescriptors::add_readonly_prefix");
+		if (path.find("..") != std::string::npos)
+			throw std::runtime_error("Path contains parent directory in FileDescriptors::add_readonly_prefix");
+		this->m_allowed_readable_paths_starts_with->push_back(path);
+	}
+
+	void FileDescriptors::add_writable_prefix(const std::string& path) {
+		if (path.empty())
+			throw std::runtime_error("Empty path in FileDescriptors::add_writable_prefix");
+		if (path.find("..") != std::string::npos)
+			throw std::runtime_error("Path contains parent directory in FileDescriptors::add_writable_prefix");
+		this->m_allowed_writable_paths_starts_with.push_back(path);
+	}
+
 	bool FileDescriptors::is_readable_path(std::string& modifiable_path) const noexcept
 	{
 		if (modifiable_path.empty())
@@ -241,6 +258,20 @@ namespace tinykvm
 
 	bool FileDescriptors::is_writable_path(std::string& modifiable_path) const noexcept
 	{
+		// Check if the path contains any parent-directory components (..)
+		if (modifiable_path.find("..") != std::string::npos) {
+			return false;
+		}
+		// Check if the path is in the allowed writable prefix paths
+		for (const auto& path : m_allowed_writable_paths_starts_with) {
+			if (modifiable_path.find(path) == 0) {
+				if (this->m_verbose) {
+					fprintf(stderr, "TinyKVM: %s is allowed (write, prefixed)\n", modifiable_path.c_str());
+				}
+				return true;
+			}
+		}
+		// Fallback to the writable path callback if it is set
 		if (m_open_writable) {
 			bool success = m_open_writable(modifiable_path);
 			if (this->m_verbose && success) {
@@ -254,7 +285,7 @@ namespace tinykvm
 		return false;
 	}
 
-	bool FileDescriptors::validate_socket_address(const int socket_fd, struct sockaddr& socket_address) const noexcept
+	bool FileDescriptors::validate_socket_address(const int socket_fd, struct sockaddr_storage& socket_address) const noexcept
 	{
 		if (m_connect_socket) {
 			return m_connect_socket(socket_fd, socket_address);

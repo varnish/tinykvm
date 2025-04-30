@@ -19,10 +19,14 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 // #define VERBOSE_GUEST_EXITS
-#define PRINTMMAP(fmt, ...) \
-	if (UNLIKELY(cpu.machine().m_verbose_mmap_syscalls)) printf(fmt, __VA_ARGS__);
 #define SYSPRINT(fmt, ...) \
-	if (UNLIKELY(cpu.machine().m_verbose_system_calls)) printf(fmt, __VA_ARGS__);
+	if (UNLIKELY(cpu.machine().m_verbose_system_calls)) { \
+		fprintf(stderr, fmt, __VA_ARGS__); \
+		if (int(regs.rax) < 0) fprintf(stderr, "*** ERROR: %d %s\n", int(regs.rax), strerror(-int(regs.rax))); \
+	}
+#define PRINTMMAP(fmt, ...) \
+	if (UNLIKELY(cpu.machine().m_verbose_mmap_syscalls)) fprintf(stderr, fmt, __VA_ARGS__);
+
 namespace tinykvm {
 static constexpr uint64_t PageMask = vMemory::PageSize() - 1;
 static constexpr size_t MMAP_COLLISION_TRESHOLD = 512ULL << 20; // 512MB
@@ -37,10 +41,10 @@ void Machine::setup_linux_system_calls()
 	Machine::install_unhandled_syscall_handler(
 		[](vCPU& cpu, unsigned scall)
 		{
-			SYSPRINT("Unhandled system call: %u\n", scall);
-			(void)scall;
 			auto& regs = cpu.registers();
+			(void)scall;
 			regs.rax = -ENOSYS;
+			SYSPRINT("Unhandled system call: %u\n", scall);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -237,7 +241,7 @@ void Machine::setup_linux_system_calls()
 				regs.rax = 0;
 			} else {
 				// Call poll on the host
-				regs.rax = poll(host_pollfds.data(), host_pollfds.size(), 50);
+				regs.rax = poll(host_pollfds.data(), host_pollfds.size(), 250);
 				if (int(regs.rax) < 0) {
 					regs.rax = -errno;
 				} else {
@@ -866,9 +870,11 @@ void Machine::setup_linux_system_calls()
 			const int fd = cpu.machine().fds().translate(regs.rdi);
 			const uint64_t g_addr = regs.rsi;
 			const size_t addrlen = regs.rdx;
-			struct sockaddr addr {};
+			struct sockaddr_storage addr {};
 			if (addrlen > sizeof(addr))
 			{
+				SYSPRINT("connect(fd=%d, addr=0x%lX, addrlen=%zu) = %lld (EINVAL, addrlen too large)\n",
+						 fd, g_addr, addrlen, regs.rax);
 				regs.rax = -EINVAL;
 			} else {
 				cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
@@ -877,7 +883,7 @@ void Machine::setup_linux_system_calls()
 				{
 					regs.rax = -EPERM;
 				} else {
-					if (connect(fd, &addr, addrlen) < 0) {
+					if (connect(fd, (struct sockaddr *)&addr, addrlen) < 0) {
 						regs.rax = -errno;
 					}
 					else {
@@ -897,7 +903,7 @@ void Machine::setup_linux_system_calls()
 			const int fd = cpu.machine().fds().translate(regs.rdi);
 			const uint64_t g_addr = regs.rsi;
 			const size_t addrlen = regs.rdx;
-			struct sockaddr addr {};
+			struct sockaddr_storage addr {};
 			if (addrlen > sizeof(addr))
 			{
 				regs.rax = -EINVAL;
@@ -910,7 +916,7 @@ void Machine::setup_linux_system_calls()
 			{
 				regs.rax = -EPERM;
 			} else {
-				if (bind(fd, &addr, addrlen) < 0) {
+				if (bind(fd, (struct sockaddr *)&addr, addrlen) < 0) {
 					regs.rax = -errno;
 				}
 				else {
@@ -929,9 +935,35 @@ void Machine::setup_linux_system_calls()
 			const int fd = cpu.machine().fds().translate(regs.rdi);
 			const uint64_t g_addr = regs.rsi;
 			const size_t g_addrlen = regs.rdx;
-			struct sockaddr addr {};
+			struct sockaddr_storage addr {};
 			socklen_t addrlen = sizeof(addr);
-			if (getsockname(fd, &addr, &addrlen) < 0)
+			if (getsockname(fd, (struct sockaddr *)&addr, &addrlen) < 0)
+			{
+				regs.rax = -errno;
+			}
+			else
+			{
+				if (g_addr != 0x0) {
+					cpu.machine().copy_to_guest(g_addr, &addr, addrlen);
+				}
+				if (g_addrlen != 0x0) {
+					cpu.machine().copy_to_guest(g_addrlen, &addrlen, sizeof(addrlen));
+				}
+				regs.rax = 0;
+			}
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_getpeername, [](vCPU& cpu) { // GETPEERNAME
+			auto& regs = cpu.registers();
+			// int getpeername(int sockfd, struct sockaddr *addr,
+			//                  socklen_t *addrlen);
+			const int fd = cpu.machine().fds().translate(regs.rdi);
+			const uint64_t g_addr = regs.rsi;
+			const size_t g_addrlen = regs.rdx;
+			struct sockaddr_storage addr {};
+			socklen_t addrlen = sizeof(addr);
+			if (getpeername(fd, (struct sockaddr *)&addr, &addrlen) < 0)
 			{
 				regs.rax = -errno;
 			}
@@ -1298,17 +1330,110 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_mkdir, [](vCPU& cpu) { // MKDIR
 			auto& regs = cpu.registers();
-			regs.rax = -EPERM;
-			SYSPRINT("mkdir(0x%llX, 0x%llX) = %lld\n",
-					 regs.rdi, regs.rsi, regs.rax);
+			std::string path = cpu.machine().memcstring(regs.rdi, PATH_MAX);
+			// Check if the path is writable (path can be modified)
+			if (cpu.machine().fds().is_writable_path(path))
+			{
+				// Create the directory
+				if (mkdir(path.c_str(), 0755) < 0) {
+					regs.rax = -errno;
+				}
+				else {
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EPERM;
+			}
+			SYSPRINT("mkdir(%s (0x%llX), 0x%llX) = %lld\n",
+					 path.c_str(), regs.rdi, regs.rsi, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_rename, [](vCPU& cpu) { // RENAME
+			auto& regs = cpu.registers();
+			std::string from_path = cpu.machine().memcstring(regs.rdi, PATH_MAX);
+			std::string to_path = cpu.machine().memcstring(regs.rsi, PATH_MAX);
+			// Check if *BOTH* paths are writable (paths can be modified)
+			if (cpu.machine().fds().is_writable_path(from_path)
+				&& cpu.machine().fds().is_writable_path(to_path))
+			{
+				// Rename the file
+				if (rename(from_path.c_str(), to_path.c_str()) < 0) {
+					regs.rax = -errno;
+				}
+				else {
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EPERM;
+			}
+			SYSPRINT("rename(%s (0x%llX), %s (0x%llX)) = %lld\n",
+					 from_path.c_str(), regs.rdi, to_path.c_str(), regs.rsi, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		SYS_readlink, [](vCPU& cpu) { // READLINK
 			auto& regs = cpu.registers();
-			regs.rax = -ENOENT;
-			SYSPRINT("readlink(0x%llX, bufd=0x%llX, size=%llu) = %lld\n",
-					 regs.rdi, regs.rsi, regs.rdx, regs.rax);
+			// int readlink(const char *path, char *buf, size_t bufsiz);
+			std::string path = cpu.machine().memcstring(regs.rdi, PATH_MAX);
+			const uint64_t g_buf = regs.rsi;
+			const size_t bufsiz = regs.rdx;
+			std::array<char, PATH_MAX> buf{};
+			if (bufsiz > buf.size())
+			{
+				regs.rax = -EINVAL;
+				cpu.set_registers(regs);
+				return;
+			}
+			// Validate that the path is readable
+			if (!cpu.machine().fds().is_readable_path(path))
+			{
+				regs.rax = -EACCES;
+				cpu.set_registers(regs);
+				return;
+			}
+			// Read the link
+			ssize_t result = readlink(path.c_str(), buf.data(), bufsiz);
+			if (result < 0)
+			{
+				regs.rax = -errno;
+			}
+			else
+			{
+				cpu.machine().copy_to_guest(g_buf, buf.data(), result);
+				regs.rax = result;
+			}
+			SYSPRINT("readlink(%s (0x%llX), buf=0x%lX, bufsiz=%zu) = %lld\n",
+					 path.c_str(), regs.rdi, g_buf, bufsiz, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_fchmod, [](vCPU& cpu) { // FCHMOD
+			auto& regs = cpu.registers();
+			// int fchmod(int fd, mode_t mode);
+			const int fd = cpu.machine().fds().translate_writable_vfd(regs.rdi);
+			const mode_t mode = regs.rsi;
+			if (fd >= 0)
+			{
+				if (fchmod(fd, mode) < 0)
+				{
+					regs.rax = -errno;
+				}
+				else
+				{
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EBADF;
+			}
+			SYSPRINT("fchmod(fd=%d, mode=0x%X) = %lld\n",
+					 fd, mode, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -1332,6 +1457,44 @@ void Machine::setup_linux_system_calls()
 			}
 			SYSPRINT("unlink(%s (0x%llX)) = %lld\n",
 					 path.c_str(), regs.rdi, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_unlinkat, [](vCPU& cpu) { // UNLINKAT
+			auto& regs = cpu.registers();
+			// int unlinkat(int dirfd, const char *pathname, int flags);
+			const int vdirfd = regs.rdi;
+			const int flags = regs.rsi | AT_SYMLINK_NOFOLLOW;
+			const uint64_t g_path = regs.rdx;
+			std::string path;
+			// Check if the path is writable (path can be modified)
+			if (cpu.machine().fds().is_writable_path(path))
+			{
+				int dirfd = AT_FDCWD;
+				if (vdirfd != AT_FDCWD)
+				{
+					dirfd = cpu.machine().fds().translate_writable_vfd(vdirfd);
+				}
+
+				if (g_path != 0x0)
+				{
+					path = cpu.machine().memcstring(g_path, PATH_MAX);
+				}
+
+				// Unlink the file, relative to the dirfd
+				if (unlinkat(dirfd, path.c_str(), flags) < 0) {
+					regs.rax = -errno;
+				}
+				else {
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EPERM;
+			}
+			SYSPRINT("unlinkat(%d, %s (0x%llX), %d) = %lld\n",
+					 vdirfd, path.c_str(), regs.rdx, flags, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
@@ -1722,7 +1885,7 @@ void Machine::setup_linux_system_calls()
 				return;
 			}
 			std::array<struct epoll_event, 1024> guest_events;
-			// Only wait for 15us, as we are *not* pre-empting the guest
+			// Only wait for 250us, as we are *not* pre-empting the guest
 			const struct timespec ts {
 				.tv_sec = 0,
 				.tv_nsec = 250000,
@@ -1978,6 +2141,59 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
+		SYS_utimensat, [](vCPU& cpu) { // utimensat
+			auto& regs = cpu.registers();
+			// int utimensat(int dirfd, const char *pathname,
+			// const struct timespec times[2], int flags);
+			const int vfd = regs.rdi;
+			const uint64_t g_path = regs.rsi;
+			const uint64_t g_times = regs.rdx;
+			const int flags = regs.r10;
+			(void)flags;
+			std::string path;
+			struct timespec times[2];
+			if (g_times != 0x0)
+			{
+				cpu.machine().copy_from_guest(times, g_times, sizeof(times));
+			} else {
+				times[0].tv_sec = 0;
+				times[0].tv_nsec = UTIME_NOW;
+				times[1].tv_sec = 0;
+				times[1].tv_nsec = UTIME_NOW;
+			}
+			// Translate from vfd when fd != AT_FDCWD
+			int fd = vfd;
+			if (vfd != AT_FDCWD)
+				fd = cpu.machine().fds().translate_writable_vfd(vfd);
+			// Path is in allow-list
+			if (fd > 0)
+			{
+				if (g_path != 0x0)
+				{
+					path = cpu.machine().memcstring(g_path, PATH_MAX);
+					if (!cpu.machine().fds().is_writable_path(path)) {
+						regs.rax = -EPERM;
+					} else {
+						regs.rax = utimensat(fd, path.c_str(), times, flags);
+						if (int(regs.rax) < 0)
+							regs.rax = -errno;
+					}
+				} else {
+					// Use fd
+					regs.rax = futimens(fd, times);
+					if (int(regs.rax) < 0)
+						regs.rax = -errno;
+				}
+			}
+			else
+			{
+				regs.rax = -EBADF;
+			}
+			SYSPRINT("utimensat(fd=%d, path=%s, times=0x%lX, flags=%d) = %lld\n",
+					 fd, path.c_str(), g_times, flags, regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
 		SYS_faccessat, [](vCPU& cpu) { // faccessat
 			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
@@ -2017,6 +2233,14 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			SYSPRINT("rseq(...) = %lld\n",
+					 regs.rax);
+			cpu.set_registers(regs);
+		});
+	Machine::install_syscall_handler(
+		SYS_sysinfo, [](vCPU& cpu) { // sysinfo
+			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			SYSPRINT("sysinfo(...) = %lld\n",
 					 regs.rax);
 			cpu.set_registers(regs);
 		});
