@@ -222,11 +222,13 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_poll, [](vCPU& cpu) { // POLL
 			auto& regs = cpu.registers();
-			const size_t bytes = sizeof(pollfd) * regs.rsi;
+			const unsigned guest_count = regs.rsi;
+			const size_t bytes = sizeof(pollfd) * guest_count;
 			auto *fds = cpu.machine().template rw_memory_at<struct pollfd>(regs.rdi, bytes);
-			std::vector<struct pollfd> host_pollfds;
-			std::vector<unsigned> host_pollfd_indexes;
-			for (size_t i = 0; i < regs.rsi; i++)
+			std::array<struct pollfd, 256> host_fds;
+			std::array<unsigned, 256> host_fds_indexes;
+			unsigned host_fds_count = 0;
+			for (unsigned i = 0; i < guest_count; i++)
 			{
 				// stdout/stderr
 				if (fds[i].fd == 1 || fds[i].fd == 2)
@@ -234,30 +236,36 @@ void Machine::setup_linux_system_calls()
 				else {
 					// Translate the fd
 					const int fd = cpu.machine().fds().translate(fds[i].fd);
-					host_pollfds.push_back({fd, fds[i].events, 0});
-					host_pollfd_indexes.push_back(i);
+					if (fd < 0) {
+						// Invalid fd, set revents to POLLNVAL
+						fds[i].revents = POLLNVAL;
+						continue;
+					}
+					host_fds.at(host_fds_count) = pollfd{fd, fds[i].events, 0};
+					host_fds_indexes.at(host_fds_count) = i;
+					host_fds_count++;
 				}
 			}
-			if (host_pollfds.empty()) {
+			if (host_fds_count == 0) {
 				regs.rax = 0;
 			} else {
 				// Call poll on the host
-				regs.rax = poll(host_pollfds.data(), host_pollfds.size(), 250);
+				regs.rax = poll(host_fds.data(), host_fds_count, 250);
 				if (int(regs.rax) < 0) {
 					regs.rax = -errno;
 				} else {
 					// Copy back the results
-					const size_t count = std::min(size_t(regs.rax), size_t(host_pollfds.size()));
+					const size_t count = std::min(size_t(regs.rax), size_t(host_fds_count));
 					for (size_t i = 0; i < count; i++)
 					{
-						const unsigned index = host_pollfd_indexes.at(i);
-						fds[index].revents = host_pollfds[i].revents;
+						const unsigned index = host_fds_indexes.at(i);
+						fds[index].revents = host_fds[i].revents;
 					}
 				}
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("poll(0x%llX, %llu) = %lld\n",
-					 regs.rsi, regs.rdi, regs.rax);
+			SYSPRINT("poll(fds=0x%llX, count=%u, timeout=%u) = %lld\n",
+				regs.rdi, guest_count, unsigned(regs.rdx), regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_mmap, [](vCPU& cpu) { // MMAP
@@ -1127,10 +1135,21 @@ void Machine::setup_linux_system_calls()
 				else
 				{
 					fd = cpu.machine().fds().translate(vfd);
-					std::vector<uint8_t> buf(bytes);
+					std::array<tinykvm::Machine::Buffer, 256> buffers;
+					const auto bufcount =
+						cpu.machine().gather_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
+					// We can't use recvfrom here, but there is recvmsg()
+					// All the guest data is in the buffers, which is compatible with iovec
 					struct sockaddr addr {};
-					socklen_t addrlen = sizeof(addr);
-					ssize_t result = recvfrom(fd, buf.data(), bytes, flags, &addr, &addrlen);
+					struct msghdr msg {};
+					msg.msg_name = &addr;
+					msg.msg_namelen = sizeof(addr);
+					msg.msg_iov = (struct iovec *)&buffers[0];
+					msg.msg_iovlen = bufcount;
+					msg.msg_control = nullptr;
+					msg.msg_controllen = 0;
+					msg.msg_flags = 0;
+					ssize_t result = recvmsg(fd, &msg, flags);
 					if (UNLIKELY(result < 0))
 					{
 						regs.rax = -errno;
@@ -1138,13 +1157,9 @@ void Machine::setup_linux_system_calls()
 					else
 					{
 						if (g_addrlen != 0x0) {
+							socklen_t addrlen = msg.msg_namelen;
 							cpu.machine().copy_to_guest(g_addrlen, &addrlen, sizeof(addrlen));
 							cpu.machine().copy_to_guest(g_addr, &addr, addrlen);
-						}
-						// Copy the data to guest memory
-						if (g_buf != 0x0 && result > 0)
-						{
-							cpu.machine().copy_to_guest(g_buf, buf.data(), result);
 						}
 						regs.rax = result;
 					}
