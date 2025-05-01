@@ -1493,7 +1493,7 @@ void Machine::setup_linux_system_calls()
 			// Check if the path is writable (path can be modified)
 			if (cpu.machine().fds().is_writable_path(path))
 			{
-				int dirfd = AT_FDCWD;
+				int dirfd = cpu.machine().fds().current_working_directory_fd();
 				if (vdirfd != AT_FDCWD)
 				{
 					dirfd = cpu.machine().fds().translate_writable_vfd(vdirfd);
@@ -1715,7 +1715,7 @@ void Machine::setup_linux_system_calls()
 			if (!write_flags)
 			{
 				try {
-					int pfd = AT_FDCWD;
+					int pfd = cpu.machine().fds().current_working_directory_fd();
 					if (vfd != AT_FDCWD) {
 						pfd = cpu.machine().fds().translate(vfd);
 					}
@@ -1744,7 +1744,7 @@ void Machine::setup_linux_system_calls()
 			if (write_flags || regs.rax == (__u64)-1)
 			{
 				try {
-					int pfd = AT_FDCWD;
+					int pfd = cpu.machine().fds().current_working_directory_fd();
 					if (vfd != AT_FDCWD) {
 						pfd = cpu.machine().fds().translate(vfd);
 					}
@@ -1776,25 +1776,23 @@ void Machine::setup_linux_system_calls()
 			const auto vpath  = regs.rsi;
 			const auto buffer = regs.rdx;
 			int flags  = AT_SYMLINK_NOFOLLOW; // regs.r10;
-			int fd = AT_FDCWD;
+			const int vfd = regs.rdi;
+			int fd = cpu.machine().fds().current_working_directory_fd();
 			std::string path;
 
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
 
-				if (int(regs.rdi) >= 0) {
+				if (vfd != AT_FDCWD) {
 					// Use existing vfd
 					fd = cpu.machine().fds().translate(int(regs.rdi));
-				} else {
-					// Use AT_FDCWD
-					fd = AT_FDCWD;
 				}
 
 				if (!cpu.machine().fds().is_readable_path(path) && !path.empty()) {
 					regs.rax = -EPERM;
 				} else {
 					// If path is empty, use AT_EMPTY_PATH to operate on the fd
-					flags = (path.empty() && fd != AT_FDCWD) ? AT_EMPTY_PATH : 0;
+					flags = (path.empty() && vfd != AT_FDCWD) ? AT_EMPTY_PATH : 0;
 
 					struct stat64 vstat;
 					// Path is in allow-list
@@ -2103,7 +2101,7 @@ void Machine::setup_linux_system_calls()
 			const auto mask   = regs.r10;
 			const auto buffer = regs.r8;
 			std::string path;
-			int fd = AT_FDCWD;
+			int fd = cpu.machine().fds().current_working_directory_fd();
 
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
@@ -2139,14 +2137,13 @@ void Machine::setup_linux_system_calls()
 			const int  vfd      = regs.rdi;
 			const auto vpath    = regs.rsi;
 			const auto g_buffer = regs.rdx;
-			//const int  flags    = regs.r8;
 			std::string path;
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
 				if (!cpu.machine().fds().is_readable_path(path)) {
 					regs.rax = -EPERM;
 				} else {
-					int fd = vfd;
+					int fd = cpu.machine().fds().current_working_directory_fd();
 					// Translate from vfd when fd != AT_FDCWD
 					if (vfd != AT_FDCWD)
 						fd = cpu.machine().fds().translate(vfd);
@@ -2187,7 +2184,7 @@ void Machine::setup_linux_system_calls()
 				times[1].tv_nsec = UTIME_NOW;
 			}
 			// Translate from vfd when fd != AT_FDCWD
-			int fd = vfd;
+			int fd = cpu.machine().fds().current_working_directory_fd();
 			if (vfd != AT_FDCWD)
 				fd = cpu.machine().fds().translate_writable_vfd(vfd);
 			// Path is in allow-list

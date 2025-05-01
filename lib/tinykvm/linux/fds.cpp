@@ -24,7 +24,8 @@ namespace tinykvm
 	}
 
 	FileDescriptors::FileDescriptors(Machine& machine)
-		: m_machine(machine)
+		: m_machine(machine),
+		  m_current_working_directory_fd(AT_FDCWD)
 	{
 		m_allowed_readable_paths =
 			std::make_shared<std::unordered_set<std::string>>();
@@ -81,6 +82,9 @@ namespace tinykvm
 			throw std::runtime_error("TinyKVM: Invalid file descriptor in FileDescriptors::add()");
 		}
 		if (this->m_total_fds_opened >= this->m_max_total_fds_opened) {
+			// We have a limit on the total number of file descriptors,
+			// so since we aren't going to manage this fd, we need to close it.
+			close(fd);
 			throw std::runtime_error("TinyKVM: Too many opened fds in total, max_total_fds_opened = " +
 				std::to_string(this->m_max_total_fds_opened));
 		}
@@ -88,6 +92,7 @@ namespace tinykvm
 
 		if (is_socket) {
 			if (this->m_fds.size() >= this->m_max_sockets) {
+				close(fd);
 				throw std::runtime_error("TinyKVM: Too many open sockets, max_sockets = " +
 					std::to_string(this->m_max_sockets));
 			}
@@ -95,6 +100,7 @@ namespace tinykvm
 			return m_next_socket_fd++;
 		} else {
 			if (this->m_fds.size() >= this->m_max_files) {
+				close(fd);
 				throw std::runtime_error("TinyKVM: Too many open files, max_files = " +
 					std::to_string(this->m_max_files));
 			}
@@ -292,6 +298,30 @@ namespace tinykvm
 		}
 		// If no callback is set, we disallow all connect() calls.
 		return false;
+	}
+
+	void FileDescriptors::set_current_working_directory(const std::string& path) noexcept
+	{
+		m_current_working_directory = path;
+		// Set the current working directory fd by opening the path
+		int fd = open(path.c_str(), O_RDONLY | O_DIRECTORY);
+		m_current_working_directory_fd = fd;
+		if (fd < 0) {
+			if (this->m_verbose) {
+				fprintf(stderr, "TinyKVM: Failed to set current working directory to %s\n", path.c_str());
+			}
+		} else if (this->m_verbose) {
+			fprintf(stderr, "TinyKVM: Set current working directory to %s with fd %d\n",
+				path.c_str(), fd);
+		}
+	}
+
+	int FileDescriptors::transform_relative_fd(int fd) const noexcept
+	{
+		if (fd == AT_FDCWD) {
+			return m_current_working_directory_fd;
+		}
+		return fd;
 	}
 
 } // tinykvm
