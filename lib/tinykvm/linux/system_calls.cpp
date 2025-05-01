@@ -794,7 +794,7 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_getpid, [](vCPU& cpu) { // GETPID
 			auto& regs = cpu.registers();
-			regs.rax = 0;
+			regs.rax = 1; // TID=1
 			cpu.set_registers(regs);
 			SYSPRINT("getpid() = %lld\n", regs.rax);
 		});
