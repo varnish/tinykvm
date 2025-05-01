@@ -1406,29 +1406,22 @@ void Machine::setup_linux_system_calls()
 			const uint64_t g_buf = regs.rsi;
 			const size_t bufsiz = regs.rdx;
 			std::array<char, PATH_MAX> buf{};
-			if (bufsiz > buf.size())
-			{
+			if (bufsiz > buf.size()) {
 				regs.rax = -EINVAL;
-				cpu.set_registers(regs);
-				return;
-			}
-			// Validate that the path is readable
-			if (!cpu.machine().fds().is_readable_path(path))
-			{
+			} else if (!cpu.machine().fds().is_readable_path(path)) {
 				regs.rax = -EACCES;
-				cpu.set_registers(regs);
-				return;
-			}
-			// Read the link
-			ssize_t result = readlink(path.c_str(), buf.data(), bufsiz);
-			if (result < 0)
-			{
-				regs.rax = -errno;
-			}
-			else
-			{
-				cpu.machine().copy_to_guest(g_buf, buf.data(), result);
-				regs.rax = result;
+			} else {
+				// Read the link
+				ssize_t result = readlink(path.c_str(), buf.data(), bufsiz);
+				if (result < 0)
+				{
+					regs.rax = -errno;
+				}
+				else
+				{
+					cpu.machine().copy_to_guest(g_buf, buf.data(), result);
+					regs.rax = result;
+				}
 			}
 			SYSPRINT("readlink(%s (0x%llX), buf=0x%lX, bufsiz=%zu) = %lld\n",
 					 path.c_str(), regs.rdi, g_buf, bufsiz, regs.rax);
