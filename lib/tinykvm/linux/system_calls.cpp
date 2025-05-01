@@ -1409,7 +1409,10 @@ void Machine::setup_linux_system_calls()
 			if (bufsiz > buf.size()) {
 				regs.rax = -EINVAL;
 			} else if (!cpu.machine().fds().is_readable_path(path)) {
-				regs.rax = -EACCES;
+				// This should be a permission error or EACCES, but some run-times
+				// like to recurse from root up to the path, which we don't want to
+				// allow. So instead we return EINVAL to pretend the path is not a link.
+				regs.rax = -EINVAL;
 			} else {
 				// Read the link
 				ssize_t result = readlink(path.c_str(), buf.data(), bufsiz);
@@ -1782,12 +1785,23 @@ void Machine::setup_linux_system_calls()
 				}
 
 				if (!cpu.machine().fds().is_readable_path(path) && !path.empty()) {
-					regs.rax = -EPERM;
+					// Path is not readable, however, if this is a "readlink" attempt,
+					// we should pretend the path is not a link instead.
+					if (regs.r10 & AT_SYMLINK_NOFOLLOW) {
+						// Create a fictional stat structure, pretending it's a directory
+						struct stat64 vstat {};
+						vstat.st_mode = S_IFDIR | 0644;
+						vstat.st_blksize = 512;
+						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
+						regs.rax = 0;
+					} else {
+						regs.rax = -EPERM;
+					}
 				} else {
 					// If path is empty, use AT_EMPTY_PATH to operate on the fd
 					flags = (path.empty() && vfd != AT_FDCWD) ? AT_EMPTY_PATH : 0;
 
-					struct stat64 vstat;
+					struct stat64 vstat {};
 					// Path is in allow-list
 					const int result = fstatat64(fd, path.c_str(), &vstat, flags);
 					if (result == 0) {
@@ -2134,7 +2148,8 @@ void Machine::setup_linux_system_calls()
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
 				if (!cpu.machine().fds().is_readable_path(path)) {
-					regs.rax = -EPERM;
+					// Pretend the path is not a link
+					regs.rax = -EINVAL;
 				} else {
 					int fd = cpu.machine().fds().current_working_directory_fd();
 					// Translate from vfd when fd != AT_FDCWD
