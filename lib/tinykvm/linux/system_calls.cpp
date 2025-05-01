@@ -1193,55 +1193,33 @@ void Machine::setup_linux_system_calls()
 				// Copy the iovecs from guest memory
 				const uint64_t g_iov = (uintptr_t)msg.msg_iov;
 				cpu.machine().copy_from_guest(iovecs.data(), g_iov, msg.msg_iovlen * sizeof(GuestIOvec));
-				// Calculate the total size of the buffers
-				size_t total = 0;
+				// Gather iovec information from the guest
+				std::array<tinykvm::Machine::Buffer, 256> buffers;
+				size_t bufcount = 0;
 				for (size_t i = 0; i < msg.msg_iovlen; i++)
 				{
-					if (total + iovecs[i].iov_len < total) {
-						throw std::overflow_error("size_t overflow");
-					}
-					total += iovecs[i].iov_len;
+					const uint64_t g_base = iovecs.at(i).iov_base;
+					const size_t   g_len = iovecs[i].iov_len;
+					const auto this_bufcount =
+						cpu.machine().gather_buffers_from_range(
+							buffers.size() - bufcount, buffers.data() + bufcount,
+							g_base, g_len);
+					bufcount += this_bufcount;
 				}
-				if (total > 64UL << 20) // 64MB
-				{
-					// Ignore too large buffers
-					regs.rax = -ENOMEM;
-					cpu.set_registers(regs);
-					return;
-				}
-				std::vector<uint8_t> buf(total);
 				struct sockaddr addr {};
-				socklen_t addrlen = sizeof(addr);
-				ssize_t result = recvfrom(fd, buf.data(), total, flags, &addr, &addrlen);
-				if (result < 0) {
+				struct msghdr msg_recv {};
+				msg_recv.msg_name = &addr;
+				msg_recv.msg_namelen = sizeof(addr);
+				msg_recv.msg_iov = (struct iovec *)&buffers[0];
+				msg_recv.msg_iovlen = bufcount;
+				msg_recv.msg_control = nullptr;
+				msg_recv.msg_controllen = 0;
+				msg_recv.msg_flags = 0;
+				// Perform the recvmsg
+				ssize_t result = recvmsg(fd, &msg_recv, flags);
+				if (UNLIKELY(result < 0)) {
 					regs.rax = -errno;
-				}
-				else
-				{
-					// Copy the data to guest memory by going through the iovecs
-					size_t offset = 0;
-					for (size_t i = 0; i < msg.msg_iovlen; i++)
-					{
-						auto& iov = iovecs.at(i);
-						size_t len_remaining = std::min(size_t(result - offset), size_t(iov.iov_len));
-						if (offset + len_remaining > buf.size())
-						{
-							regs.rax = -EINVAL;
-							cpu.set_registers(regs);
-							return;
-						}
-						cpu.machine().copy_to_guest(iov.iov_base, buf.data() + offset, len_remaining);
-						offset += iov.iov_len;
-						if (offset >= size_t(result)) {
-							break;
-						}
-					}
-					// Copy the msg_name and msg_namelen back to guest memory
-					const uint64_t g_name = (uintptr_t)msg.msg_name;
-					if (g_name != 0x0)
-					{
-						cpu.machine().copy_to_guest(g_name, &addr, addrlen);
-					}
+				} else {
 					regs.rax = result;
 				}
 			} catch (const std::exception& e) {
