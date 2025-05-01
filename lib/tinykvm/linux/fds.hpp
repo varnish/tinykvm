@@ -27,6 +27,7 @@ namespace tinykvm
 		using open_readable_t = std::function<bool(std::string&)>;
 		using open_writable_t = std::function<bool(std::string&)>;
 		using connect_socket_t = std::function<bool(int, struct sockaddr_storage&)>;
+		using resolve_symlink_t = std::function<bool(std::string&)>;
 		using find_readonly_master_vm_fd_t = std::function<std::optional<const Entry*>(int)>;
 
 		FileDescriptors(Machine& machine);
@@ -128,6 +129,23 @@ namespace tinykvm
 		/// @return True if the path is writable, false otherwise. The path
 		/// may be modified by the callback, indicating which real path to open.
 		bool is_writable_path(std::string& modifiable_path) const noexcept;
+
+		/// @brief Check if a path can be treated as a symlink, and resolve it.
+		/// @param modifiable_path The path to check. This *will* be modified by
+		/// the callback to indicate where the symlink points to.
+		/// @return True if the path is a symlink, false otherwise. The path
+		/// *will* be modified by the callback, indicating where the symlink
+		/// points to.
+		bool resolve_symlink(std::string& modifiable_path) const noexcept;
+
+		/// @brief Set the callback for resolving symlinks. This is used to check
+		/// if a path is a symlink. The callback should return true if the path
+		/// is a symlink, and false otherwise. The path *will* be modified by the
+		/// callback, indicating where the symlink points to.
+		/// @param callback The callback to set.
+		void set_resolve_symlink_callback(resolve_symlink_t callback) noexcept {
+			m_resolve_symlink = callback;
+		}
 
 		/// @brief Set the maximum number of file descriptors that can be opened.
 		/// @param max_files The maximum number of file descriptors that can be
@@ -273,6 +291,7 @@ namespace tinykvm
 		bool m_verbose = false;
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;
+		resolve_symlink_t m_resolve_symlink;
 		connect_socket_t m_connect_socket;
 		find_readonly_master_vm_fd_t m_find_ro_master_vm_fd;
 		uint16_t m_max_files = DEFAULT_MAX_FILES;

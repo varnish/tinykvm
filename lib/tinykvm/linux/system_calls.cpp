@@ -1416,8 +1416,15 @@ void Machine::setup_linux_system_calls()
 			std::string path = cpu.machine().memcstring(regs.rdi, PATH_MAX);
 			const uint64_t g_buf = regs.rsi;
 			const size_t bufsiz = regs.rdx;
-			std::array<char, PATH_MAX> buf{};
-			if (bufsiz > buf.size()) {
+			std::array<char, PATH_MAX> buf;
+			// Check if the symlink resolves to anything
+			if (cpu.machine().fds().resolve_symlink(path))
+			{
+				// The path has now been resolved, so we can use that as the
+				// return buffer to the guest.
+				cpu.machine().copy_to_guest(g_buf, path.c_str(), path.size());
+				regs.rax = path.size();
+			} else if (bufsiz > buf.size()) {
 				regs.rax = -EINVAL;
 			} else if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
 				// This should be a permission error or EACCES, but some run-times
@@ -2165,7 +2172,13 @@ void Machine::setup_linux_system_calls()
 			std::string path;
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
-				if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
+				// Check if the path is a symlink
+				if (cpu.machine().fds().resolve_symlink(path)) {
+					// Copy the resolved path to the guest
+					cpu.machine().copy_to_guest(g_buffer, path.c_str(), path.size());
+					regs.rax = path.size();
+				}
+				else if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
 					// Pretend the path is not a link
 					regs.rax = -EINVAL;
 				} else {

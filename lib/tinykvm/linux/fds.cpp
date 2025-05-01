@@ -300,6 +300,8 @@ namespace tinykvm
 		return false;
 	}
 
+	/// Current working directory ///
+
 	void FileDescriptors::set_current_working_directory(const std::string& path) noexcept
 	{
 		m_current_working_directory = path;
@@ -322,6 +324,25 @@ namespace tinykvm
 			return m_current_working_directory_fd;
 		}
 		return fd;
+	}
+
+	/// Symlink related ///
+
+	bool FileDescriptors::resolve_symlink(std::string& modifiable_path) const noexcept
+	{
+		if (m_resolve_symlink)
+		{
+			if (m_resolve_symlink(modifiable_path)) {
+				if (this->m_verbose) {
+					fprintf(stderr, "TinyKVM: A symlink lead to %s\n", modifiable_path.c_str());
+				}
+				return true;
+			}
+		}
+		if (this->m_verbose) {
+			fprintf(stderr, "TinyKVM: %s is not a symlink\n", modifiable_path.c_str());
+		}
+		return false;
 	}
 
 } // tinykvm
