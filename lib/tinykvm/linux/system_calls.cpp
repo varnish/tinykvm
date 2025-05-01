@@ -1334,14 +1334,20 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_getcwd, [](vCPU& cpu) { // GETCWD
 			auto& regs = cpu.registers();
+			const uint64_t g_buf = regs.rdi;
+			const size_t buflen = regs.rsi;
 
-			const char fakepath[] = "/";
-			if (sizeof(fakepath) <= regs.rsi) {
-				cpu.machine().copy_to_guest(regs.rdi, fakepath, sizeof(fakepath));
-				regs.rax = regs.rdi;
+			const std::string& cwd = cpu.machine().fds().current_working_directory();
+			if (cwd.size()+1 <= buflen) {
+				// Copy the current working directory to the guest, including
+				// the null terminator.
+				cpu.machine().copy_to_guest(g_buf, cwd.c_str(), cwd.size()+1);
+				regs.rax = g_buf;
 			} else {
 				regs.rax = 0;
 			}
+			SYSPRINT("getcwd(buf=0x%lX (%s), buflen=%zu) = %lld\n",
+					 g_buf, cwd.c_str(), buflen, regs.rax);
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(

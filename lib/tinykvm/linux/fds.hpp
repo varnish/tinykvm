@@ -214,6 +214,20 @@ namespace tinykvm
 		/// @return True if the socket address is allowed, false otherwise.
 		bool validate_socket_address(const int socket_fd, struct sockaddr_storage& socket_address) const noexcept;
 
+		/// @brief Set the current working directory. This is used in a few system
+		/// calls, such as getcwd() and chdir().
+		/// @param path The path to set as the current working directory.
+		void set_current_working_directory(const std::string& path) noexcept {
+			m_current_working_directory = path;
+		}
+
+		/// @brief Get the current working directory. This is used in a few system
+		/// calls, such as getcwd() and chdir().
+		/// @return The current working directory.
+		const std::string& current_working_directory() const noexcept {
+			return m_current_working_directory;
+		}
+
 		/// @brief Set verbose mode. This will print out information about
 		/// file descriptor management.
 		/// @param verbose True to enable verbose mode, false to disable it.
@@ -238,6 +252,7 @@ namespace tinykvm
 		int m_next_file_fd = 0x1000;
 		int m_next_socket_fd = 0x1000 | SOCKET_BIT;
 		std::array<int, 3> m_stdout_redirects { 0, 1, 2 };
+		std::string m_current_working_directory;
 		bool m_verbose = false;
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;
