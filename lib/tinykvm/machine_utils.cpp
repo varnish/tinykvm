@@ -7,36 +7,29 @@ namespace tinykvm {
 
 void Machine::memzero(address_t addr, size_t len)
 {
-	if (uses_cow_memory() || !memory.safely_within(addr, len))
+	while (len != 0)
 	{
-		while (len != 0)
-		{
-			const size_t offset = addr & PageMask();
-			const size_t size = std::min(vMemory::PageSize() - offset, len);
-			bool must_be_zeroed = false;
-			page_at(memory, addr & ~PageMask(),
-				[&must_be_zeroed] (address_t /*page_addr*/, uint64_t flags, size_t /*page_size*/) {
-					if ((flags & (1UL << 6)) == 0) {
-						/* This is not a dirty page, so we can skip zeroing it */
-						must_be_zeroed = false;
-					} else {
-						/* This is a dirty page, so we need to zero it */
-						must_be_zeroed = true;
-					}
-				}, true); // Ignore missing pages
-			if (UNLIKELY(must_be_zeroed)) {
-				auto* page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), true);
-				std::memset(&page[offset], 0, size);
-			}
-
-			addr += size;
-			len -= size;
+		const size_t offset = addr & PageMask();
+		const size_t size = std::min(vMemory::PageSize() - offset, len);
+		bool must_be_zeroed = false;
+		page_at(memory, addr & ~PageMask(),
+			[&must_be_zeroed] (address_t /*page_addr*/, uint64_t flags, size_t /*page_size*/) {
+				if ((flags & (1UL << 6)) == 0) {
+					/* This is not a dirty page, so we can skip zeroing it */
+					must_be_zeroed = false;
+				} else {
+					/* This is a dirty page, so we need to zero it */
+					must_be_zeroed = true;
+				}
+			}, true); // Ignore missing pages
+		if (UNLIKELY(must_be_zeroed)) {
+			auto* page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), true);
+			std::memset(&page[offset], 0, size);
 		}
-		return;
+
+		addr += size;
+		len -= size;
 	}
-	/* Original VM uses identity-mapped memory */
-	auto* dst = memory.safely_at(addr, len);
-	std::memset(dst, 0, len);
 }
 
 void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool zeroes)
