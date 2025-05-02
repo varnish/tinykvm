@@ -829,6 +829,14 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("getpid() = %lld\n", regs.rax);
 		});
 	Machine::install_syscall_handler(
+		SYS_capget, [](vCPU& cpu) { // CAPGET
+			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			cpu.set_registers(regs);
+			SYSPRINT("capget(0x%llX, 0x%llX) = %lld\n",
+					 regs.rdi, regs.rsi, regs.rax);
+		});
+	Machine::install_syscall_handler(
 		SYS_socket, [](vCPU& cpu) { // SOCKET
 			auto& regs = cpu.registers();
 			// int socket(int domain, int type, int protocol);
@@ -1794,6 +1802,14 @@ void Machine::setup_linux_system_calls()
 					 regs.rdi, regs.rsi, regs.rax);
 		});
 	Machine::install_syscall_handler(
+		SYS_clock_getres, [](vCPU& cpu) { // clock_getres
+			auto& regs = cpu.registers();
+			regs.rax = clock_getres(CLOCK_MONOTONIC, nullptr);
+			cpu.set_registers(regs);
+			SYSPRINT("clock_getres(clk=%lld) = %lld\n",
+					 regs.rdi, regs.rax);
+		});
+	Machine::install_syscall_handler(
 		SYS_clock_nanosleep, [](vCPU& cpu) { // clock_nanosleep
 			auto& regs = cpu.registers();
 			const uint64_t g_buf = regs.rdx;
@@ -2425,6 +2441,14 @@ void Machine::setup_linux_system_calls()
 			regs.rax = -ENOSYS;
 			cpu.set_registers(regs);
 			SYSPRINT("sysinfo(...) = %lld\n",
+					 regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_io_uring_setup, [](vCPU& cpu) { // io_uring_setup
+			auto& regs = cpu.registers();
+			regs.rax = -ENOSYS;
+			cpu.set_registers(regs);
+			SYSPRINT("io_uring_setup(...) = %lld\n",
 					 regs.rax);
 		});
 
