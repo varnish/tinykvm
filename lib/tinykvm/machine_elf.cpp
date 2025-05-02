@@ -140,6 +140,17 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 
 	this->m_heap_address += this->m_image_base;
 	this->m_heap_address = (this->m_heap_address + PageMask()) & ~PageMask();
+	/* The heap address hint can be used to move the heap out of the way,
+	   if the ELF loading code would trample memory, eg. the stack.
+	   This can be solved properly by implementing dynamic linker loading
+	   directly in TinyKVM. */
+	if (this->m_heap_address < options.heap_address_hint) {
+		if (options.verbose_loader) {
+			printf("* Heap address %p is below hint %p, moving it up\n",
+				(void*)this->m_heap_address, (void*)options.heap_address_hint);
+		}
+		this->m_heap_address = options.heap_address_hint;
+	}
 
 	/* Always allocate stack on heap, because we don't know where
 	   the kernel ends yet, and some run-times even depend on the
