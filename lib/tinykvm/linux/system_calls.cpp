@@ -968,6 +968,53 @@ void Machine::setup_linux_system_calls()
 					 fd, g_addr, addrlen, regs.rax);
 		});
 	Machine::install_syscall_handler(
+		SYS_listen, [](vCPU& cpu) { // LISTEN
+			auto& regs = cpu.registers();
+			// int listen(int sockfd, int backlog);
+			const int fd = cpu.machine().fds().translate_writable_vfd(regs.rdi);
+			const int backlog = regs.rsi;
+			if (UNLIKELY(listen(fd, backlog) < 0))
+			{
+				regs.rax = -errno;
+			}
+			else
+			{
+				regs.rax = 0;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("listen(fd=%d, backlog=%d) = %lld\n",
+					 fd, backlog, regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_accept4, [](vCPU& cpu) { // ACCEPT4
+			auto& regs = cpu.registers();
+			// int accept4(int sockfd, struct sockaddr *addr,
+			//             socklen_t *addrlen, int flags);
+			const int fd = cpu.machine().fds().translate_writable_vfd(regs.rdi);
+			const uint64_t g_addr = regs.rsi;
+			const size_t g_addrlen = regs.rdx;
+			const int flags = regs.r10;
+			struct sockaddr_storage addr {};
+			socklen_t addrlen = sizeof(addr);
+			if (UNLIKELY(accept4(fd, (struct sockaddr *)&addr, &addrlen, flags) < 0))
+			{
+				regs.rax = -errno;
+			}
+			else
+			{
+				if (g_addr != 0x0) {
+					cpu.machine().copy_to_guest(g_addr, &addr, addrlen);
+				}
+				if (g_addrlen != 0x0) {
+					cpu.machine().copy_to_guest(g_addrlen, &addrlen, sizeof(addrlen));
+				}
+				regs.rax = cpu.machine().fds().manage(fd, true, true);
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("accept4(fd=%d, addr=0x%lX, addrlen=0x%lX, flags=%d) = %lld\n",
+					 fd, g_addr, g_addrlen, flags, regs.rax);
+		});
+	Machine::install_syscall_handler(
 		SYS_getsockname, [](vCPU& cpu) { // GETSOCKNAME
 			auto& regs = cpu.registers();
 			// int getsockname(int sockfd, struct sockaddr *addr,
