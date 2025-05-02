@@ -286,19 +286,19 @@ void Machine::setup_linux_system_calls()
 				const int real_fd = cpu.machine().fds().translate(vfd);
 
 				uint64_t dst = 0x0;
-				if (address != 0x0 && address >= cpu.machine().mmap_start()) {
+				if (address != 0x0 && (address + length) > cpu.machine().mmap_start()) {
 					dst = address;
 					// If the mapping is within a certain range, we should adjust
 					// the current mmap address to the end of the new mapping. This is
 					// to avoid future collisions when allocating.
-					if (address >= cpu.machine().mmap_current() && address + length <= cpu.machine().mmap_current() + MMAP_COLLISION_TRESHOLD)
+					if ((address + length) > cpu.machine().mmap_current() && address + length <= cpu.machine().mmap_current() + MMAP_COLLISION_TRESHOLD)
 					{
 						PRINTMMAP("Adjusting mmap current address from 0x%lX to 0x%lX\n",
 							cpu.machine().mmap(), address + length);
 						cpu.machine().mmap() = address + length;
 					} else {
-						PRINTMMAP("Not adjusting mmap current address to 0x%lX\n",
-							address + length);
+						PRINTMMAP("Not adjusting mmap current address to 0x%lX from 0x%lX\n",
+							address + length, cpu.machine().mmap());
 					}
 				}
 				else if (address != 0x0 && address < cpu.machine().heap_address()) {
@@ -314,6 +314,13 @@ void Machine::setup_linux_system_calls()
 					cpu.machine().writable_buffers_from_range(buffers.size(), buffers.data(), dst, read_length);
 				// Seek to the given offset in the file and read the contents into guest memory
 				if (preadv64(real_fd, (const iovec *)&buffers[0], cnt, voff) < 0) {
+					PRINTMMAP("preadv64 failed: %s for %zu buffers at offset %ld\n",
+						strerror(errno), cnt, voff);
+					for (size_t i = 0; i < cnt; i++)
+					{
+						PRINTMMAP("  %zu: iov_base=%p, iov_len=%zu\n",
+							i, buffers[i].ptr, buffers[i].len);
+					}
 					regs.rax = ~0LL; /* MAP_FAILED */
 				} else {
 					regs.rax = dst;
@@ -325,8 +332,9 @@ void Machine::setup_linux_system_calls()
 					cpu.machine().memzero(dst + read_length, zero_length);
 				}
 				cpu.set_registers(regs);
-				PRINTMMAP("mmap(0x%lX (0x%llX), %lu, prot=%llX, flags=%llX, vfd=%d) = 0x%llX\n",
-						  address, regs.rdi, read_length, regs.rdx, regs.r10, int(regs.r8), regs.rax);
+				PRINTMMAP("mmap(0x%lX (0x%llX), %lu, prot=%llX, flags=%llX, vfd=%d) = 0x%llX -> 0x%lX\n",
+						  address, regs.rdi, read_length, regs.rdx, regs.r10, int(regs.r8),
+						  regs.rax, cpu.machine().mmap_current());
 				return;
 			}
 			else if (address != 0x0 && address >= cpu.machine().heap_address() && address + length <= cpu.machine().mmap_current())
@@ -695,7 +703,25 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_pipe2, [](vCPU& cpu) { // PIPE2
 			auto& regs = cpu.registers();
-			regs.rax = 0;
+			// int pipe2(int pipefd[2], int flags);
+			const uint64_t g_pipefd = regs.rdi;
+			const int flags = regs.rsi;
+			int pipefd[2];
+			if (UNLIKELY(pipe2(pipefd, flags) < 0))
+			{
+				regs.rax = -errno;
+			}
+			else
+			{
+				// Manage the new fds as writable
+				const int vfd1 = cpu.machine().fds().manage(pipefd[0], false, true);
+				const int vfd2 = cpu.machine().fds().manage(pipefd[1], false, true);
+				// Copy the vfds to the guest
+				pipefd[0] = vfd1;
+				pipefd[1] = vfd2;
+				cpu.machine().copy_to_guest(g_pipefd, pipefd, sizeof(pipefd));
+				regs.rax = 0;
+			}
 			cpu.set_registers(regs);
 			SYSPRINT("pipe2(0x%llX, 0x%X) = %lld\n",
 					 regs.rdi, int(regs.rsi), regs.rax);
@@ -1910,9 +1936,10 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const int epollfd = cpu.machine().fds().translate_unless_forked(regs.rdi);
 			const int op = regs.rsi;
-			const int fd = cpu.machine().fds().translate(regs.rdx);
+			const int vfd = int(regs.rdx);
+			const int fd = cpu.machine().fds().translate(vfd);
 			const uint64_t g_event = regs.r10;
-			if (epollfd > 0 && fd > 0)
+			if (epollfd > 0 && fd >= 0)
 			{
 				struct epoll_event event {};
 				if (g_event != 0x0) {
@@ -1928,8 +1955,8 @@ void Machine::setup_linux_system_calls()
 				regs.rax = -EBADF;
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("epoll_ctl(epollfd=%d (%lld), op=%d, fd=%d (%lld), g_event=0x%lX) = %lld\n",
-				epollfd, regs.rdi, op, fd, regs.rdx, g_event, regs.rax);
+			SYSPRINT("epoll_ctl(epollfd=%d (%lld), op=%d, fd=%d (%d), g_event=0x%lX) = %lld\n",
+				epollfd, regs.rdi, op, fd, vfd, g_event, regs.rax);
 		});
 	Machine::install_syscall_handler( // epoll_wait
 		SYS_epoll_wait, [](vCPU& cpu)
@@ -2021,13 +2048,26 @@ void Machine::setup_linux_system_calls()
 				if (oldptr != 0x0)
 				{
 					struct rlimit64 lim{};
-					lim.rlim_cur = 4096;
-					lim.rlim_max = 4096;
+					lim.rlim_cur = 16384;
+					lim.rlim_max = 16384;
 					SYSPRINT("prlimit64: current nofile limit 0x%lX max 0x%lX\n",
 						lim.rlim_cur, lim.rlim_max);
 					cpu.machine().copy_to_guest(oldptr, &lim, sizeof(lim));
+					regs.rax = 0;
 				}
-				regs.rax = 0;
+				if (newptr != 0x0)
+				{
+					struct rlimit64 lim {};
+					cpu.machine().copy_from_guest(&lim, newptr, sizeof(lim));
+					SYSPRINT("prlimit64: new nofile limit 0x%lX max 0x%lX\n",
+						lim.rlim_cur, lim.rlim_max);
+					if (lim.rlim_cur > 0xFFFF) {
+						regs.rax = -EINVAL;
+					}
+					else {
+						regs.rax = 0;
+					}
+				}
 				break;
 			default:
 				regs.rax = -ENOSYS;
