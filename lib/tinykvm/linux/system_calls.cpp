@@ -293,13 +293,16 @@ void Machine::setup_linux_system_calls()
 					// to avoid future collisions when allocating.
 					if (address >= cpu.machine().mmap_current() && address + length <= cpu.machine().mmap_current() + MMAP_COLLISION_TRESHOLD)
 					{
-						PRINTMMAP("Adjusting mmap current address to 0x%lX\n",
-							address + length);
+						PRINTMMAP("Adjusting mmap current address from 0x%lX to 0x%lX\n",
+							cpu.machine().mmap(), address + length);
 						cpu.machine().mmap() = address + length;
 					} else {
 						PRINTMMAP("Not adjusting mmap current address to 0x%lX\n",
 							address + length);
 					}
+				}
+				else if (address != 0x0 && address < cpu.machine().heap_address()) {
+					dst = address;
 				}
 				else {
 					dst = cpu.machine().mmap_allocate(length);
@@ -322,8 +325,8 @@ void Machine::setup_linux_system_calls()
 					cpu.machine().memzero(dst + read_length, zero_length);
 				}
 				cpu.set_registers(regs);
-				PRINTMMAP("mmap(0x%lX (0x%llX), %lu, prot=%llX, flags=%llX) = 0x%llX\n",
-						  address, regs.rdi, read_length, regs.rdx, regs.r10, regs.rax);
+				PRINTMMAP("mmap(0x%lX (0x%llX), %lu, prot=%llX, flags=%llX, vfd=%d) = 0x%llX\n",
+						  address, regs.rdi, read_length, regs.rdx, regs.r10, int(regs.r8), regs.rax);
 				return;
 			}
 			else if (address != 0x0 && address >= cpu.machine().heap_address() && address + length <= cpu.machine().mmap_current())
@@ -377,8 +380,8 @@ void Machine::setup_linux_system_calls()
 				cpu.machine().memzero(regs.rax, length);
 			}
 			cpu.set_registers(regs);
-			PRINTMMAP("mmap(0x%lX, %lu, prot=%llX, flags=%llX) = 0x%llX\n",
-					  address, length, regs.rdx, regs.r10, regs.rax);
+			PRINTMMAP("mmap(0x%lX, %lu, prot=%llX, flags=%llX, vfd=%d) = 0x%llX\n",
+					  address, length, regs.rdx, regs.r10, int(regs.r8), regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_mprotect, [](vCPU& cpu) { // MPROTECT
@@ -1257,7 +1260,11 @@ void Machine::setup_linux_system_calls()
 			try {
 				fd = cpu.machine().fds().translate(vfd);
 				regs.rax = 0;
-				if (cmd == F_GETFD)
+				if (fd < 0)
+				{
+					regs.rax = -EBADF;
+				}
+				else if (cmd == F_GETFD)
 				{
 					//const int flags = fcntl(fd, cmd);
 					regs.rax = 0x1;
