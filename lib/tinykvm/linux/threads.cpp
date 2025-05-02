@@ -142,7 +142,7 @@ Thread& MultiThreading::create(
 
 	return thread;
 }
-bool MultiThreading::suspend_and_yield()
+bool MultiThreading::suspend_and_yield(int64_t result)
 {
 	auto& thread = get_thread();
 	// don't go through the ardous yielding process when alone
@@ -150,7 +150,7 @@ bool MultiThreading::suspend_and_yield()
 		return false;
 	}
 	// suspend current thread, and return 0 when resumed
-	thread.suspend(0);
+	thread.suspend(result);
 	// resume some other thread
 	this->wakeup_next();
 	return true;

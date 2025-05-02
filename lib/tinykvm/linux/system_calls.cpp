@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/poll.h>
+#include <sys/prctl.h>
 #include <sys/random.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -1650,9 +1651,30 @@ void Machine::setup_linux_system_calls()
 		{
 			auto& regs = cpu.registers();
 			const int option = regs.rdi;
-			(void)option;
-
-			regs.rax = 0;
+			if (option == PR_GET_NAME)
+			{
+				const uint64_t g_buf = regs.rsi;
+				const size_t buflen = regs.rdx;
+				if (buflen > 16)
+					regs.rax = -EINVAL;
+				else
+				{
+					const char *name = "tinykvm";
+					cpu.machine().copy_to_guest(g_buf, name, buflen);
+					regs.rax = 0;
+				}
+			}
+			else if (option == PR_SET_NAME)
+			{
+				const uint64_t g_buf = regs.rsi;
+				std::string name = cpu.machine().memcstring(g_buf, 16);
+				SYSPRINT("PR_SET_NAME(%s)\n", name.c_str());
+				regs.rax = 0;
+			}
+			else
+			{
+				regs.rax = -EINVAL;
+			}
 			cpu.set_registers(regs);
 			SYSPRINT("prctl(opt=%d) = %lld\n", option, regs.rax);
 		});
@@ -1997,13 +2019,19 @@ void Machine::setup_linux_system_calls()
 			else
 			{
 				regs.rax = 0;
-				// XXX: This is a giga hack.
-				cpu.machine().threads().suspend_and_yield();
+				// With infinite timeout, we shouldn't exit the epoll wait
+				// loop, so we need to re-trigger the syscall when we return.
+				if (timeout == -1) {
+					regs.rip -= 2; // Make sure we re-trigger the syscall
+					cpu.machine().threads().suspend_and_yield(SYS_epoll_pwait);
+				}
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("epoll_wait(fd=%d (%lld), g_events=0x%lX, maxevents=%d, timeout=%d) = %lld\n",
 				vfd, regs.rdi, g_events, maxevents, timeout, regs.rax);
 		});
+	Machine::install_syscall_handler( // epoll_pwait
+		SYS_epoll_pwait, Machine::get_syscall_handler(SYS_epoll_wait));
 	Machine::install_syscall_handler(
 		SYS_getrlimit, [](vCPU& cpu) { // getrlimit
 			auto& regs = cpu.registers();

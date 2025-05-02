@@ -31,7 +31,7 @@ struct MultiThreading {
 
 	Thread& create(int flags, uint64_t ctid, uint64_t ptid,
 		uint64_t stack, uint64_t tls);
-	bool suspend_and_yield();
+	bool suspend_and_yield(int64_t result = 0);
 	void erase_thread(int tid);
 	void wakeup_next();
 
