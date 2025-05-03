@@ -533,17 +533,20 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const int fd = cpu.machine().fds().translate(regs.rdi);
 			switch (regs.rsi) {
-			case 0x5401: /* TCGETS */
+			case TCGETS: // Get terminal attributes
 				if (int(regs.rdi) >= 0 && int(regs.rdi) < 3)
+				{
+					// TODO: Construct fake termios
 					regs.rax = 0;
-				else
+				} else {
 					regs.rax = -EPERM;
+				}
 				break;
-			case 0x5413: /* TIOCGWINSZ */
+			case TIOCGWINSZ: // Get window size
 				regs.rax = 80;
 				break;
-			case FIONREAD:
-				{
+			case FIONREAD: {
+					// Get number of bytes available for reading
 					const uint64_t g_bytes = regs.rdx;
 					int bytes = 0;
 					if (int(regs.rdi) >= 0 && int(regs.rdi) < 3) {
@@ -561,7 +564,7 @@ void Machine::setup_linux_system_calls()
 				}
 				break;
 			default:
-				regs.rax = EINVAL;
+				regs.rax = -EINVAL;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("ioctl(vfd=%lld fd=%d, req=0x%llx) = 0x%llX\n",
@@ -846,7 +849,7 @@ void Machine::setup_linux_system_calls()
 			const int type = regs.rsi;
 			const int protocol = regs.rdx;
 			const int fd = socket(domain, type, protocol);
-			if (fd < 0)
+			if (UNLIKELY(fd < 0))
 			{
 				regs.rax = -errno;
 			}
@@ -869,7 +872,7 @@ void Machine::setup_linux_system_calls()
 			const uint64_t g_optval = regs.r10;
 			const size_t optlen = regs.r8;
 			std::array<uint8_t, 256> optval;
-			if (optlen > optval.size())
+			if (UNLIKELY(optlen > optval.size()))
 			{
 				regs.rax = -EINVAL;
 			} else {
@@ -896,7 +899,7 @@ void Machine::setup_linux_system_calls()
 			const uint64_t g_optlen = regs.r8;
 			std::array<uint8_t, 256> optval;
 			socklen_t optlen_out = sizeof(optval);
-			if (getsockopt(fd, level, optname, optval.data(), &optlen_out) < 0) {
+			if (UNLIKELY(getsockopt(fd, level, optname, optval.data(), &optlen_out) < 0)) {
 				regs.rax = -errno;
 			} else {
 				regs.rax = 0;
@@ -928,11 +931,11 @@ void Machine::setup_linux_system_calls()
 			} else {
 				cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
 				// Validate the address
-				if (!cpu.machine().fds().validate_socket_address(fd, addr))
+				if (UNLIKELY(!cpu.machine().fds().validate_socket_address(fd, addr)))
 				{
 					regs.rax = -EPERM;
 				} else {
-					if (connect(fd, (struct sockaddr *)&addr, addrlen) < 0) {
+					if (UNLIKELY(connect(fd, (struct sockaddr *)&addr, addrlen) < 0)) {
 						regs.rax = -errno;
 					}
 					else {
@@ -961,7 +964,7 @@ void Machine::setup_linux_system_calls()
 			{
 				cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
 				// Validate the address
-				if (!cpu.machine().fds().validate_socket_address(fd, addr))
+				if (UNLIKELY(!cpu.machine().fds().validate_socket_address(fd, addr)))
 				{
 					regs.rax = -EPERM;
 				} else {
