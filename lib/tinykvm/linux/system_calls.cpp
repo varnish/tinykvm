@@ -577,16 +577,18 @@ void Machine::setup_linux_system_calls()
 			const int fd = cpu.machine().fds().translate(vfd);
 
 			// Readv into the area
-			static constexpr size_t READV_BUFFERS = 64;
+			static constexpr size_t READV_BUFFERS = 128;
 			tinykvm::Machine::WrBuffer buffers[READV_BUFFERS];
 			const auto bufcount =
 				cpu.machine().writable_buffers_from_range(READV_BUFFERS, buffers, g_buf, bytes);
 
-			if (preadv64(fd, (const iovec *)&buffers[0], bufcount, offset) < 0) {
+			ssize_t result =
+				preadv64(fd, (const iovec *)&buffers[0], bufcount, offset);
+			if (result < 0) {
 				regs.rax = -errno;
 			}
 			else {
-				regs.rax = bytes;
+				regs.rax = result;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("pread64(fd=%d, buf=0x%llX, size=%llu, offset=%llu) = %lld\n",

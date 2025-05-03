@@ -33,6 +33,7 @@ namespace tinykvm
 			std::make_shared<std::vector<std::string>>();
 		// Add all common standard libraries to the list of allowed readable paths
 		this->add_readonly_file("/lib64/ld-linux-x86-64.so.2");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/libgcc_s.so.1");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/libc.so.6");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/libm.so.6");
