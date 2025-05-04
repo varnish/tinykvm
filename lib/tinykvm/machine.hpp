@@ -22,6 +22,7 @@ struct Machine
 	using numbered_syscall_t = void(*)(vCPU&, unsigned);
 	using io_callback_t = void(*)(vCPU&, unsigned, unsigned);
 	using printer_func = std::function<void(const char*, size_t)>;
+	using mmap_func_t = std::function<void(vCPU&, address_t, size_t, int, int, int, address_t)>;
 	static constexpr address_t DYLINK_BASE  = 0x200000; // Dynamic link base address
 
 	/* Setup Linux env and run through main */
@@ -172,6 +173,8 @@ struct Machine
 	bool relocate_fixed_mmap() const noexcept { return m_relocate_fixed_mmap; }
 	bool mmap_relax(uint64_t addr, size_t size, size_t new_size);
 	auto& mmap_cache() noexcept { return m_mmap_cache; }
+	void do_mmap_callback(vCPU&, address_t, size_t, int, int, int, address_t);
+	void set_mmap_callback(mmap_func_t f) { m_mmap_func = std::move(f); }
 
 	uint64_t address_of(const char*) const;
 	std::string resolve(uint64_t rip) const;
@@ -323,6 +326,7 @@ private:
 	static io_callback_t      m_on_input;
 	static io_callback_t      m_on_output;
 	static printer_func       m_default_printer;
+	static mmap_func_t        m_mmap_func;
 
 	static int create_kvm_vm();
 	static int kvm_fd;

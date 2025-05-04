@@ -22,6 +22,7 @@ namespace tinykvm {
 		[] (const char* buffer, size_t len) {
 			printf("%.*s", (int)len, buffer);
 		};
+	Machine::mmap_func_t Machine::m_mmap_func = [] (vCPU&, address_t, size_t, int, int, int, address_t) {};
 	static int kvm_open();
 	constexpr uint64_t PageMask = vMemory::PageSize()-1;
 
@@ -326,6 +327,11 @@ bool Machine::mmap_relax(uint64_t addr, size_t size, size_t new_size)
 		return true;
 	}
 	return false;
+}
+void Machine::do_mmap_callback(vCPU& cpu, address_t addr, size_t size,
+	int prot, int flags, int fd, address_t offset)
+{
+	m_mmap_func(cpu, addr, size, prot, flags, fd, offset);
 }
 
 void Machine::print(const char* buffer, size_t len)

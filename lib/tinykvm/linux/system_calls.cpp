@@ -273,6 +273,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const uint64_t address = regs.rdi & ~PageMask;
 			const uint64_t length = (regs.rsi + PageMask) & ~PageMask;
+			const int prot = regs.rdx;
 			const auto flags = regs.r10;
 			if (UNLIKELY(address % vMemory::PageSize() != 0 || length == 0))
 			{
@@ -333,6 +334,8 @@ void Machine::setup_linux_system_calls()
 					cpu.machine().memzero(dst + read_length, zero_length);
 				}
 				cpu.set_registers(regs);
+				cpu.machine().do_mmap_callback(cpu,
+					address, length, flags, prot, real_fd, voff);
 				PRINTMMAP("mmap(0x%lX (0x%llX), %lu, prot=%llX, flags=%llX, vfd=%d) = 0x%llX -> 0x%lX\n",
 						  address, regs.rdi, read_length, regs.rdx, regs.r10, int(regs.r8),
 						  regs.rax, cpu.machine().mmap_current());
@@ -389,6 +392,7 @@ void Machine::setup_linux_system_calls()
 				cpu.machine().memzero(regs.rax, length);
 			}
 			cpu.set_registers(regs);
+			cpu.machine().do_mmap_callback(cpu, address, length, flags, prot, -1, 0);
 			PRINTMMAP("mmap(0x%lX, %lu, prot=%llX, flags=%llX, vfd=%d) = 0x%llX\n",
 					  address, length, regs.rdx, regs.r10, int(regs.r8), regs.rax);
 		});
@@ -396,12 +400,15 @@ void Machine::setup_linux_system_calls()
 		SYS_mprotect, [](vCPU& cpu) { // MPROTECT
 			/* SYS mprotect */
 			auto& regs = cpu.registers();
-			PRINTMMAP("mprotect(0x%llX, %llu, 0x%llX)\n",
-					  regs.rdi, regs.rsi, regs.rdx);
+			const int prot = regs.rdx;
 			// mprotect(...) is unsupported, however it would be nice if we could
 			// support it on the identity-mapped main VM, during startup.
 			regs.rax = 0;
 			cpu.set_registers(regs);
+			cpu.machine().do_mmap_callback(cpu,
+				regs.rdi, regs.rsi, 0, prot, -1, 0);
+			PRINTMMAP("mprotect(0x%llX, %llu, 0x%X) = %lld\n",
+				regs.rdi, regs.rsi, prot, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_munmap, [](vCPU &cpu) { // MUNMAP
