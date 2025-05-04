@@ -157,6 +157,22 @@ namespace tinykvm
 			}
 			return it->second.real_fd;
 		}
+		if (this->m_find_ro_master_vm_fd) {
+			auto opt_entry = this->m_find_ro_master_vm_fd(vfd);
+			if (opt_entry) {
+				auto& entry = *opt_entry;
+				if (!entry->is_writable) {
+					throw std::runtime_error("TinyKVM: File descriptor is not writable");
+				}
+				if (this->m_verbose) {
+					fprintf(stderr, "TinyKVM: Creating fork entry for %d (%d)\n", entry->real_fd, vfd);
+				}
+				// We need to manage the *same* virtual file descriptor as the main
+				// VM, so we need to set the real_fd of the new entry to the new fd.
+				m_fds[vfd] = {entry->real_fd, entry->is_writable, true};
+				return entry->real_fd;
+			}
+		}
 		return -1;
 	}
 
