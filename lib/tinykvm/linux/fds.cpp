@@ -174,6 +174,37 @@ namespace tinykvm
 		}
 		return -1;
 	}
+	int FileDescriptors::translate_but_duplicate_if_forked(int vfd)
+	{
+		if (vfd >= 0 && vfd < 3) {
+			return this->m_stdout_redirects.at(vfd);
+		}
+		auto it = m_fds.find(vfd);
+		if (it != m_fds.end()) {
+			if (it->second.is_forked) {
+				it->second.real_fd = dup(it->second.real_fd);
+				it->second.is_forked = false;
+			}
+			return it->second.real_fd;
+		}
+		if (this->m_find_ro_master_vm_fd) {
+			auto opt_entry = this->m_find_ro_master_vm_fd(vfd);
+			if (opt_entry) {
+				auto& entry = *opt_entry;
+				if (this->m_verbose) {
+					fprintf(stderr, "TinyKVM: Creating fork duplicate for %d (%d)\n", entry->real_fd, vfd);
+				}
+				// We need to manage the *same* virtual file descriptor as the main
+				// VM, so we need to set the real_fd of the new entry to the new fd.
+				const int new_fd = dup(entry->real_fd);
+				const bool is_forked = false; // We just duplicated it, so we own it
+				m_fds[vfd] = {new_fd, entry->is_writable, is_forked};
+				return new_fd;
+			}
+		}
+		// If the fd is not found, return -1
+		return -1;
+	}
 
 	void FileDescriptors::free(int vfd)
 	{

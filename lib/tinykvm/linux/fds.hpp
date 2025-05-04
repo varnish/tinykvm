@@ -66,6 +66,7 @@ namespace tinykvm
 		/// @return The real file descriptor, or -1 if the fd was created by
 		/// duplicating an fd from the main VM.
 		int translate_unless_forked(int vfd);
+		int translate_but_duplicate_if_forked(int vfd);
 
 		bool is_socket_vfd(int vfd) const noexcept {
 			return (vfd & SOCKET_BIT) != 0;

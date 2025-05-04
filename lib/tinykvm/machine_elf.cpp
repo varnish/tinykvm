@@ -147,7 +147,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	if (this->m_heap_address < options.heap_address_hint) {
 		if (options.verbose_loader) {
 			printf("* Heap address %p is below hint %p, moving it up\n",
-				(void*)this->m_heap_address, (void*)options.heap_address_hint);
+				(void*)this->m_heap_address, (void*)(uintptr_t)options.heap_address_hint);
 		}
 		this->m_heap_address = options.heap_address_hint;
 	}

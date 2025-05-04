@@ -2031,7 +2031,7 @@ void Machine::setup_linux_system_calls()
 		SYS_epoll_ctl, [](vCPU& cpu)
 		{
 			auto& regs = cpu.registers();
-			const int epollfd = cpu.machine().fds().translate_unless_forked(regs.rdi);
+			const int epollfd = cpu.machine().fds().translate_but_duplicate_if_forked(regs.rdi);
 			const int op = regs.rsi;
 			const int vfd = int(regs.rdx);
 			const int fd = cpu.machine().fds().translate(vfd);
