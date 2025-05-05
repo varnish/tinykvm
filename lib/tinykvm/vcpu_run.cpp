@@ -31,6 +31,15 @@ void tinykvm_timer_signal_handler(int sig) {
 namespace tinykvm {
 	static constexpr bool VERBOSE_TIMER = false;
 
+bool vCPU::timed_out() const
+{
+	if (timer_was_triggered) {
+		timer_was_triggered = false;
+		return true;
+	}
+	return false;
+}
+
 void vCPU::run(uint32_t ticks)
 {
 	timer_was_triggered = false;
@@ -188,6 +197,9 @@ long vCPU::run_once()
 					machine().system_call(*this, intr);
 				}
 				if (this->stopped) return 0;
+				if (this->timed_out()) {
+					Machine::timeout_exception("Timeout Exception", this->timer_ticks);
+				}
 				return KVM_EXIT_IO;
 			} else {
 				this->stopped = true;

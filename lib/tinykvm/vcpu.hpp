@@ -35,6 +35,7 @@ namespace tinykvm
         const auto& machine() const { return *m_machine; }
 
 		void set_vcpu_table_at(unsigned index, int value);
+		bool timed_out() const;
 
         int fd = -1;
         int cpu_id = 0;

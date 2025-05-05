@@ -72,12 +72,12 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_write, [] (vCPU& cpu) { // WRITE
 			auto& regs = cpu.registers();
-			const int    fd = regs.rdi;
+			const int    vfd = regs.rdi;
 			const size_t bytes = regs.rdx;
-			SYSPRINT("WRITE to fd=%lld, data=0x%llX, size=%llu\n",
-				regs.rdi, regs.rsi, regs.rdx);
-			// TODO: Make proper tenant setting for file sizes
-			if (fd == 1 || fd == 2) {
+			SYSPRINT("write(vfd=%d, data=0x%llX, size=%zu)\n",
+				vfd, regs.rsi, bytes);
+			// TODO: Make proper tenant setting for write limits?
+			if (vfd == 1 || vfd == 2) {
 				if (UNLIKELY(bytes > 1024*64)) {
 					regs.rax = -1;
 					cpu.set_registers(regs);
@@ -89,7 +89,7 @@ void Machine::setup_linux_system_calls()
 				cpu.set_registers(regs);
 				return;
 			}
-			if (fd != 1 && fd != 2) {
+			if (vfd != 1 && vfd != 2) {
 				/* Use gather-buffers and writev */
 				static constexpr size_t WRITEV_BUFFERS = 64;
 				tinykvm::Machine::Buffer buffers[WRITEV_BUFFERS];
@@ -98,7 +98,13 @@ void Machine::setup_linux_system_calls()
 
 				/* Complain about writes outside of existing FDs */
 				const int fd = cpu.machine().fds().translate_writable_vfd(regs.rdi);
-				regs.rax = writev(fd, (const struct iovec *)buffers, bufcount);
+				if (bufcount > 1) {
+					regs.rax = writev(fd, (const struct iovec *)buffers, bufcount);
+				} else {
+					regs.rax = write(fd, buffers[0].ptr, buffers[0].len);
+				}
+				SYSPRINT("write(fd=%d (%d), data=0x%llX, size=%zu) = %lld\n",
+					vfd, fd, regs.rsi, bytes, regs.rax);
 			}
 			else {
 				const auto g_buf = regs.rsi;
@@ -639,6 +645,7 @@ void Machine::setup_linux_system_calls()
 			};
 			const int vfd = regs.rdi;
 			const unsigned count = regs.rdx;
+			int fd = -1;
 
 			if (count > 64)
 			{
@@ -668,10 +675,11 @@ void Machine::setup_linux_system_calls()
 					written += bytes;
 				}
 				regs.rax = written;
+				fd = vfd;
 			}
 			else
 			{
-				const int fd = cpu.machine().fds().translate_writable_vfd(vfd);
+				fd = cpu.machine().fds().translate_writable_vfd(vfd);
 				if (fd > 0)
 				{
 					std::array<g_iovec, 64> vecs;
@@ -702,8 +710,8 @@ void Machine::setup_linux_system_calls()
 				}
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("writev(%d, 0x%llX, %u) = %lld\n",
-					 vfd, regs.rsi, count, regs.rax);
+			SYSPRINT("writev(%d (%d), 0x%llX, %u) = %lld\n",
+					 vfd, fd, regs.rsi, count, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_access, [](vCPU& cpu) { // ACCESS
@@ -734,6 +742,8 @@ void Machine::setup_linux_system_calls()
 				pipefd[1] = vfd2;
 				cpu.machine().copy_to_guest(g_pipefd, pipefd, sizeof(pipefd));
 				regs.rax = 0;
+				// Record the pipe pair so it can be reconstructed in forks
+				cpu.machine().fds().add_socket_pair({vfd1, vfd2, FileDescriptors::SocketType::PIPE2});
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("pipe2(0x%llX, 0x%X) = %lld\n",
@@ -865,8 +875,8 @@ void Machine::setup_linux_system_calls()
 				regs.rax = cpu.machine().fds().manage(fd, true, true);
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("socket(%d, %d, %d) = %lld\n",
-					 domain, type, protocol, regs.rax);
+			SYSPRINT("socket(%d, %d, %d) = %d (%lld)\n",
+					 domain, type, protocol, fd, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_setsockopt, [](vCPU& cpu) { // SETSOCKOPT
@@ -951,8 +961,12 @@ void Machine::setup_linux_system_calls()
 				}
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("connect(fd=%d, addr=0x%lX, addrlen=%zu) = %lld\n",
-					 fd, g_addr, addrlen, regs.rax);
+			if (UNLIKELY(cpu.machine().m_verbose_system_calls)) {
+				const std::string addr_str = cpu.machine().fds().sockaddr_to_string(addr);
+				SYSPRINT("connect(fd=%d, addr=0x%lX, addrlen=%zu) = %lld (%s)\n",
+							fd, g_addr, addrlen, regs.rax,
+							addr_str.c_str());
+			}
 		});
 	Machine::install_syscall_handler(
 		SYS_bind, [](vCPU& cpu) { // BIND
@@ -984,8 +998,12 @@ void Machine::setup_linux_system_calls()
 				}
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("bind(fd=%d, addr=0x%lX, addrlen=%zu) = %lld\n",
-					 fd, g_addr, addrlen, regs.rax);
+			if (UNLIKELY(cpu.machine().m_verbose_system_calls)) {
+				const std::string addr_str = cpu.machine().fds().sockaddr_to_string(addr);
+				SYSPRINT("bind(fd=%d, addr=0x%lX, addrlen=%zu) = %lld (%s)\n",
+					 fd, g_addr, addrlen, regs.rax,
+					 addr_str.c_str());
+			}
 		});
 	Machine::install_syscall_handler(
 		SYS_listen, [](vCPU& cpu) { // LISTEN
@@ -1096,7 +1114,7 @@ void Machine::setup_linux_system_calls()
 			// int socketpair(int domain, int type, int protocol, int sv[2]);
 			const uint64_t g_sv = regs.r10;
 			int sv[2] = { 0, 0 };
-			const int res = socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
+			const int res = socketpair(AF_UNIX, SOCK_STREAM|SOCK_NONBLOCK, 0, sv);
 			if (UNLIKELY(res < 0))
 			{
 				regs.rax = -errno;
@@ -1107,6 +1125,8 @@ void Machine::setup_linux_system_calls()
 				sv[1] = cpu.machine().fds().manage(sv[1], true, true);
 				cpu.machine().copy_to_guest(g_sv, sv, sizeof(sv));
 				regs.rax = 0;
+				// Manage the socketpair so it can be reconstructed later
+				cpu.machine().fds().add_socket_pair({sv[0], sv[1], FileDescriptors::SocketType::SOCKETPAIR});
 			}
 			SYSPRINT("socketpair(AF_UNIX, SOCK_STREAM, 0, 0x%lX) = %lld {%d, %d}\n",
 				g_sv, regs.rax, sv[0], sv[1]);
@@ -1995,6 +2015,8 @@ void Machine::setup_linux_system_calls()
 			}
 			else {
 				regs.rax = vfd;
+				// Record the eventfd2 in the socket pairs
+				cpu.machine().fds().add_socket_pair({vfd, -1, FileDescriptors::SocketType::EVENTFD});
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("eventfd2(...) = %d (%lld)\n",
@@ -2015,8 +2037,8 @@ void Machine::setup_linux_system_calls()
 				const int vfd = cpu.machine().fds().manage(fd, false);
 				regs.rax = vfd;
 			}
-			SYSPRINT("epoll_create1() = %d (%lld)\n", fd, regs.rax);
 			cpu.set_registers(regs);
+			SYSPRINT("epoll_create1() = %d (%lld)\n", fd, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_nanosleep, [](vCPU& cpu)
@@ -2031,14 +2053,14 @@ void Machine::setup_linux_system_calls()
 		SYS_epoll_ctl, [](vCPU& cpu)
 		{
 			auto& regs = cpu.registers();
-			const int epollfd = cpu.machine().fds().translate_but_duplicate_if_forked(regs.rdi);
+			const int epollfd = cpu.machine().fds().translate(regs.rdi);
 			const int op = regs.rsi;
 			const int vfd = int(regs.rdx);
 			const int fd = cpu.machine().fds().translate(vfd);
 			const uint64_t g_event = regs.r10;
+			struct epoll_event event {};
 			if (epollfd > 0 && fd >= 0)
 			{
-				struct epoll_event event {};
 				if (g_event != 0x0) {
 					cpu.machine().copy_from_guest(&event, g_event, sizeof(event));
 				}
@@ -2046,49 +2068,110 @@ void Machine::setup_linux_system_calls()
 					regs.rax = -errno;
 				}
 				else {
+					auto& ee = cpu.machine().fds().get_epoll_entry_for_vfd(regs.rdi);
+					if (op == EPOLL_CTL_ADD) {
+						ee.epoll_fds[vfd] = event;
+					} else if (op == EPOLL_CTL_DEL) {
+						ee.epoll_fds.erase(vfd);
+					}
 					regs.rax = 0;
 				}
 			} else {
 				regs.rax = -EBADF;
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("epoll_ctl(epollfd=%d (%lld), op=%d, fd=%d (%d), g_event=0x%lX) = %lld\n",
-				epollfd, regs.rdi, op, fd, vfd, g_event, regs.rax);
+			if (UNLIKELY(cpu.machine().m_verbose_system_calls))
+			{
+				std::string event_str;
+				if (event.events & EPOLLIN) {
+					event_str += "EPOLLIN ";
+				}
+				if (event.events & EPOLLOUT) {
+					event_str += "EPOLLOUT ";
+				}
+				if (event.events & EPOLLERR) {
+					event_str += "EPOLLERR ";
+				}
+				if (event.events & EPOLLHUP) {
+					event_str += "EPOLLHUP ";
+				}
+				if (event.events & EPOLLRDHUP) {
+					event_str += "EPOLLRDHUP ";
+				}
+				if (event.events & EPOLLET) {
+					event_str += "EPOLLET ";
+				}
+				if (event.events & EPOLLONESHOT) {
+					event_str += "EPOLLONESHOT ";
+				}
+				SYSPRINT("epoll_ctl(epollfd=%lld (%d), op=%d, fd=%d (%d), event=0x%lX) = %lld "
+					" event = {events=[%s], data={fd=%d, u32=0x%X, u64=0x%lX}}\n",
+					regs.rdi, epollfd, op, fd, vfd, g_event, regs.rax,
+					event_str.c_str(), event.data.fd, event.data.u32, event.data.u64);
+			}
 		});
 	Machine::install_syscall_handler( // epoll_wait
 		SYS_epoll_wait, [](vCPU& cpu)
 		{
 			auto& regs = cpu.registers();
+			std::array<struct epoll_event, 128> guest_events;
 			const int vfd = regs.rdi;
-			[[maybe_unused]] const uint64_t g_events = regs.rsi;
-			[[maybe_unused]] const int maxevents = regs.rdx;
-			[[maybe_unused]] const int timeout = regs.r10;
-			std::array<struct epoll_event, 1024> guest_events;
-			if (UNLIKELY(maxevents > int(guest_events.size())))
-			{
-				regs.rax = -EINVAL;
-				SYSPRINT("epoll_wait(fd=%d maxevents=%d timeout=%d) = %lld\n",
-					vfd, maxevents, timeout, regs.rax);
-				cpu.set_registers(regs);
-				return;
-			}
+			const uint64_t g_events = regs.rsi;
+			const int maxevents = std::min(size_t(regs.rdx), guest_events.size());
+			const int timeout = regs.r10;
 			// Only wait for 250us, as we are *not* pre-empting the guest
 			const struct timespec ts {
 				.tv_sec = 0,
-				.tv_nsec = 250000,
+				.tv_nsec = 25000000,
 			};
 			const int epollfd = cpu.machine().fds().translate(vfd);
 			const int result =
 				epoll_pwait2(epollfd, guest_events.data(), maxevents, &ts, nullptr);
+			if (cpu.timed_out()) {
+				throw MachineTimeoutException("epoll_wait timed out");
+			}
 			// Copy events back to guest
 			if (result > 0)
 			{
+				if (cpu.machine().m_verbose_system_calls) {
+					for (int i = 0; i < result; ++i)
+					{
+						std::string event_str;
+						if (guest_events[i].events & EPOLLIN) {
+							event_str += "EPOLLIN ";
+						}
+						if (guest_events[i].events & EPOLLOUT) {
+							event_str += "EPOLLOUT ";
+						}
+						if (guest_events[i].events & EPOLLERR) {
+							event_str += "EPOLLERR ";
+						}
+						if (guest_events[i].events & EPOLLHUP) {
+							event_str += "EPOLLHUP ";
+						}
+						if (guest_events[i].events & EPOLLRDHUP) {
+							event_str += "EPOLLRDHUP ";
+						}
+						if (guest_events[i].events & EPOLLET) {
+							event_str += "EPOLLET ";
+						}
+						if (guest_events[i].events & EPOLLONESHOT) {
+							event_str += "EPOLLONESHOT ";
+						}
+						SYSPRINT("epoll_wait: event[%d] = [%s] (i32=%d u32=0x%X u64=0x%lX)\n",
+							i, event_str.c_str(), guest_events[i].data.fd,
+							guest_events[i].data.u32, guest_events[i].data.u64);
+					}
+				}
 				cpu.machine().copy_to_guest(g_events, guest_events.data(),
 					result * sizeof(struct epoll_event));
 				regs.rax = result;
 			}
 			else if (UNLIKELY(result < 0))
 			{
+				if (errno == EINTR) {
+					throw MachineTimeoutException("epoll_wait interrupted");
+				}
 				regs.rax = -errno;
 			}
 			else
@@ -2102,8 +2185,8 @@ void Machine::setup_linux_system_calls()
 				}
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("epoll_wait(fd=%d (%lld), g_events=0x%lX, maxevents=%d, timeout=%d) = %lld\n",
-				vfd, regs.rdi, g_events, maxevents, timeout, regs.rax);
+			SYSPRINT("epoll_wait(fd=%d (%d), g_events=0x%lX, maxevents=%d, timeout=%d) = %lld\n",
+				vfd, epollfd, g_events, maxevents, timeout, regs.rax);
 		});
 	Machine::install_syscall_handler( // epoll_pwait
 		SYS_epoll_pwait, Machine::get_syscall_handler(SYS_epoll_wait));

@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <sys/epoll.h>
 struct sockaddr_storage;
 
 namespace tinykvm
@@ -39,6 +40,7 @@ namespace tinykvm
 		/// @param is_socket True if the file descriptor is a socket.
 		/// @return The virtual file descriptor.
 		int manage(int fd, bool is_socket, bool is_writable = false);
+		void manage_as(int vfd, int fd, bool is_socket, bool is_writable);
 
 		/// @brief Remove a virtual file descriptor from the list of managed FDs.
 		/// @param vfd The virtual file descriptor to remove.
@@ -66,7 +68,7 @@ namespace tinykvm
 		/// @return The real file descriptor, or -1 if the fd was created by
 		/// duplicating an fd from the main VM.
 		int translate_unless_forked(int vfd);
-		int translate_but_duplicate_if_forked(int vfd);
+		int translate_unless_forked_then(int vfd, std::function<int(const Entry&)> func, bool must_be_writable = false);
 
 		bool is_socket_vfd(int vfd) const noexcept {
 			return (vfd & SOCKET_BIT) != 0;
@@ -278,6 +280,27 @@ namespace tinykvm
 			m_find_ro_master_vm_fd = callback;
 		}
 
+		struct EpollEntry
+		{
+			int real_fd = -1;
+			std::unordered_map<int, struct epoll_event> epoll_fds;
+		};
+		EpollEntry& get_epoll_entry_for_vfd(int vfd);
+		enum SocketType : int {
+			INVALID,
+			PIPE2,
+			SOCKETPAIR,
+			EVENTFD,
+		};
+		struct SocketPair
+		{
+			int vfd1 = -1;
+			int vfd2 = -1;
+			SocketType type = INVALID;
+		};
+		void add_socket_pair(const SocketPair&);
+
+		std::string sockaddr_to_string(const struct sockaddr_storage& addr) const;
 	private:
 		Machine& m_machine;
 		std::map<int, Entry> m_fds;
@@ -299,5 +322,8 @@ namespace tinykvm
 		uint16_t m_max_sockets = DEFAULT_MAX_FILES;
 		uint16_t m_total_fds_opened = 0;
 		uint16_t m_max_total_fds_opened = DEFAULT_TOTAL_FILES;
+
+		std::map<int, EpollEntry> m_epoll_fds;
+		std::vector<SocketPair> m_sockets;
 	};
 }
