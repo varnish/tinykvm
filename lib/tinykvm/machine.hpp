@@ -23,7 +23,6 @@ struct Machine
 	using io_callback_t = void(*)(vCPU&, unsigned, unsigned);
 	using printer_func = std::function<void(const char*, size_t)>;
 	using mmap_func_t = std::function<void(vCPU&, address_t, size_t, int, int, int, address_t)>;
-	static constexpr address_t DYLINK_BASE  = 0x200000; // Dynamic link base address
 
 	/* Setup Linux env and run through main */
 	void setup_argv(const std::vector<std::string>& args,

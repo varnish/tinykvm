@@ -67,7 +67,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 		throw MachineException(
 			"ELF w/interpreter must be loaded by the interpreter itself");
 	}
-	this->m_image_base = (is_dynamic) ? DYLINK_BASE : 0x0;
+	this->m_image_base = (is_dynamic) ? options.dylink_address_hint : 0x0;
 
 	// enumerate & load loadable segments
 	const auto program_headers = elf->e_phnum;

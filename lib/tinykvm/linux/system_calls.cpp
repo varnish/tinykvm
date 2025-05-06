@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <sys/timerfd.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
@@ -555,6 +556,11 @@ void Machine::setup_linux_system_calls()
 					regs.rax = -EPERM;
 				}
 				break;
+			case TCSETS: { // Set terminal attributes
+					// Ignore
+					regs.rax = 0;
+					break;
+				}
 			case TIOCGWINSZ: // Get window size
 				regs.rax = 80;
 				break;
@@ -2026,6 +2032,25 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 			SYSPRINT("eventfd2(...) = %d (%lld)\n",
 				real_fd, regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_timerfd_create, [](vCPU& cpu)
+		{
+			auto& regs = cpu.registers();
+			const int clockid = regs.rdi;
+			const int real_fd = timerfd_create(clockid, TFD_CLOEXEC | TFD_NONBLOCK);
+			const int vfd = cpu.machine().fds().manage(real_fd, false, true);
+			if (UNLIKELY(vfd < 0)) {
+				regs.rax = -errno;
+			}
+			else {
+				regs.rax = vfd;
+				// TODO: Record the timerfd in the socket pairs
+				//cpu.machine().fds().add_socket_pair({vfd, -1, FileDescriptors::SocketType::EVENTFD});
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("timerfd_create(%d, ...) = %d (%lld)\n",
+				clockid, real_fd, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_epoll_create1, [](vCPU& cpu)

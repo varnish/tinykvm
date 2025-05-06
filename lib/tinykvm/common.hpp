@@ -35,6 +35,7 @@ namespace tinykvm
 		uint32_t max_cow_mem = 0;
 		uint32_t stack_size = 1600UL << 10; /* 1600KB */
 		uint32_t reset_free_work_mem = 0; /* reset_to() */
+		uint32_t dylink_address_hint = 0x200000; /* 2MB */
 		uint32_t heap_address_hint = 0;
 		uint64_t vmem_base_address = 0;
 		std::string_view binary = {};
