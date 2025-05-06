@@ -1430,8 +1430,13 @@ void Machine::setup_linux_system_calls()
 				else if (cmd == F_DUPFD_CLOEXEC)
 				{
 					const int new_fd = dup(fd);
-					const int new_vfd = cpu.machine().fds().manage(new_fd, false, false);
+					const int new_vfd = cpu.machine().fds().manage_duplicate(vfd, new_fd, false, false);
 					regs.rax = new_vfd;
+				}
+				else
+				{
+					SYSPRINT("fcntl(%d (%d), cmd=0x%X (%d), ...) is not implemented\n",
+							 fd, vfd, cmd, cmd);
 				}
 			} catch (...) {
 				regs.rax = -EBADF;
@@ -2067,7 +2072,8 @@ void Machine::setup_linux_system_calls()
 				if (UNLIKELY(epoll_ctl(epollfd, op, fd, &event) < 0)) {
 					regs.rax = -errno;
 				}
-				else {
+				else
+				{
 					auto& ee = cpu.machine().fds().get_epoll_entry_for_vfd(regs.rdi);
 					if (op == EPOLL_CTL_ADD) {
 						ee.epoll_fds[vfd] = event;

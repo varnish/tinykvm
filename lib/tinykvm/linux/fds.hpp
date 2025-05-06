@@ -40,6 +40,7 @@ namespace tinykvm
 		/// @param is_socket True if the file descriptor is a socket.
 		/// @return The virtual file descriptor.
 		int manage(int fd, bool is_socket, bool is_writable = false);
+		int manage_duplicate(int original_vfd, int fd, bool is_socket, bool is_writable = false);
 		void manage_as(int vfd, int fd, bool is_socket, bool is_writable);
 
 		/// @brief Remove a virtual file descriptor from the list of managed FDs.
@@ -163,18 +164,6 @@ namespace tinykvm
 			return m_max_files;
 		}
 
-		/// @brief Set the maximum number of sockets that can be opened.
-		/// @param max_sockets The maximum number of sockets that can be opened.
-		void set_max_sockets(uint16_t max_sockets) noexcept {
-			m_max_sockets = max_sockets;
-		}
-
-		/// @brief Get the maximum number of sockets that can be opened.
-		/// @return The maximum number of sockets that can be opened.
-		uint16_t get_max_sockets() const noexcept {
-			return m_max_sockets;
-		}
-
 		/// @brief Set the maximum number of file descriptors that can be opened
 		/// in total. This is the sum of the maximum number of files and sockets
 		/// that can be opened.
@@ -282,8 +271,8 @@ namespace tinykvm
 
 		struct EpollEntry
 		{
-			int real_fd = -1;
 			std::unordered_map<int, struct epoll_event> epoll_fds;
+			std::unordered_set<int> shared_epoll_fds;
 		};
 		EpollEntry& get_epoll_entry_for_vfd(int vfd);
 		enum SocketType : int {
@@ -291,6 +280,7 @@ namespace tinykvm
 			PIPE2,
 			SOCKETPAIR,
 			EVENTFD,
+			DUPFD,
 		};
 		struct SocketPair
 		{
@@ -319,11 +309,10 @@ namespace tinykvm
 		connect_socket_t m_connect_socket;
 		find_readonly_master_vm_fd_t m_find_ro_master_vm_fd;
 		uint16_t m_max_files = DEFAULT_MAX_FILES;
-		uint16_t m_max_sockets = DEFAULT_MAX_FILES;
 		uint16_t m_total_fds_opened = 0;
 		uint16_t m_max_total_fds_opened = DEFAULT_TOTAL_FILES;
 
-		std::map<int, EpollEntry> m_epoll_fds;
+		std::map<int, std::shared_ptr<EpollEntry>> m_epoll_fds;
 		std::vector<SocketPair> m_sockets;
 	};
 }
