@@ -1418,7 +1418,9 @@ void Machine::setup_linux_system_calls()
 			{
 				struct utsname uts{};
 				strcpy(uts.sysname, "Linux");
-				strcpy(uts.release, "3.2.0");
+				strcpy(uts.release, "3.5.0");
+				strcpy(uts.machine, "x86_64");
+				strcpy(uts.nodename, "tinykvm");
 				cpu.machine().copy_to_guest(regs.rdi, &uts, sizeof(uts));
 				regs.rax = 0;
 			}
