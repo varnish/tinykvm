@@ -2268,12 +2268,13 @@ void Machine::setup_linux_system_calls()
 			}
 			else
 			{
-				regs.rax = 0;
 				// With infinite timeout, we shouldn't exit the epoll wait
 				// loop, so we need to re-trigger the syscall when we return.
 				if (timeout == -1) {
-					regs.rip -= 2; // Make sure we re-trigger the syscall
-					cpu.machine().threads().suspend_and_yield(SYS_epoll_pwait);
+					//regs.rip -= 2; // Make sure we re-trigger the syscall
+					cpu.machine().threads().suspend_and_yield(SYS_epoll_wait);
+				} else {
+					regs.rax = 0;
 				}
 			}
 			cpu.set_registers(regs);
