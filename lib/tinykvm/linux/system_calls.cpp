@@ -63,12 +63,20 @@ void Machine::setup_linux_system_calls()
 				MAX_READ_BUFFERS, buffers,
 				regs.rsi, regs.rdx);
 
-			regs.rax = readv(fd, (struct iovec *)&buffers[0], bufcount);
-			if (UNLIKELY(int(regs.rax) < 0))
+			ssize_t result = 0;
+			if (bufcount == 1) {
+				result = read(fd, buffers[0].ptr, buffers[0].len);
+			} else {
+				result = readv(fd, (struct iovec *)&buffers[0], bufcount);
+			}
+			if (UNLIKELY(result < 0)) {
 				regs.rax = -errno;
+			} else {
+				regs.rax = result;
+			}
+			cpu.set_registers(regs);
 			SYSPRINT("read(fd=%d (%d), data=0x%llX, size=%llu) = %lld\n",
 				fd, vfd, regs.rsi, regs.rdx, regs.rax);
-			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
 		SYS_write, [] (vCPU& cpu) { // WRITE
@@ -845,6 +853,49 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 			SYSPRINT("dup(vfd=%lld fd=%d) = %lld\n",
 					 regs.rdi, fd, regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_dup2, [](vCPU& cpu) { // DUP2
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			const int new_vfd = regs.rsi;
+			if (vfd == new_vfd)
+			{
+				// No need to dup2() to the same fd
+				regs.rax = new_vfd;
+				cpu.set_registers(regs);
+				SYSPRINT("dup2(vfd=%d (%d), new_vfd=%lld (%d)) = %lld\n",
+						 vfd, vfd, new_vfd, new_vfd, regs.rax);
+				return;
+			}
+			int fd = -1;
+			int new_fd = -1;
+			try {
+				fd = cpu.machine().fds().translate(vfd);
+				new_fd = cpu.machine().fds().translate(new_vfd);
+				// Close the new fd if it is open
+				if (new_fd > 2)
+				{
+					close(new_fd);
+					cpu.machine().fds().free(new_vfd);
+				}
+
+				const int result = dup(fd);
+				if (result < 0)
+				{
+					regs.rax = -errno;
+				}
+				else
+				{
+					cpu.machine().fds().manage_as(new_vfd, new_fd, false, false);
+					regs.rax = new_vfd;
+				}
+			} catch (...) {
+				regs.rax = -EBADF;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("dup2(vfd=%d (%d), new_vfd=%lld (%d)) = %lld\n",
+					 vfd, fd, new_vfd, new_fd, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_nanosleep, [](vCPU& cpu) { // nanosleep
