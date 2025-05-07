@@ -196,11 +196,32 @@ void Machine::setup_multithreading()
 		56, [] (vCPU& cpu) { // clone
 			auto& regs = cpu.registers();
 			const auto flags = regs.rdi;
-			const auto stack = regs.rsi;
+			auto       stack = regs.rsi;
 			const auto ptid  = regs.rdx;
 			const auto ctid  = regs.r10;
-			const auto tls   = regs.r8;
+			uint64_t   tls   = regs.r8;
 			const auto func  = regs.r9; /* NOTE: Only a guess */
+			if (stack == 0x0) {
+				// Allocate a new stack, aligned up from FSBASE to RSP
+				// We assume that RSP also contains some extra data
+				const uint64_t oldstk_top     = cpu.machine().threads().get_thread().fsbase;
+				const uint64_t oldstk_current = cpu.registers().rsp - 0x100;
+				size_t size = oldstk_top - oldstk_current;
+				if (size > 0x1000000) {
+					// Stack is too large, fail out
+					throw std::runtime_error("sys_clone: stack too large");
+				}
+				// Allocate a new stack + 2MB for extra space
+				static constexpr size_t STACK_EXTRA = 0x200000;
+				stack = cpu.machine().mmap_allocate(size + STACK_EXTRA);
+				cpu.machine().copy_from_machine(stack + STACK_EXTRA, cpu.machine(), oldstk_current, size);
+				// Set the new stack pointer relative to the extra space
+				stack = stack + 0x100 + STACK_EXTRA; // Leaving stack space for after clone()
+			}
+			if (tls == 0x0) {
+				// Don't set TLS if not requested
+				tls = cpu.get_special_registers().fs.base;
+			}
 
 			auto& parent = cpu.machine().threads().get_thread();
 			auto& thread = cpu.machine().threads().create(flags, ctid, ptid, stack, tls);
