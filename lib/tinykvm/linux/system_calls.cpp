@@ -125,16 +125,17 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_close, [] (vCPU& cpu) { // CLOSE
 			auto& regs = cpu.registers();
-			if (UNLIKELY(regs.rdi >= 0 && regs.rdi < 3)) {
+			const int vfd = regs.rdi;
+			if (UNLIKELY(vfd >= 0 && vfd < 3)) {
 				/* Silently ignore close on stdin/stdout/stderr */
 				regs.rax = 0;
 			} else {
-				auto opt_entry = cpu.machine().fds().entry_for_vfd(regs.rdi);
+				auto opt_entry = cpu.machine().fds().entry_for_vfd(vfd);
 				if (opt_entry.has_value()) {
 					auto& entry = *opt_entry;
 					if (!entry->is_forked) {
-						const int res = close(entry->real_fd);
-						cpu.machine().fds().free(regs.rdi);
+						const int res = ::close(entry->real_fd);
+						cpu.machine().fds().free(vfd);
 						if (UNLIKELY(res < 0))
 							regs.rax = -errno;
 						else
@@ -1159,11 +1160,12 @@ void Machine::setup_linux_system_calls()
 			try {
 				if (vfd >= 0 && vfd < 3)
 				{
+					fd = vfd;
 					regs.rax = 0;
 				}
 				else
 				{
-					const int fd = cpu.machine().fds().translate(vfd);
+					fd = cpu.machine().fds().translate(vfd);
 					regs.rax = ::shutdown(fd, regs.rsi);
 					if (int(regs.rax) < 0)
 						regs.rax = -errno;

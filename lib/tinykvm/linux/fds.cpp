@@ -445,13 +445,8 @@ namespace tinykvm
 
 	void FileDescriptors::free(int vfd)
 	{
-		auto it = m_fds.find(vfd);
-		if (it != m_fds.end()) {
-			if (UNLIKELY(it->second.is_forked))
-				throw std::runtime_error("Cannot free a forked file descriptor");
-			close(it->second.real_fd);
-			m_fds.erase(it);
-		}
+		m_fds.erase(vfd);
+
 		// Potentially remove the fd from the epoll fds
 		auto res = m_epoll_fds.erase(vfd);
 		if (res > 0) {
