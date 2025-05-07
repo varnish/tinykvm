@@ -82,12 +82,16 @@ void Machine::setup_linux_system_calls()
 				if (UNLIKELY(bytes > 1024*64)) {
 					regs.rax = -1;
 					cpu.set_registers(regs);
+					SYSPRINT("write(fd=%d (%d), data=0x%llX, size=%zu) = %lld\n",
+						vfd, vfd, regs.rsi, bytes, regs.rax);
 					return;
 				}
 			}
 			else if (UNLIKELY(bytes > (64UL << 20))) {
 				regs.rax = -1;
 				cpu.set_registers(regs);
+				SYSPRINT("write(fd=%d (%d), data=0x%llX, size=%zu) = %lld\n",
+					vfd, vfd, regs.rsi, bytes, regs.rax);
 				return;
 			}
 			if (vfd != 1 && vfd != 2) {
@@ -155,9 +159,9 @@ void Machine::setup_linux_system_calls()
 			std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
 			if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
 				regs.rax = -EACCES;
+				cpu.set_registers(regs);
 				SYSPRINT("STAT to path=%s, data=0x%llX = %lld\n",
 					path.c_str(), regs.rsi, regs.rax);
-				cpu.set_registers(regs);
 				return;
 			}
 
@@ -1311,6 +1315,8 @@ void Machine::setup_linux_system_calls()
 				{
 					regs.rax = -EINVAL;
 					cpu.set_registers(regs);
+					SYSPRINT("recvmsg(fd=%d (%d), msg=0x%lX, flags=0x%X) = %lld (EINVAL, iovlen too large)\n",
+							 vfd, fd, g_msg, flags, regs.rax);
 					return;
 				}
 				// Copy the iovecs from guest memory
