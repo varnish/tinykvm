@@ -28,8 +28,10 @@ namespace tinykvm
 		using open_readable_t = std::function<bool(std::string&)>;
 		using open_writable_t = std::function<bool(std::string&)>;
 		using connect_socket_t = std::function<bool(int, struct sockaddr_storage&)>;
+		using listening_socket_t = std::function<void(int, int)>;
 		using resolve_symlink_t = std::function<bool(std::string&)>;
 		using find_readonly_master_vm_fd_t = std::function<std::optional<const Entry*>(int)>;
+		using epoll_wait_t = std::function<bool(int, int, int)>;
 
 		FileDescriptors(Machine& machine);
 		~FileDescriptors();
@@ -269,6 +271,30 @@ namespace tinykvm
 			m_find_ro_master_vm_fd = callback;
 		}
 
+		const listening_socket_t& get_listening_socket_callback() const noexcept {
+			return m_listening_socket;
+		}
+		void set_listening_socket_callback(listening_socket_t callback) noexcept {
+			m_listening_socket = callback;
+		}
+
+		/// @brief Set the callback for epoll_wait. This is used to do something
+		/// when epoll_wait is about to be called. For example, the main loop is
+		/// often timeout=-1, and this is a good time to scale horizontally with
+		/// VM forks. The return value indicates if the epoll_wait should be
+		/// called or not.
+		/// @param callback The callback to set.
+		void set_epoll_wait_callback(epoll_wait_t callback) noexcept {
+			m_epoll_wait = callback;
+		}
+
+		/// @brief Get the callback for epoll_wait.
+		/// @return The callback for epoll_wait.
+		const epoll_wait_t& get_epoll_wait_callback() const noexcept {
+			return m_epoll_wait;
+		}
+
+
 		struct EpollEntry
 		{
 			std::unordered_map<int, struct epoll_event> epoll_fds;
@@ -307,6 +333,8 @@ namespace tinykvm
 		open_writable_t m_open_writable;
 		resolve_symlink_t m_resolve_symlink;
 		connect_socket_t m_connect_socket;
+		listening_socket_t m_listening_socket;
+		epoll_wait_t m_epoll_wait;
 		find_readonly_master_vm_fd_t m_find_ro_master_vm_fd;
 		uint16_t m_max_files = DEFAULT_MAX_FILES;
 		uint16_t m_total_fds_opened = 0;

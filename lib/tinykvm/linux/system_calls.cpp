@@ -1071,7 +1071,8 @@ void Machine::setup_linux_system_calls()
 		SYS_listen, [](vCPU& cpu) { // LISTEN
 			auto& regs = cpu.registers();
 			// int listen(int sockfd, int backlog);
-			const int fd = cpu.machine().fds().translate_writable_vfd(regs.rdi);
+			const int vfd = regs.rdi;
+			const int fd = cpu.machine().fds().translate_writable_vfd(vfd);
 			const int backlog = regs.rsi;
 			if (UNLIKELY(listen(fd, backlog) < 0))
 			{
@@ -1079,11 +1080,16 @@ void Machine::setup_linux_system_calls()
 			}
 			else
 			{
+				if (auto callback = cpu.machine().fds().get_listening_socket_callback();
+					callback != nullptr)
+				{
+					callback(vfd, fd);
+				}
 				regs.rax = 0;
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("listen(fd=%d, backlog=%d) = %lld\n",
-					 fd, backlog, regs.rax);
+			SYSPRINT("listen(fd=%d (%d), backlog=%d) = %lld\n",
+					 vfd, fd, backlog, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_accept4, [](vCPU& cpu) { // ACCEPT4
@@ -2218,6 +2224,10 @@ void Machine::setup_linux_system_calls()
 				.tv_nsec = 25000000,
 			};
 			const int epollfd = cpu.machine().fds().translate(vfd);
+			if (const auto& callback = cpu.machine().fds().get_epoll_wait_callback(); callback) {
+				if (!callback(vfd, epollfd, timeout))
+					return;
+			}
 			const int result =
 				epoll_pwait2(epollfd, guest_events.data(), maxevents, &ts, nullptr);
 			if (cpu.timed_out()) {
