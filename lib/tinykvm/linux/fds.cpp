@@ -170,7 +170,7 @@ namespace tinykvm
 		if (fd < 0) {
 			throw std::runtime_error("TinyKVM: Invalid file descriptor in FileDescriptors::add()");
 		}
-		if (this->m_total_fds_opened >= this->m_max_total_fds_opened) {
+		if (this->m_max_total_fds_opened != 0 && this->m_total_fds_opened >= this->m_max_total_fds_opened) {
 			// We have a limit on the total number of file descriptors,
 			// so since we aren't going to manage this fd, we need to close it.
 			close(fd);
@@ -222,8 +222,8 @@ namespace tinykvm
 		if (fd < 0) {
 			throw std::runtime_error("TinyKVM: Invalid fd in FileDescriptors::manage_as()");
 		}
-		this->m_total_fds_opened++;
-		if (this->m_total_fds_opened >= this->m_max_total_fds_opened) {
+		if (this->m_max_total_fds_opened != 0 &&
+			this->m_total_fds_opened >= this->m_max_total_fds_opened) {
 			// We have a limit on the total number of file descriptors,
 			// so since we aren't going to manage this fd, we need to close it.
 			close(fd);
@@ -235,6 +235,7 @@ namespace tinykvm
 			throw std::runtime_error("TinyKVM: Too many open files, max_files = " +
 				std::to_string(this->m_max_files));
 		}
+		this->m_total_fds_opened++;
 
 		Entry entry{fd, is_writable, false};
 		m_fds.insert_or_assign(vfd, entry);

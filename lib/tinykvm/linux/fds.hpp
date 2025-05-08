@@ -17,7 +17,7 @@ namespace tinykvm
 	struct FileDescriptors
 	{
 		static constexpr unsigned DEFAULT_MAX_FILES = 256;
-		static constexpr unsigned DEFAULT_TOTAL_FILES = 4096;
+		static constexpr unsigned DEFAULT_TOTAL_FILES = 0; // 0 means unlimited
 		static constexpr int SOCKET_BIT = 0x40000000;
 		struct Entry
 		{
