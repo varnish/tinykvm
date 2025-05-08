@@ -1096,7 +1096,8 @@ void Machine::setup_linux_system_calls()
 			const int flags = regs.r10;
 			struct sockaddr_storage addr {};
 			socklen_t addrlen = sizeof(addr);
-			if (UNLIKELY(accept4(fd, (struct sockaddr *)&addr, &addrlen, flags) < 0))
+			const int result = accept4(fd, (struct sockaddr *)&addr, &addrlen, flags);
+			if (UNLIKELY(result < 0))
 			{
 				regs.rax = -errno;
 			}
@@ -1108,7 +1109,7 @@ void Machine::setup_linux_system_calls()
 				if (g_addrlen != 0x0) {
 					cpu.machine().copy_to_guest(g_addrlen, &addrlen, sizeof(addrlen));
 				}
-				regs.rax = cpu.machine().fds().manage(fd, true, true);
+				regs.rax = cpu.machine().fds().manage(result, true, true);
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("accept4(fd=%d, addr=0x%lX, addrlen=0x%lX, flags=%d) = %lld\n",
