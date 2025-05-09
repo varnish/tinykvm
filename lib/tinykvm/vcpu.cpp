@@ -74,7 +74,7 @@ void* Machine::create_vcpu_timer()
 	return timer_id;
 }
 
-void vCPU::init(int id, Machine& machine)
+void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 {
 	this->cpu_id = id;
 	this->m_machine = &machine;
@@ -167,6 +167,10 @@ void vCPU::init(int id, Machine& machine)
 
 	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < (int)msrs.nmsrs) {
 		Machine::machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
+	}
+
+	if (options.clock_gettime_uses_rdtsc) {
+		mutable_interrupt_header().set_clock_gettime_uses_rdtsc(true);
 	}
 }
 

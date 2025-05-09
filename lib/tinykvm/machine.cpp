@@ -46,7 +46,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 		this->elf_loader(binary, options);
 	}
 
-	this->vcpu.init(0, *this);
+	this->vcpu.init(0, *this, options);
 	this->setup_long_mode(options);
 	struct tinykvm_regs regs {};
 	/* Store the registers, so that Machine is ready to go */
@@ -90,7 +90,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	}
 
 	/* Initialize vCPU and long mode (fast path) */
-	this->vcpu.init(0, *this);
+	this->vcpu.init(0, *this, options);
 	this->setup_cow_mode(&other);
 
 	/* We have to make a copy here, to make sure the fork knows
@@ -130,7 +130,7 @@ void Machine::reset_to(std::string_view binary, const MachineOptions& options)
 
 	this->elf_loader(binary, options);
 
-	this->vcpu.init(0, *this);
+	this->vcpu.init(0, *this, options);
 	this->setup_long_mode(options);
 	struct tinykvm_regs regs {};
 	/* Store the registers, so that Machine is ready to go */

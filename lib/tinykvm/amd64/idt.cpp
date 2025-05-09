@@ -72,6 +72,9 @@ static_assert(sizeof(interrupts) > 10);
 const iasm_header& interrupt_header() {
 	return *(const iasm_header*) &interrupts[0];
 }
+iasm_header& mutable_interrupt_header() {
+	return *(iasm_header*) &interrupts[0];
+}
 
 void setup_amd64_exception_regs(struct kvm_sregs& sregs, uint64_t addr)
 {

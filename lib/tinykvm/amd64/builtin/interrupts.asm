@@ -27,11 +27,15 @@ dw .vm64_gettimeofday
 dw .vm64_exception
 dw .vm64_except1 - .vm64_exception
 dw .vm64_dso
+.clock_gettime_uses_rdtsc:
+dw 1 ;; clock_gettime_uses_rdtsc
 
 ALIGN 0x10
 .vm64_syscall:
-	cmp eax, 158 ;; PRCTL
+	cmp ax, 158 ;; PRCTL
 	je .vm64_prctl
+	cmp ax, 228 ;; CLOCK_GETTIME
+	je .vm64_clock_gettime
 	cmp eax, 0x1F777 ;; ENTRY SYSCALL
 	je .vm64_entrycall
 	cmp eax, 0x1F707 ;; REENTRY SYSCALL
@@ -75,6 +79,56 @@ ALIGN 0x10
 	;; PRCTL fallback to host syscall trap
 	out 0, ax
 	jmp .vm64_prctl_end
+
+.vm64_clock_gettime:
+	;; Emulate CLOCK_GETTIME syscall
+	;; rdi = clockid
+	;; rsi = timespec
+	cmp rdi, 0 ;; CLOCK_REALTIME
+	je .vm64_clock_gettime_trap
+	stac
+	push rax
+	push rcx
+	push rdx
+	;; Check if clock_gettime_uses_rdtsc using RIP-relative addressing
+	mov ax, [0x2000 + .clock_gettime_uses_rdtsc]
+	cmp rax, 0
+	je .vm64_clock_gettime_syscall
+	;; TSC puts 64-bit timestamp in EAX:EDX
+	rdtsc
+	mov     ecx, eax
+	mov     eax, eax
+	shl     rdx, 32
+	or      rax, rdx
+	;; Convert TSC to nanoseconds
+	;; 1 TSC = 1.0 / 4.0 GHz = 0.25 ns
+	shr     rax, 2
+	;; Set tv_sec and tv_nsec
+	mov     rdx, 4835703278458516699
+	mul     rdx
+	shr     rdx, 18
+	imul    rax, rdx, 1000000
+	sub     rcx, rax
+	mov     rax, rcx
+	mov [rsi], rax     ;; seconds
+	mov [rsi + 8], rdx ;; nanoseconds
+	;; Restore registers
+	pop rdx
+	pop rcx
+	pop rax
+	clac
+	;; Return to the caller
+	mov eax, 0
+	o64 sysret
+.vm64_clock_gettime_syscall:
+	;; Restore registers
+	pop rdx
+	pop rcx
+	pop rax
+	clac
+.vm64_clock_gettime_trap:
+	out 0, ax
+	o64 sysret
 
 .vm64_gettimeofday:
 	mov eax, 96 ;; gettimeofday

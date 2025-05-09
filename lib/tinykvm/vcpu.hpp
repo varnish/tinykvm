@@ -8,7 +8,7 @@ namespace tinykvm
 
     struct vCPU
     {
-        void init(int id, Machine &);
+        void init(int id, Machine&, const MachineOptions&);
         void smp_init(int id, Machine &);
         void deinit();
         tinykvm_x86regs& registers();
