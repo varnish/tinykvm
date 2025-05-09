@@ -294,6 +294,14 @@ namespace tinykvm
 			return m_epoll_wait;
 		}
 
+		/// @brief Enable or disable preempting epoll_wait. This is used to
+		/// guarantee progress if other threads "block" the main thread.
+		void set_preempt_epoll_wait(bool preempt) noexcept {
+			m_preempt_epoll_wait = preempt;
+		}
+		bool preempt_epoll_wait() const noexcept {
+			return m_preempt_epoll_wait;
+		}
 
 		struct EpollEntry
 		{
@@ -329,6 +337,7 @@ namespace tinykvm
 		std::string m_current_working_directory;
 		int m_current_working_directory_fd = -1;
 		bool m_verbose = false;
+		bool m_preempt_epoll_wait = true;
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;
 		resolve_symlink_t m_resolve_symlink;

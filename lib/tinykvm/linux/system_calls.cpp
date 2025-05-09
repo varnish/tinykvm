@@ -2281,7 +2281,7 @@ void Machine::setup_linux_system_calls()
 			{
 				// With infinite timeout, we shouldn't exit the epoll wait
 				// loop, so we need to re-trigger the syscall when we return.
-				if (timeout == -1) {
+				if (timeout == -1 && cpu.machine().fds().preempt_epoll_wait()) {
 					//regs.rip -= 2; // Make sure we re-trigger the syscall
 					cpu.machine().threads().suspend_and_yield(SYS_epoll_wait);
 				} else {
