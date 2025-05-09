@@ -1243,7 +1243,7 @@ void Machine::setup_linux_system_calls()
 			const int vfd = regs.rdi;
 			const uint64_t g_buf = regs.rsi;
 			const uint64_t bytes = regs.rdx;
-			const int flags = regs.r10;
+			const int flags = regs.r10 | MSG_NOSIGNAL; // Ignore SIGPIPE
 			const uint64_t g_addr = regs.r8;
 			const socklen_t addrlen = regs.r9;
 			int fd = -1;
@@ -1265,33 +1265,28 @@ void Machine::setup_linux_system_calls()
 					const auto bufcount =
 						cpu.machine().gather_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
 
+					struct sockaddr addr;
+					struct msghdr msg {};
+					msg.msg_name = nullptr;
+					msg.msg_namelen = 0;
+					msg.msg_iov = (struct iovec *)&buffers[0];
+					msg.msg_iovlen = bufcount;
+					msg.msg_control = nullptr;
+					msg.msg_controllen = 0;
+					msg.msg_flags = flags;
+
 					if (addrlen > 0 && g_addr != 0x0) {
-						struct sockaddr addr {};
 						cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
-						// Can't use writev here, because we need to send the address too
-						ssize_t total = 0;
-						for (size_t i = 0; i < bufcount; i++)
-						{
-							// TODO: Use sendmsg() instead of sendto()
-							ssize_t result = sendto(fd, buffers[i].ptr, buffers[i].len, flags, &addr, addrlen);
-							if (UNLIKELY(result < 0))
-							{
-								total = -errno;
-								break;
-							}
-							total += result;
-						}
-						regs.rax = total;
+						msg.msg_name = &addr;
+						msg.msg_namelen = addrlen;
+					}
+
+					ssize_t result = sendmsg(fd, &msg, flags);
+					if (UNLIKELY(result < 0)) {
+						regs.rax = -errno;
 					}
 					else {
-						// Use writev
-						ssize_t result = writev(fd, (const iovec *)&buffers[0], bufcount);
-						if (UNLIKELY(result < 0)) {
-							regs.rax = -errno;
-						}
-						else {
-							regs.rax = result;
-						}
+						regs.rax = result;
 					}
 				}
 			} catch (...) {
@@ -1335,7 +1330,7 @@ void Machine::setup_linux_system_calls()
 					msg.msg_iovlen = bufcount;
 					msg.msg_control = nullptr;
 					msg.msg_controllen = 0;
-					msg.msg_flags = 0;
+					msg.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
 					ssize_t result = recvmsg(fd, &msg, flags);
 					if (UNLIKELY(result < 0))
 					{
@@ -1403,7 +1398,7 @@ void Machine::setup_linux_system_calls()
 				msg_recv.msg_iovlen = bufcount;
 				msg_recv.msg_control = nullptr;
 				msg_recv.msg_controllen = 0;
-				msg_recv.msg_flags = 0;
+				msg_recv.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
 				// Perform the recvmsg
 				ssize_t result = recvmsg(fd, &msg_recv, flags);
 				if (UNLIKELY(result < 0)) {
