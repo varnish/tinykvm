@@ -298,6 +298,7 @@ namespace tinykvm
 			std::unordered_set<int> shared_epoll_fds;
 		};
 		EpollEntry& get_epoll_entry_for_vfd(int vfd);
+		auto& get_epoll_entries() { return m_epoll_fds; }
 		enum SocketType : int {
 			INVALID,
 			PIPE2,
