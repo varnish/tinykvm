@@ -29,9 +29,11 @@ namespace tinykvm
 		using open_writable_t = std::function<bool(std::string&)>;
 		using connect_socket_t = std::function<bool(int, struct sockaddr_storage&)>;
 		using listening_socket_t = std::function<void(int, int)>;
+		using accept_socket_t = std::function<int(int, int, int, struct sockaddr_storage&, socklen_t&)>;
 		using resolve_symlink_t = std::function<bool(std::string&)>;
 		using find_readonly_master_vm_fd_t = std::function<std::optional<const Entry*>(int)>;
 		using epoll_wait_t = std::function<bool(int, int, int)>;
+		using free_fd_t = std::function<bool(int, Entry&)>;
 
 		FileDescriptors(Machine& machine);
 		~FileDescriptors();
@@ -43,11 +45,12 @@ namespace tinykvm
 		/// @return The virtual file descriptor.
 		int manage(int fd, bool is_socket, bool is_writable = false);
 		int manage_duplicate(int original_vfd, int fd, bool is_socket, bool is_writable = false);
-		void manage_as(int vfd, int fd, bool is_socket, bool is_writable);
+		Entry& manage_as(int vfd, int fd, bool is_socket, bool is_writable);
 
 		/// @brief Remove a virtual file descriptor from the list of managed FDs.
 		/// @param vfd The virtual file descriptor to remove.
-		void free(int vfd);
+		/// @return True if the VM was reset during the call, false otherwise.
+		bool free(int vfd);
 
 		std::optional<const Entry*> entry_for_vfd(int vfd) const;
 
@@ -214,7 +217,7 @@ namespace tinykvm
 		/// a vector of bytes that contains the socket address, eg. a struct sockaddr.
 		/// @param callback The callback to set.
 		void set_connect_socket_callback(connect_socket_t callback) noexcept {
-			m_connect_socket = callback;
+			connect_socket_callback = callback;
 		}
 
 		/// @brief Validate and modify the socket address. This is used to check if a
@@ -271,29 +274,6 @@ namespace tinykvm
 			m_find_ro_master_vm_fd = callback;
 		}
 
-		const listening_socket_t& get_listening_socket_callback() const noexcept {
-			return m_listening_socket;
-		}
-		void set_listening_socket_callback(listening_socket_t callback) noexcept {
-			m_listening_socket = callback;
-		}
-
-		/// @brief Set the callback for epoll_wait. This is used to do something
-		/// when epoll_wait is about to be called. For example, the main loop is
-		/// often timeout=-1, and this is a good time to scale horizontally with
-		/// VM forks. The return value indicates if the epoll_wait should be
-		/// called or not.
-		/// @param callback The callback to set.
-		void set_epoll_wait_callback(epoll_wait_t callback) noexcept {
-			m_epoll_wait = callback;
-		}
-
-		/// @brief Get the callback for epoll_wait.
-		/// @return The callback for epoll_wait.
-		const epoll_wait_t& get_epoll_wait_callback() const noexcept {
-			return m_epoll_wait;
-		}
-
 		/// @brief Enable or disable preempting epoll_wait. This is used to
 		/// guarantee progress if other threads "block" the main thread.
 		void set_preempt_epoll_wait(bool preempt) noexcept {
@@ -301,6 +281,15 @@ namespace tinykvm
 		}
 		bool preempt_epoll_wait() const noexcept {
 			return m_preempt_epoll_wait;
+		}
+
+		/// @brief Enable or disable accepting connections. This is used to
+		/// pre-emptively decide if accept4() should be called or not.
+		void set_accepting_connections(bool accepting) noexcept {
+			m_acceping_connections = accepting;
+		}
+		bool accepting_connections() const noexcept {
+			return m_acceping_connections;
 		}
 
 		struct EpollEntry
@@ -315,6 +304,7 @@ namespace tinykvm
 			SOCKETPAIR,
 			EVENTFD,
 			DUPFD,
+			LISTEN,
 		};
 		struct SocketPair
 		{
@@ -338,12 +328,10 @@ namespace tinykvm
 		int m_current_working_directory_fd = -1;
 		bool m_verbose = false;
 		bool m_preempt_epoll_wait = true;
+		bool m_acceping_connections = true;
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;
 		resolve_symlink_t m_resolve_symlink;
-		connect_socket_t m_connect_socket;
-		listening_socket_t m_listening_socket;
-		epoll_wait_t m_epoll_wait;
 		find_readonly_master_vm_fd_t m_find_ro_master_vm_fd;
 		uint16_t m_max_files = DEFAULT_MAX_FILES;
 		uint16_t m_total_fds_opened = 0;
@@ -351,5 +339,12 @@ namespace tinykvm
 
 		std::map<int, std::shared_ptr<EpollEntry>> m_epoll_fds;
 		std::vector<SocketPair> m_sockets;
+
+	public:
+		connect_socket_t   connect_socket_callback;
+		accept_socket_t    accept_socket_callback;
+		listening_socket_t listening_socket_callback;
+		epoll_wait_t       epoll_wait_callback;
+		free_fd_t          free_fd_callback;
 	};
 }

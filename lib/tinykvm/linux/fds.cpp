@@ -158,6 +158,17 @@ namespace tinykvm
 					}
 					break;
 				}
+				case SocketType::LISTEN: {
+					// This is a listening socket, however it already exists
+					// as it is shared between the main VM and the forked VMs.
+					// Instead of re-creating the socket we will just manage it.
+					Entry& entry = this->manage_as(sp.vfd1, sp.vfd2, true, true);
+					entry.is_forked = true;
+					if (UNLIKELY(this->m_verbose)) {
+						fprintf(stderr, "TinyKVM: Created new listen socket %d (%d)\n", sp.vfd1, sp.vfd2);
+					}
+					break;
+				}
 				default:
 					fprintf(stderr, "TinyKVM: Unknown socket type %d\n", sp.type);
 					throw std::runtime_error("TinyKVM: Unknown socket type");
@@ -216,7 +227,7 @@ namespace tinykvm
 		}
 		return ret;
 	}
-	void FileDescriptors::manage_as(int vfd, int fd, bool is_socket, bool is_writable)
+	FileDescriptors::Entry& FileDescriptors::manage_as(int vfd, int fd, bool is_socket, bool is_writable)
 	{
 		(void)is_socket; // Unused
 		if (fd < 0) {
@@ -238,9 +249,10 @@ namespace tinykvm
 		this->m_total_fds_opened++;
 
 		Entry entry{fd, is_writable, false};
-		m_fds.insert_or_assign(vfd, entry);
+		auto res = m_fds.insert_or_assign(vfd, entry);
 		// Make sure we are not overwriting the vfd
 		this->m_next_file_fd = std::max(this->m_next_file_fd, vfd + 1);
+		return res.first->second;
 	}
 
 	std::optional<const FileDescriptors::Entry*> FileDescriptors::entry_for_vfd(int vfd) const
@@ -444,8 +456,16 @@ namespace tinykvm
 		return -1;
 	}
 
-	void FileDescriptors::free(int vfd)
+	bool FileDescriptors::free(int vfd)
 	{
+		if (this->free_fd_callback) {
+			if (this->free_fd_callback(vfd, m_fds.at(vfd))) {
+				// The callback has reset the VM completely,
+				// so there is nothing to do here.
+				return true;
+			}
+		}
+
 		m_fds.erase(vfd);
 
 		// Potentially remove the fd from the epoll fds
@@ -467,6 +487,7 @@ namespace tinykvm
 			}
 			m_sockets.erase(it2, m_sockets.end());
 		}
+		return false;
 	}
 
 	void FileDescriptors::add_readonly_file(const std::string& path)
@@ -577,8 +598,8 @@ namespace tinykvm
 
 	bool FileDescriptors::validate_socket_address(const int socket_fd, struct sockaddr_storage& socket_address) const noexcept
 	{
-		if (m_connect_socket) {
-			return m_connect_socket(socket_fd, socket_address);
+		if (connect_socket_callback) {
+			return connect_socket_callback(socket_fd, socket_address);
 		}
 		// If no callback is set, we disallow all connect() calls.
 		return false;
@@ -671,6 +692,9 @@ namespace tinykvm
 					break;
 				case SocketType::DUPFD:
 					type = "dupfd";
+					break;
+				case SocketType::LISTEN:
+					type = "listener";
 					break;
 				default:
 					type = "unknown";

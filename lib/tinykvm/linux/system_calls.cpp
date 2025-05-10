@@ -134,16 +134,20 @@ void Machine::setup_linux_system_calls()
 		SYS_close, [] (vCPU& cpu) { // CLOSE
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
+			int real_fd = -1;
 			if (UNLIKELY(vfd >= 0 && vfd < 3)) {
 				/* Silently ignore close on stdin/stdout/stderr */
+				real_fd = vfd;
 				regs.rax = 0;
 			} else {
 				auto opt_entry = cpu.machine().fds().entry_for_vfd(vfd);
 				if (opt_entry.has_value()) {
 					auto& entry = *opt_entry;
+					real_fd = entry->real_fd;
 					if (!entry->is_forked) {
 						const int res = ::close(entry->real_fd);
-						cpu.machine().fds().free(vfd);
+						if (cpu.machine().fds().free(vfd))
+							return;
 						if (UNLIKELY(res < 0))
 							regs.rax = -errno;
 						else
@@ -158,7 +162,8 @@ void Machine::setup_linux_system_calls()
 				}
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("CLOSE(fd=%lld) = %lld\n", regs.rdi, regs.rax);
+			SYSPRINT("CLOSE(fd=%d (%d)) = %lld\n",
+				vfd, real_fd, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_stat, [] (vCPU& cpu) { // STAT
@@ -864,7 +869,7 @@ void Machine::setup_linux_system_calls()
 				// No need to dup2() to the same fd
 				regs.rax = new_vfd;
 				cpu.set_registers(regs);
-				SYSPRINT("dup2(vfd=%d (%d), new_vfd=%lld (%d)) = %lld\n",
+				SYSPRINT("dup2(vfd=%d (%d), new_vfd=%d (%d)) = %lld\n",
 						 vfd, vfd, new_vfd, new_vfd, regs.rax);
 				return;
 			}
@@ -894,7 +899,7 @@ void Machine::setup_linux_system_calls()
 				regs.rax = -EBADF;
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("dup2(vfd=%d (%d), new_vfd=%lld (%d)) = %lld\n",
+			SYSPRINT("dup2(vfd=%d (%d), new_vfd=%d (%d)) = %lld\n",
 					 vfd, fd, new_vfd, new_fd, regs.rax);
 		});
 	Machine::install_syscall_handler(
@@ -1080,7 +1085,7 @@ void Machine::setup_linux_system_calls()
 			}
 			else
 			{
-				if (auto callback = cpu.machine().fds().get_listening_socket_callback();
+				if (auto& callback = cpu.machine().fds().listening_socket_callback;
 					callback != nullptr)
 				{
 					callback(vfd, fd);
@@ -1096,12 +1101,19 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			// int accept4(int sockfd, struct sockaddr *addr,
 			//             socklen_t *addrlen, int flags);
-			const int fd = cpu.machine().fds().translate_writable_vfd(regs.rdi);
+			const int vfd = regs.rdi;
+			const int fd = cpu.machine().fds().translate_writable_vfd(vfd);
 			const uint64_t g_addr = regs.rsi;
 			const size_t g_addrlen = regs.rdx;
 			const int flags = regs.r10;
 			struct sockaddr_storage addr {};
 			socklen_t addrlen = sizeof(addr);
+			if (false && !cpu.machine().fds().accepting_connections()) {
+				SYSPRINT("accept4: fd %d (%d) is not accepting connections\n", vfd, fd);
+				regs.rax = -EAGAIN;
+				cpu.set_registers(regs);
+				return;
+			}
 			const int result = accept4(fd, (struct sockaddr *)&addr, &addrlen, flags);
 			if (UNLIKELY(result < 0))
 			{
@@ -1115,11 +1127,18 @@ void Machine::setup_linux_system_calls()
 				if (g_addrlen != 0x0) {
 					cpu.machine().copy_to_guest(g_addrlen, &addrlen, sizeof(addrlen));
 				}
-				regs.rax = cpu.machine().fds().manage(result, true, true);
+				if (cpu.machine().fds().accept_socket_callback)
+				{
+					regs.rax = cpu.machine().fds().accept_socket_callback(vfd, fd, result, addr, addrlen);
+				}
+				else
+				{
+					regs.rax = cpu.machine().fds().manage(result, true, true);
+				}
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("accept4(fd=%d, addr=0x%lX, addrlen=0x%lX, flags=%d) = %lld\n",
-					 fd, g_addr, g_addrlen, flags, regs.rax);
+			SYSPRINT("accept4(fd=%d (%d), addr=0x%lX, addrlen=0x%lX, flags=%d) = %lld\n",
+					 vfd, fd, g_addr, g_addrlen, flags, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_getsockname, [](vCPU& cpu) { // GETSOCKNAME
@@ -1893,9 +1912,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			struct timespec ts;
 			clockid_t clk_id = regs.rdi;
-			if (clk_id == CLOCK_REALTIME)
-				clk_id = CLOCK_REALTIME;
-			else
+			if (UNLIKELY(clk_id != CLOCK_REALTIME))
 				clk_id = CLOCK_MONOTONIC;
 			regs.rax = clock_gettime(clk_id, &ts);
 			if (int(regs.rax) < 0)
@@ -2219,7 +2236,7 @@ void Machine::setup_linux_system_calls()
 				.tv_nsec = 25000000,
 			};
 			const int epollfd = cpu.machine().fds().translate(vfd);
-			if (const auto& callback = cpu.machine().fds().get_epoll_wait_callback(); callback) {
+			if (const auto& callback = cpu.machine().fds().epoll_wait_callback; callback) {
 				if (!callback(vfd, epollfd, timeout))
 					return;
 			}
