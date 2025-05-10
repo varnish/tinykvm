@@ -145,9 +145,9 @@ void Machine::setup_linux_system_calls()
 					auto& entry = *opt_entry;
 					real_fd = entry->real_fd;
 					if (!entry->is_forked) {
-						const int res = ::close(entry->real_fd);
 						if (cpu.machine().fds().free(vfd))
 							return;
+						const int res = ::close(entry->real_fd);
 						if (UNLIKELY(res < 0))
 							regs.rax = -errno;
 						else
@@ -1108,7 +1108,7 @@ void Machine::setup_linux_system_calls()
 			const int flags = regs.r10;
 			struct sockaddr_storage addr {};
 			socklen_t addrlen = sizeof(addr);
-			if (false && !cpu.machine().fds().accepting_connections()) {
+			if (!cpu.machine().fds().accepting_connections()) {
 				SYSPRINT("accept4: fd %d (%d) is not accepting connections\n", vfd, fd);
 				regs.rax = -EAGAIN;
 				cpu.set_registers(regs);

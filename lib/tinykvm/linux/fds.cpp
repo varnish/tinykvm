@@ -86,6 +86,7 @@ namespace tinykvm
 			if (!entry->shared_epoll_fds.empty())
 			{
 				// Check if one of the shared epoll fds is already in the list
+				bool found = false;
 				for (auto shared_vfd : entry->shared_epoll_fds) {
 					auto it = this->m_epoll_fds.find(shared_vfd);
 					if (it != this->m_epoll_fds.end()) {
@@ -94,9 +95,13 @@ namespace tinykvm
 						if (UNLIKELY(this->m_verbose)) {
 							fprintf(stderr, "TinyKVM: Sharing epoll fd %d with %d\n", vfd, shared_vfd);
 						}
-						// Continue to the next entry
-						continue;
+						found = true;
+						break;
 					}
+				}
+				if (found) {
+					// Continue to the next entry
+					continue;
 				}
 			}
 			auto cloned_entry = std::make_shared<EpollEntry>();
