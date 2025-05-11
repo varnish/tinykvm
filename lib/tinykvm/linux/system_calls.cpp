@@ -582,6 +582,21 @@ void Machine::setup_linux_system_calls()
 			case TIOCGWINSZ: // Get window size
 				regs.rax = 80;
 				break;
+			case FIONBIO: // Set non-blocking I/O
+				if (int(regs.rdi) >= 0 && int(regs.rdi) < 3)
+				{
+					// Ignore
+					regs.rax = 0;
+				} else {
+					int arg = 0;
+					cpu.machine().copy_from_guest(&arg, regs.rsi, sizeof(arg));
+					if (arg != 0)
+						fcntl(fd, F_SETFL, O_NONBLOCK);
+					else
+						fcntl(fd, F_SETFL, ~O_NONBLOCK);
+					regs.rax = 0;
+				}
+				break;
 			case FIONREAD: {
 					// Get number of bytes available for reading
 					const uint64_t g_bytes = regs.rdx;
@@ -2230,18 +2245,25 @@ void Machine::setup_linux_system_calls()
 			const uint64_t g_events = regs.rsi;
 			const int maxevents = std::min(size_t(regs.rdx), guest_events.size());
 			const int timeout = regs.r10;
-			// Only wait for 250us, as we are *not* pre-empting the guest
-			const struct timespec ts {
-				.tv_sec = 0,
-				.tv_nsec = 25000000,
-			};
 			const int epollfd = cpu.machine().fds().translate(vfd);
 			if (const auto& callback = cpu.machine().fds().epoll_wait_callback; callback) {
 				if (!callback(vfd, epollfd, timeout))
 					return;
 			}
-			const int result =
-				epoll_pwait2(epollfd, guest_events.data(), maxevents, &ts, nullptr);
+			int result = -1;
+			if (cpu.machine().fds().preempt_epoll_wait()) {
+				// Only wait for 250us, as we are *not* pre-empting the guest
+				const struct timespec ts {
+					.tv_sec = 0,
+					.tv_nsec = 25000000,
+				};
+				result = epoll_pwait2(epollfd, guest_events.data(), maxevents, &ts, nullptr);
+			}
+			else
+			{
+				// Wait for as long as the timeout
+				result = epoll_wait(epollfd, guest_events.data(), maxevents, timeout);
+			}
 			if (cpu.timed_out()) {
 				throw MachineTimeoutException("epoll_wait timed out");
 			}
