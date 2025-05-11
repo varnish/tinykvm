@@ -1277,7 +1277,7 @@ void Machine::setup_linux_system_calls()
 			const int vfd = regs.rdi;
 			const uint64_t g_buf = regs.rsi;
 			const uint64_t bytes = regs.rdx;
-			const int flags = regs.r10 | MSG_NOSIGNAL; // Ignore SIGPIPE
+			const int flags = regs.r10;
 			const uint64_t g_addr = regs.r8;
 			const socklen_t addrlen = regs.r9;
 			int fd = -1;
@@ -1307,7 +1307,7 @@ void Machine::setup_linux_system_calls()
 					msg.msg_iovlen = bufcount;
 					msg.msg_control = nullptr;
 					msg.msg_controllen = 0;
-					msg.msg_flags = flags;
+					msg.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
 
 					if (addrlen > 0 && g_addr != 0x0) {
 						cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
@@ -1351,9 +1351,9 @@ void Machine::setup_linux_system_calls()
 				else
 				{
 					fd = cpu.machine().fds().translate(vfd);
-					std::array<tinykvm::Machine::Buffer, 256> buffers;
+					std::array<tinykvm::Machine::WrBuffer, 256> buffers;
 					const auto bufcount =
-						cpu.machine().gather_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
+						cpu.machine().writable_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
 					// We can't use recvfrom here, but there is recvmsg()
 					// All the guest data is in the buffers, which is compatible with iovec
 					struct sockaddr addr {};
@@ -1766,6 +1766,8 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_gettimeofday, [](vCPU& cpu) { // gettimeofday
 			auto& regs = cpu.registers();
+			const uint64_t g_buf = regs.rdi;
+			const uint64_t g_tzbuf = regs.rsi;
 			struct timeval tv;
 			regs.rax = gettimeofday(&tv, nullptr);
 			if (int(regs.rax) < 0)
@@ -1777,8 +1779,8 @@ void Machine::setup_linux_system_calls()
 				cpu.machine().copy_to_guest(regs.rdi, &tv, sizeof(tv));
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("gettimeofday(buf=0x%llX) = %lld\n",
-					 regs.rdi, regs.rax);
+			SYSPRINT("gettimeofday(buf=0x%lX, tzbuf=0x%lX) = %lld\n",
+					 g_buf, g_tzbuf, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_getgid, [](vCPU& cpu) { // GETGID
