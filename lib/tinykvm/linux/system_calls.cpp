@@ -145,9 +145,10 @@ void Machine::setup_linux_system_calls()
 					auto& entry = *opt_entry;
 					real_fd = entry->real_fd;
 					if (!entry->is_forked) {
+						const int real_fd = entry->real_fd;
 						if (cpu.machine().fds().free(vfd))
 							return;
-						const int res = ::close(entry->real_fd);
+						const int res = ::close(real_fd);
 						if (UNLIKELY(res < 0))
 							regs.rax = -errno;
 						else
