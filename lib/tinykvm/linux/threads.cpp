@@ -330,7 +330,7 @@ void Machine::setup_multithreading()
 				cpu.machine().copy_from_guest(&futexVal, addr, sizeof(futexVal));
 				THPRINT("FUTEX: Waiting for unlock... uaddr=%u val=%u\n", futexVal, val);
 				if (futexVal == val) {
-					if (cpu.machine().threads().suspend_and_yield()) {
+					if (cpu.machine().threads().suspend_and_yield(-EAGAIN)) {
 						return;
 					}
 					// Deadlock reached. XXX: Force-unlock to continue
@@ -345,7 +345,7 @@ void Machine::setup_multithreading()
 				}
 			} else if ((futex_op & 0xF) == FUTEX_WAKE || (futex_op & 0xF) == FUTEX_WAKE_BITSET) {
 				THPRINT("FUTEX: Waking others on uaddr=0x%lX, val=%u\n", (long) addr, val);
-				if (cpu.machine().threads().suspend_and_yield()) {
+				if (cpu.machine().threads().suspend_and_yield(0)) {
 					return;
 				}
 				regs.rax = 0;
