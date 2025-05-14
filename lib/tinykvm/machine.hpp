@@ -31,6 +31,7 @@ struct Machine
 					const std::vector<std::string>& env = {});
 	void run(float timeout_secs = 0.f);
 	void run_in_usermode(float timeout_secs = 0.f);
+	void enter_usermode();
 
 	/* Make a SYSV function call into the VM, with no timeout */
 	template <typename... Args>
@@ -282,7 +283,6 @@ private:
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
 	void smp_vcpu_broadcast(std::function<void(vCPU&)>);
-	void enter_usermode();
 
 	vCPU  vcpu;
 	int   fd = 0;

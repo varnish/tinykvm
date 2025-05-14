@@ -57,6 +57,9 @@ namespace tinykvm
 		/* When enabled, reset_to() will copy all registers
 		   from the master VM to the new VM. */
 		bool reset_copy_all_registers = true;
+		/* When reset_enter_usermode is enabled, the guest will
+		   be forced into usermode after reset_to(). */
+		bool reset_enter_usermode = true;
 		/* When enabled, reset_to() will copy all memory
 		   from the master VM to the forked VM instead of
 		   resetting the memory banks. */

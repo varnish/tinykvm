@@ -175,10 +175,6 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		full_reset = true;
 	} else {
 		full_reset = memory.fork_reset(other, options);
-		if (!full_reset) {
-			/* Restore usermode (just in case?) */
-			this->enter_usermode();
-		}
 	}
 
 	/* We don't need to reset the pagetables with an expensive
@@ -209,6 +205,11 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		auto& m_regs = other.registers();
 		this->set_registers(m_regs);
 		this->set_fpu_registers(other.fpu_registers());
+	}
+	if (options.reset_enter_usermode) {
+		/* Enforce usermode (default). This will crash guests
+		   that were handling a system call during fork. */
+		this->enter_usermode();
 	}
 }
 

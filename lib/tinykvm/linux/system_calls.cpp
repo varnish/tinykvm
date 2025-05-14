@@ -2000,7 +2000,10 @@ void Machine::setup_linux_system_calls()
 					}
 					real_path = path;
 					if (UNLIKELY(!cpu.machine().fds().is_readable_path(real_path))) {
-						throw std::runtime_error("Path not readable: " + real_path);
+						SYSPRINT("OPENAT fd=%ld path was not readable: %s\n", vfd, real_path.c_str());
+						regs.rax = -EPERM;
+						cpu.set_registers(regs);
+						return;
 					}
 
 					int fd = openat(pfd, real_path.c_str(), flags);
@@ -2030,8 +2033,10 @@ void Machine::setup_linux_system_calls()
 
 					real_path = path;
 					if (!cpu.machine().fds().is_writable_path(real_path)) {
-						SYSPRINT("OPENAT path was not writable: %s\n", real_path.c_str());
-						throw std::runtime_error("Path not writable: " + real_path);
+						SYSPRINT("OPENAT fd=%ld path was not writable: %s\n", vfd, real_path.c_str());
+						regs.rax = -EPERM;
+						cpu.set_registers(regs);
+						return;
 					}
 
 					int fd = openat(pfd, real_path.c_str(), flags, S_IWUSR | S_IRUSR);
