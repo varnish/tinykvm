@@ -245,6 +245,8 @@ void Machine::setup_linux_system_calls()
 				regs.rax = -EBADF;
 			}
 			cpu.set_registers(regs);
+			SYSPRINT("lseek(vfd=%lld, fd=%d, offset=%lld, whence=%lld) = %lld\n",
+				regs.rdi, fd, regs.rsi, regs.rdx, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_poll, [](vCPU& cpu) { // POLL
@@ -583,6 +585,12 @@ void Machine::setup_linux_system_calls()
 			case TIOCGWINSZ: // Get window size
 				regs.rax = 80;
 				break;
+			case TIOCGPTN: { // Get PTY number
+					const int value = 1; // Fake PTY number
+					cpu.machine().copy_to_guest(regs.rdx, &value, sizeof(value));
+					regs.rax = 0;
+				}
+				break;
 			case FIONBIO: // Set non-blocking I/O
 				if (int(regs.rdi) >= 0 && int(regs.rdi) < 3)
 				{
@@ -756,10 +764,24 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_access, [](vCPU& cpu) { // ACCESS
 			auto& regs = cpu.registers();
-			regs.rax = -EPERM;
+			const uint64_t vpath = regs.rdi;
+			std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
+			const int mode = regs.rsi;
+			if (UNLIKELY(!cpu.machine().fds().is_readable_path(path)))
+			{
+				regs.rax = -EACCES;
+			}
+			else if (UNLIKELY(access(path.c_str(), mode) < 0))
+			{
+				regs.rax = -errno;
+			}
+			else
+			{
+				regs.rax = 0;
+			}
 			cpu.set_registers(regs);
-			SYSPRINT("access(0x%llX 0x%llX) = %lld\n",
-					 regs.rdi, regs.rsi, regs.rax);
+			SYSPRINT("access(path=%s (0x%lX), mode=0x%X) = %lld\n",
+					 path.c_str(), vpath, mode, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_pipe2, [](vCPU& cpu) { // PIPE2
@@ -800,6 +822,8 @@ void Machine::setup_linux_system_calls()
 
 			if (old_addr + old_len == mm)
 			{
+				if (old_addr + new_len < old_addr)
+					throw MachineException("mremap: overflow");
 				mm = old_addr + new_len;
 				regs.rax = old_addr;
 			}
@@ -807,20 +831,6 @@ void Machine::setup_linux_system_calls()
 			{
 				// We don't support MREMAP_FIXED
 				regs.rax = ~0LL; /* MAP_FAILED */
-			}
-			else if (flags & MREMAP_MAYMOVE)
-			{
-				uint64_t new_addr = cpu.machine().mmap_allocate(new_len);
-				regs.rax = new_addr;
-				// Copy the old data to the new location
-				cpu.machine().foreach_memory(old_addr, old_len,
-											 [&cpu, &new_addr](std::string_view buffer)
-											 {
-												 cpu.machine().copy_to_guest(new_addr, buffer.data(), buffer.size());
-												 new_addr += buffer.size();
-											 });
-				// Unmap the old range
-				cpu.machine().mmap_unmap(old_addr, old_len);
 			}
 			else
 			{
@@ -1365,7 +1375,7 @@ void Machine::setup_linux_system_calls()
 					msg.msg_iovlen = bufcount;
 					msg.msg_control = nullptr;
 					msg.msg_controllen = 0;
-					msg.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
+					msg.msg_flags = 0;
 					ssize_t result = recvmsg(fd, &msg, flags);
 					if (UNLIKELY(result < 0))
 					{
@@ -1433,7 +1443,17 @@ void Machine::setup_linux_system_calls()
 				msg_recv.msg_iovlen = bufcount;
 				msg_recv.msg_control = nullptr;
 				msg_recv.msg_controllen = 0;
-				msg_recv.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
+				msg_recv.msg_flags = msg.msg_flags | MSG_NOSIGNAL; // Ignore SIGPIPE
+				// Check if there is a control message
+				std::array<uint8_t, 256> control;
+				if (msg.msg_control != nullptr && msg.msg_controllen > 0 &&
+					msg.msg_controllen <= control.size())
+				{
+					// Copy the control message from guest memory
+					cpu.machine().copy_from_guest(control.data(), (uint64_t)msg.msg_control, msg.msg_controllen);
+					msg_recv.msg_control = control.data();
+					msg_recv.msg_controllen = msg.msg_controllen;
+				}
 				// Perform the recvmsg
 				ssize_t result = recvmsg(fd, &msg_recv, flags);
 				if (UNLIKELY(result < 0)) {
@@ -1447,6 +1467,67 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 			SYSPRINT("recvmsg(fd=%d (%d), msg=0x%lX, flags=0x%X) = %lld\n",
 					 vfd, fd, g_msg, flags, regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_sendmsg, [] (vCPU& cpu) { // SENDMSG
+			auto& regs = cpu.registers();
+			// int sendmsg(int sockfd, const struct msghdr *msg, int flags);
+			const int vfd = regs.rdi;
+			const uint64_t g_msg = regs.rsi;
+			const int flags = regs.rdx;
+			int fd = -1;
+			try {
+				fd = cpu.machine().fds().translate_writable_vfd(vfd);
+				struct msghdr msg {};
+				cpu.machine().copy_from_guest(&msg, g_msg, sizeof(msg));
+				std::array<tinykvm::Machine::Buffer, 256> buffers;
+				std::array<GuestIOvec, 128> iovecs;
+				if (msg.msg_iovlen > iovecs.size())
+				{
+					regs.rax = -EINVAL;
+					cpu.set_registers(regs);
+					SYSPRINT("sendmsg(fd=%d (%d), msg=0x%lX, flags=0x%X) = %lld (EINVAL, iovlen too large)\n",
+							 vfd, fd, g_msg, flags, regs.rax);
+					return;
+				}
+				// Copy the iovecs from guest memory
+				const uint64_t g_iov = (uintptr_t)msg.msg_iov;
+				cpu.machine().copy_from_guest(iovecs.data(), g_iov, msg.msg_iovlen * sizeof(GuestIOvec));
+				// Gather iovec information from the guest
+				size_t bufcount = 0;
+				for (size_t i = 0; i < msg.msg_iovlen; i++)
+				{
+					const uint64_t g_base = iovecs.at(i).iov_base;
+					const size_t   g_len = iovecs[i].iov_len;
+					const auto this_bufcount =
+						cpu.machine().gather_buffers_from_range(
+							buffers.size() - bufcount, buffers.data() + bufcount,
+							g_base, g_len);
+					bufcount += this_bufcount;
+				}
+				struct sockaddr addr {};
+				struct msghdr msg_send {};
+				msg_send.msg_name = &addr;
+				msg_send.msg_namelen = sizeof(addr);
+				msg_send.msg_iov = (struct iovec *)&buffers[0];
+				msg_send.msg_iovlen = bufcount;
+				msg_send.msg_control = nullptr;
+				msg_send.msg_controllen = 0;
+				msg_send.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
+				// Perform the sendmsg
+				ssize_t result = sendmsg(fd, &msg_send, flags);
+				if (UNLIKELY(result < 0)) {
+					regs.rax = -errno;
+				} else {
+					regs.rax = result;
+				}
+			} catch (...) {
+				regs.rax = -EBADF;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("sendmsg(fd=%d (%d), msg=0x%lX, flags=0x%X) = %lld\n",
+					 vfd, fd, g_msg, flags, regs.rax);
+			throw std::runtime_error("sendmsg not implemented");
 		});
 	Machine::install_syscall_handler(
 		SYS_uname, [](vCPU& cpu) { // UNAME
@@ -1486,6 +1567,11 @@ void Machine::setup_linux_system_calls()
 				{
 					//const int flags = fcntl(fd, cmd);
 					regs.rax = 0x1;
+				}
+				else if (cmd == F_SETFD)
+				{
+					// Ignore the new flags
+					regs.rax = 0;
 				}
 				else if (cmd == F_GETFL)
 				{
@@ -2211,7 +2297,7 @@ void Machine::setup_linux_system_calls()
 					regs.rax = 0;
 				}
 			} else {
-				regs.rax = -EBADF;
+				regs.rax = -ENOENT;
 			}
 			cpu.set_registers(regs);
 			if (UNLIKELY(cpu.machine().m_verbose_system_calls))
