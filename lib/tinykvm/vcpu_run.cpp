@@ -105,8 +105,7 @@ long vCPU::run_once()
 			}
 			Machine::timeout_exception("Timeout Exception", this->timer_ticks);
 		} else if (errno == EINTR) {
-			/* XXX: EINTR but not a timeout, return to execution? */
-			return KVM_EXIT_UNKNOWN;
+			Machine::timeout_exception("Interrupted (signal)", 0);
 		}
 		else {
 			Machine::machine_exception("KVM_RUN failed");
