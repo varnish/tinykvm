@@ -76,10 +76,10 @@ namespace tinykvm
 		int translate_unless_forked(int vfd);
 		int translate_unless_forked_then(int vfd, std::function<int(const Entry&)> func, bool must_be_writable = false);
 
-		bool is_socket_vfd(int vfd) const noexcept {
+		static bool is_socket_vfd(int vfd) noexcept {
 			return (vfd & SOCKET_BIT) != 0;
 		}
-		bool is_file_vfd(int vfd) const noexcept {
+		static bool is_file_vfd(int vfd) noexcept {
 			return (vfd & SOCKET_BIT) == 0;
 		}
 

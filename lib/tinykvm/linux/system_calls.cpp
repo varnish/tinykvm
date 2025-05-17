@@ -1617,11 +1617,56 @@ void Machine::setup_linux_system_calls()
 						regs.rax = 0;
 					}
 				}
+				else if (cmd == F_SETLK)
+				{
+					throw std::runtime_error("fcntl: F_SETLK not implemented");
+				}
+				else if (cmd == F_GETLK)
+				{
+					throw std::runtime_error("fcntl: F_GETLK not implemented");
+				}
+				else if (cmd == F_GETOWN)
+				{
+					regs.rax = 0;
+				}
+				else if (cmd == F_SETOWN)
+				{
+					regs.rax = 0;
+				}
+				else if (cmd == F_GETSIG)
+				{
+					regs.rax = 0;
+				}
+				else if (cmd == F_SETSIG)
+				{
+					regs.rax = 0;
+				}
 				else if (cmd == F_DUPFD_CLOEXEC)
 				{
-					const int new_fd = dup(fd);
-					const int new_vfd = cpu.machine().fds().manage_duplicate(vfd, new_fd, false, false);
-					regs.rax = new_vfd;
+					if (fd > 2)
+					{
+						auto opt_entry = cpu.machine().fds().entry_for_vfd(vfd);
+						if (!opt_entry)
+						{
+							regs.rax = -EBADF;
+							cpu.set_registers(regs);
+							SYSPRINT("fcntl(%d (%d), cmd=0x%X (%d), ...) = %lld (EBADF)\n",
+									fd, vfd, cmd, cmd, regs.rax);
+							return;
+						}
+						// The duplicate inherits writable, socket etc.
+						const bool is_writable = (*opt_entry)->is_writable;
+						const bool is_socket   = cpu.machine().fds().is_socket_vfd(vfd);
+						const int new_fd = dup(fd);
+						const int new_vfd = cpu.machine().fds().manage_duplicate(vfd, new_fd, is_socket, is_writable);
+						regs.rax = new_vfd;
+					} else if (fd >= 0) {
+						const int new_fd = dup(fd);
+						const int new_vfd = cpu.machine().fds().manage_duplicate(vfd, new_fd, false, true);
+						regs.rax = new_vfd;
+					} else {
+						regs.rax = -EBADF;
+					}
 				}
 				else
 				{
