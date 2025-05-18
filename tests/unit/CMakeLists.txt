@@ -22,6 +22,7 @@ endfunction()
 
 add_unit_test(basic  basic.cpp)
 add_unit_test(fork   fork.cpp)
+add_unit_test(mmap   mmap.cpp)
 add_unit_test(remote remote.cpp)
 add_unit_test(reset  reset.cpp)
 add_unit_test(timeout timeout.cpp)

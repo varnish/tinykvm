@@ -20,6 +20,7 @@ set (SOURCES
 	tinykvm/machine_utils.cpp
 	tinykvm/memory.cpp
 	tinykvm/memory_bank.cpp
+	tinykvm/memory_maps.cpp
 	tinykvm/page_streaming.cpp
 	tinykvm/remote.cpp
 	tinykvm/smp.cpp

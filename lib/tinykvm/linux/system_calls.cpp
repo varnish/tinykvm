@@ -393,25 +393,7 @@ void Machine::setup_linux_system_calls()
 			}
 			else
 			{
-				if constexpr (true)
-				{
-					auto range = cpu.machine().mmap_cache().find(length);
-					// Not found in cache, allocate new range
-					if (range.empty())
-					{
-						regs.rax = cpu.machine().mmap_allocate(length);
-					}
-					else
-					{
-						// PRINTMMAP("Found existing range: 0x%lX -> 0x%lX\n",
-						//	range.addr, range.addr + range.size);
-						regs.rax = range.addr;
-					}
-				}
-				else
-				{
-					regs.rax = cpu.machine().mmap_allocate(length);
-				}
+				regs.rax = cpu.machine().mmap_allocate(length);
 			}
 			/* If MAP_ANON is set, the memory must be zeroed. memzero() will only
 			   zero the pages that are dirty, preventing RSS from exploding. */
@@ -442,8 +424,8 @@ void Machine::setup_linux_system_calls()
 		SYS_munmap, [](vCPU &cpu) { // MUNMAP
 			auto& regs = cpu.registers();
 			// We don't support MMAP fully, but we can try to relax the mapping.
-			const uint64_t old_base = regs.rdi;
-			const uint64_t old_size = regs.rsi;
+			const uint64_t old_base = regs.rdi & ~PageMask;
+			const uint64_t old_size = (regs.rsi + PageMask) & ~PageMask;
 			[[maybe_unused]] bool relaxed =
 				cpu.machine().mmap_unmap(old_base, old_size);
 			// Because we do not support MMAP fully, we will just return 0 here.
@@ -820,7 +802,7 @@ void Machine::setup_linux_system_calls()
 			uint64_t new_len = (regs.rdx + 0xFFF) & ~(uint64_t)0xFFF;
 			unsigned flags = regs.r10;
 
-			if (old_addr + old_len == mm)
+			if (false && old_addr + old_len == mm)
 			{
 				if (old_addr + new_len < old_addr)
 					throw MachineException("mremap: overflow");
@@ -855,9 +837,7 @@ void Machine::setup_linux_system_calls()
 			regs.rax = 0;
 			if (regs.rdx == MADV_DONTNEED)
 			{
-				// MADV_DONTNEED
-				/// XXX: TODO: Memdiscard the pages
-				// cpu.machine().memzero(regs.rdi, regs.rsi);
+				cpu.machine().memzero(regs.rdi, regs.rsi);
 			}
 			cpu.set_registers(regs);
 			PRINTMMAP("madvise(0x%llX, %llu, 0x%llx) = %lld\n",
