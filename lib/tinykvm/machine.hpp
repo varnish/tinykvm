@@ -177,7 +177,7 @@ struct Machine
 	void set_mmap_callback(mmap_func_t f) { m_mmap_func = std::move(f); }
 
 	uint64_t address_of(const char*) const;
-	std::string resolve(uint64_t rip) const;
+	std::string resolve(uint64_t rip, std::string_view binary = {}) const;
 
 	bool smp_active() const noexcept;
 	int  smp_active_count() const noexcept;

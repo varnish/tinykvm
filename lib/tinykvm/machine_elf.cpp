@@ -273,21 +273,27 @@ uint64_t Machine::address_of(const char* name) const
 	const auto* sym = resolve_symbol(m_binary, name);
 	return (sym) ? this->m_image_base + sym->st_value : 0x0;
 }
-std::string Machine::resolve(uint64_t rip) const
+std::string Machine::resolve(uint64_t rip, std::string_view binary) const
 {
-	if (UNLIKELY(m_binary.empty())) return "";
-	const auto* sym_hdr = section_by_name(m_binary, ".symtab");
-	if (UNLIKELY(sym_hdr == nullptr)) return "";
-	const auto* str_hdr = section_by_name(m_binary, ".strtab");
-	if (UNLIKELY(str_hdr == nullptr)) return "";
+	if (binary.empty())
+		binary = m_binary;
 
-	if (UNLIKELY(rip < this->m_image_base)) return "";
+	if (UNLIKELY(binary.empty())) return "(no binary)";
+	const auto* sym_hdr = section_by_name(binary, ".symtab");
+	if (UNLIKELY(sym_hdr == nullptr)) return "(no symbols)";
+	const auto* str_hdr = section_by_name(binary, ".strtab");
+	if (UNLIKELY(str_hdr == nullptr)) return "(no strings)";
+
+	if (UNLIKELY(rip < this->m_image_base)) return "(error: rip < image base)";
 	const address_t relative_rip = rip - this->m_image_base;
 
-	const auto* symtab = elf_sym_index(m_binary, sym_hdr, 0);
+	const auto* symtab = elf_sym_index(binary, sym_hdr, 0);
 	const size_t symtab_ents = sym_hdr->sh_size / sizeof(Elf64_Sym);
-	const char* strtab = elf_offset<char>(m_binary, str_hdr->sh_offset);
+	const char* strtab = elf_offset<char>(binary, str_hdr->sh_offset);
 
+	char result[2048];
+	uint64_t second_best_address = ~0ULL;
+	const Elf64_Sym* second_best = nullptr;
 	for (size_t i = 0; i < symtab_ents; i++)
 	{
 		/* Only look at functions (for now). Old-style symbols have no FUNC. */
@@ -296,7 +302,6 @@ std::string Machine::resolve(uint64_t rip) const
 			if (relative_rip >= symtab[i].st_value && relative_rip < symtab[i].st_value + symtab[i].st_size)
 			{
 				const uint64_t offset = relative_rip - symtab[i].st_value;
-				char result[2048];
 				int len = snprintf(result, sizeof(result),
 					"%s + 0x%lX", &strtab[symtab[i].st_name], offset);
 				if (len > 0)
@@ -304,7 +309,23 @@ std::string Machine::resolve(uint64_t rip) const
 				else
 					return std::string(&strtab[symtab[i].st_name]);
 			}
+			else if (relative_rip >= symtab[i].st_value && second_best_address > symtab[i].st_value)
+			{
+				// We found a better match, but not exact
+				second_best_address = symtab[i].st_value;
+				second_best = &symtab[i];
+			}
 		}
+	}
+	/// If we didn't find a direct match, return the closest one
+	if (second_best != nullptr) {
+		int len = snprintf(result, sizeof(result),
+			"%s + 0x%lX", &strtab[second_best->st_name],
+			relative_rip - second_best->st_value);
+		if (len > 0)
+			return std::string(result, len);
+		else
+			return std::string(&strtab[second_best->st_name]);
 	}
 	return "(unknown)";
 }
