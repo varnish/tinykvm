@@ -303,12 +303,7 @@ void Machine::setup_linux_system_calls()
 			const uint64_t length = (regs.rsi + PageMask) & ~PageMask;
 			const int prot = regs.rdx;
 			const auto flags = regs.r10;
-			if (UNLIKELY(address % vMemory::PageSize() != 0 || length == 0))
-			{
-				// Size not matching a 4K page size
-				regs.rax = ~0LL; /* MAP_FAILED */
-			}
-			else if (UNLIKELY(int(regs.r8) >= 0))
+			if (UNLIKELY(int(regs.r8) >= 0))
 			{
 				// mmap to file fd
 				const int vfd = int(regs.r8);
@@ -321,7 +316,7 @@ void Machine::setup_linux_system_calls()
 					// If the mapping is within a certain range, we should adjust
 					// the current mmap address to the end of the new mapping. This is
 					// to avoid future collisions when allocating.
-					if ((address + length) > cpu.machine().mmap_current())
+					if ((address + length) > cpu.machine().mmap_current() && address + length <= cpu.machine().mmap_current() + MMAP_COLLISION_TRESHOLD)
 					{
 						PRINTMMAP("Adjusting mmap current address from 0x%lX to 0x%lX\n",
 							cpu.machine().mmap(), address + length);
@@ -333,6 +328,9 @@ void Machine::setup_linux_system_calls()
 				}
 				else if (address != 0x0 && address < cpu.machine().heap_address()) {
 					dst = address;
+					fprintf(stderr,
+						"mmap: address 0x%lX is below heap address 0x%lX\n",
+						address, cpu.machine().heap_address());
 				}
 				else {
 					dst = cpu.machine().mmap_allocate(length);

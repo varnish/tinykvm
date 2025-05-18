@@ -61,7 +61,8 @@ void MMapCache::invalidate(uint64_t addr, uint64_t size)
 
 void MMapCache::insert_free(uint64_t addr, uint64_t size)
 {
-	if (!m_free_ranges.empty()) {
+	if (!m_free_ranges.empty())
+	{
 		if (m_free_ranges.back().addr + m_free_ranges.back().size == addr) {
 			m_free_ranges.back().size += size;
 			return;
@@ -145,9 +146,15 @@ void MMapCache::remove_used(uint64_t addr, uint64_t size)
 
 Machine::address_t Machine::mmap_allocate(size_t bytes)
 {
+	bytes = (bytes + PageMask) & ~PageMask;
+
 	auto range = mmap_cache().find(bytes);
 	if (!range.empty())
 	{
+		if (range.addr < this->mmap_start())
+		{
+			throw std::runtime_error("MMapCache: Invalid range");
+		}
 		if (this->mmap_cache().track_used_ranges())
 		{
 			if (this->mmap_cache().find_collision(this->mmap_cache().used_ranges(), range))
@@ -161,7 +168,7 @@ Machine::address_t Machine::mmap_allocate(size_t bytes)
 
 	const address_t result = this->m_mm;
 	/* Bytes rounded up to nearest PAGE_SIZE. */
-	this->m_mm += (bytes + PageMask) & ~PageMask;
+	this->m_mm += bytes;
 
 	if (this->mmap_cache().track_used_ranges())
 	{
@@ -178,7 +185,7 @@ Machine::address_t Machine::mmap_allocate(size_t bytes)
 bool Machine::mmap_unmap(uint64_t addr, size_t size)
 {
 	bool relaxed = false;
-	if (addr + size > this->m_mm && addr < this->m_mm)
+	if (addr + size == this->m_mm && addr < this->m_mm)
 	{
 		this->m_mm = (addr + PageMask) & ~PageMask;
 		this->mmap_cache().invalidate(addr, size);
