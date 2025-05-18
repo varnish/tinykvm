@@ -321,7 +321,7 @@ void Machine::setup_linux_system_calls()
 					// If the mapping is within a certain range, we should adjust
 					// the current mmap address to the end of the new mapping. This is
 					// to avoid future collisions when allocating.
-					if ((address + length) > cpu.machine().mmap_current() && address + length <= cpu.machine().mmap_current() + MMAP_COLLISION_TRESHOLD)
+					if ((address + length) > cpu.machine().mmap_current())
 					{
 						PRINTMMAP("Adjusting mmap current address from 0x%lX to 0x%lX\n",
 							cpu.machine().mmap(), address + length);
