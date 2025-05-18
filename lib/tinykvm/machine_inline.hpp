@@ -80,7 +80,7 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 				return regs.r9;
 			throw MachineException("Too many vmcall arguments");
 		}();
-		if constexpr (std::is_integral_v<Args>) {
+		if constexpr (std::is_integral_v<std::remove_cvref_t<Args>>) {
 			reg = args;
 			iargs ++;
 		} else if constexpr (is_stdstring<Args>::value) {
