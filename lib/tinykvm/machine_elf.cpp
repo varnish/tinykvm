@@ -93,6 +93,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	const auto* phdr = (Elf64_Phdr*) (binary.data() + elf->e_phoff);
 	this->m_start_address = this->m_image_base + elf->e_entry;
 	this->m_heap_address = 0x0;
+	uint64_t image_begin = ~0UL;
 
 	int seg = 0;
 	for (const auto* hdr = phdr; hdr < phdr + program_headers; hdr++)
@@ -136,6 +137,8 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 		const uint64_t endm = hdr->p_vaddr + hdr->p_memsz;
 		if (this->m_heap_address < endm)
 			this->m_heap_address = endm;
+		if (this->m_image_base + hdr->p_vaddr < image_begin)
+			image_begin = this->m_image_base + hdr->p_vaddr;
 	}
 
 	this->m_heap_address += this->m_image_base;
@@ -152,6 +155,10 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 		this->m_heap_address = options.heap_address_hint;
 	}
 
+	/* BRK can reside in front of the image, ending where the image starts */
+	this->m_brk_address = 0x0;
+	this->m_brk_end_address = image_begin;
+
 	/* Always allocate stack on heap, because we don't know where
 	   the kernel ends yet, and some run-times even depend on the
 	   stack being above the image base. */
@@ -160,8 +167,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	this->m_heap_address = this->m_stack_address;
 
 	/* Make sure mmap starts at a sane offset */
-	this->m_brk_address = this->m_heap_address;
-	this->m_mm = this->mmap_start();
+	this->m_mm = this->m_heap_address;
 
 	/* Dynamic executables require some extra work, like relocation */
 	if (is_dynamic) {
@@ -170,6 +176,8 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 
 	if (options.verbose_loader) {
 	printf("* Entry is at %p\n", (void*) m_start_address);
+	printf("* BRK is at %p -> %p\n", (void*) m_brk_address,
+		(void*) m_brk_end_address);
 	printf("* Stack is at %p -> %p\n", (void*) (m_stack_address - STACK_SIZE),
 		(void*) (m_stack_address));
 	this->fds().set_verbose(options.verbose_loader);

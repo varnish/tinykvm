@@ -48,6 +48,20 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->vcpu.init(0, *this, options);
 	this->setup_long_mode(options);
+
+	/* We need to adjust BRK if the kernel end address is
+	   above the default BRK start address. */
+	if (m_brk_address < m_kernel_end) {
+		m_brk_address = m_kernel_end;
+		/* We would like at least BRK_MAX bytes of space for the BRK area,
+		   so we need to allocate it on the heap if it is too small. */
+		if (this->m_brk_address + BRK_MAX > this->m_brk_end_address)
+		{
+			this->m_brk_address = mmap_allocate(BRK_MAX);
+			this->m_brk_end_address = this->m_brk_address + BRK_MAX;
+		}
+	}
+
 	struct tinykvm_regs regs {};
 	/* Store the registers, so that Machine is ready to go */
 	this->setup_registers(regs);
@@ -67,6 +81,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_stack_address {other.m_stack_address},
 	  m_heap_address  {other.m_heap_address},
 	  m_brk_address   {other.m_brk_address},
+	  m_brk_end_address {other.m_brk_end_address},
 	  m_start_address {other.m_start_address},
 	  m_kernel_end    {other.m_kernel_end},
 	  m_mm            {other.m_mm},
@@ -161,6 +176,7 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		this->m_stack_address = other.m_stack_address;
 		this->m_heap_address  = other.m_heap_address;
 		this->m_brk_address   = other.m_brk_address;
+		this->m_brk_end_address = other.m_brk_end_address;
 		this->m_start_address = other.m_start_address;
 		this->m_kernel_end    = other.m_kernel_end;
 		memory.fork_reset(other.memory, options);
