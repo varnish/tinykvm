@@ -343,7 +343,7 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 		return false;
 	}
 	const size_t rela_ents = rela->sh_size / sizeof(Elf64_Rela);
-	if (rela_ents > 524288) {
+	if (rela_ents > 600000) {
 		throw MachineException("Too many relocations", rela_ents);
 	}
 
@@ -356,7 +356,7 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 		const auto rtype = ELF64_R_TYPE(rela_addr[i].r_info);
 		if (rtype != R_X86_64_RELATIVE) {
 			if constexpr (VERBOSE_LOADER) {
-				printf("Skipping non-relative relocation: %s\n", &m_binary[sym->st_name]);
+				printf("Skipping non-relative relocation: %lu\n", rtype);
 			}
 			continue;
 		}
@@ -364,7 +364,7 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 		const address_t addr = this->m_image_base + rela_addr[i].r_offset;
 		if (memory.safely_within(addr, sizeof(address_t))) {
 			*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + sym->st_value;
-		} else if (false) {
+		} else {
 			if constexpr (VERBOSE_LOADER) {
 				printf("Relocation failed: %s\n", &m_binary[sym->st_name]);
 			}
