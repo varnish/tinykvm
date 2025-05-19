@@ -133,11 +133,12 @@ int do_munmap(void* addr, size_t size) {
 	for (int i = 0; i < 10000; ++i)
 	{
 		// Make a random decision to either map or unmap
-		const int decision = (rand() % 4);
+		const int decision = (rand() % 5);
 		const bool do_mmap = decision == 0;
 		const bool do_munmap = decision == 1;
 		const bool do_mmap_within_mapping = decision == 2;
-		const bool do_munmap_half = decision == 3;
+		const bool do_munmap_lower_half = decision == 3;
+		const bool do_munmap_upper_half = decision == 4;
 		if (do_mmap)
 		{
 			// Make a random page-aligned size
@@ -187,7 +188,7 @@ int do_munmap(void* addr, size_t size) {
 			const uint64_t guest_mmap_addr = machine.return_value();
 			REQUIRE(guest_mmap_addr == m.addr);
 		}
-		else if (do_munmap_half)
+		else if (do_munmap_lower_half || do_munmap_upper_half)
 		{
 			if (mappings.empty())
 				continue;
@@ -196,19 +197,37 @@ int do_munmap(void* addr, size_t size) {
 			size_t remove_size = std::max(m.size / 2, size_t(0x1000));
 			remove_size = (remove_size + 0xFFF) & ~0xFFF; // Align to page size
 			const size_t new_size = m.size - remove_size;
-			machine.vmcall("do_munmap", m.addr, remove_size);
-			REQUIRE(machine.return_value() == 0);
-
-			// Adjust or remove the mapping from the list
-			if (new_size >= 0x1000)
+			if (do_munmap_lower_half)
 			{
-				m.addr += remove_size;
-				m.size = new_size;
+				machine.vmcall("do_munmap", m.addr, remove_size);
+				REQUIRE(machine.return_value() == 0);
+				// Adjust or remove the mapping from the list
+				if (new_size >= 0x1000)
+				{
+					m.addr += remove_size;
+					m.size = new_size;
+				}
+				else
+				{
+					// Remove the mapping from the list
+					mappings.erase(mappings.begin() + index);
+				}
 			}
-			else
+			else // Upper half
 			{
-				// Remove the mapping from the list
-				mappings.erase(mappings.begin() + index);
+				const uint64_t remove_addr = m.addr + new_size;
+				machine.vmcall("do_munmap", remove_addr, remove_size);
+				REQUIRE(machine.return_value() == 0);
+				// Adjust or remove the mapping from the list
+				if (new_size >= 0x1000)
+				{
+					m.size = new_size;
+				}
+				else
+				{
+					// Remove the mapping from the list
+					mappings.erase(mappings.begin() + index);
+				}
 			}
 		}
 	}

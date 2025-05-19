@@ -167,7 +167,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	this->m_heap_address = this->m_stack_address;
 
 	/* Make sure mmap starts at a sane offset */
-	this->m_mm = this->m_heap_address;
+	this->mmap_cache().current() = this->m_heap_address;
 
 	/* Dynamic executables require some extra work, like relocation */
 	if (is_dynamic) {

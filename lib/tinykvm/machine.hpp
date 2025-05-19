@@ -167,12 +167,12 @@ struct Machine
 	address_t brk_end_address() const noexcept { return this->m_brk_end_address; }
 	void set_brk_address(address_t addr) { this->m_brk_address = addr; }
 	address_t mmap_start() const noexcept { return this->m_heap_address; }
-	address_t mmap_current() const noexcept { return this->m_mm; }
+	address_t mmap_current() const noexcept;
 	address_t mmap_allocate(size_t bytes);
+	address_t mmap_fixed_allocate(uint64_t addr, size_t bytes);
 	bool      mmap_unmap(uint64_t addr, size_t size);
 	bool relocate_fixed_mmap() const noexcept { return m_relocate_fixed_mmap; }
 	bool mmap_relax(uint64_t addr, size_t size, size_t new_size);
-	auto& mmap_cache() noexcept { return m_mmap_cache; }
 	void do_mmap_callback(vCPU&, address_t, size_t, int, int, int, address_t);
 	void set_mmap_callback(mmap_func_t f) { m_mmap_func = std::move(f); }
 
@@ -192,8 +192,8 @@ struct Machine
 	static void setup_multithreading();
 
 	/* Memory maps */
-	const auto& mmap() const { return m_mm; }
-	auto& mmap() { return m_mm; }
+	const auto& mmap_cache() const noexcept { return m_mmap_cache; }
+	auto& mmap_cache() noexcept { return m_mmap_cache; }
 
 	/* Signal structure, lazily created */
 	Signals& signals();
@@ -307,7 +307,6 @@ private:
 	address_t m_start_address;
 	address_t m_kernel_end;
 
-	address_t m_mm = 0;
 	MMapCache m_mmap_cache;
 	mutable std::unique_ptr<MultiThreading> m_mt;
 

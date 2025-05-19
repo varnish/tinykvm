@@ -26,6 +26,10 @@ namespace tinykvm
         void disable_timer();
         std::string_view io_data() const;
 
+		bool is_usermode() const;
+		bool is_kernelmode() const;
+		void enter_usermode();
+
         void print_registers() const;
         void handle_exception(uint8_t intr);
 		unsigned exception_extra_offset(uint8_t intr);

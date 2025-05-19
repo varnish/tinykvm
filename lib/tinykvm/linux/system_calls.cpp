@@ -31,7 +31,6 @@
 
 namespace tinykvm {
 static constexpr uint64_t PageMask = vMemory::PageSize() - 1;
-static constexpr size_t MMAP_COLLISION_TRESHOLD = 512ULL << 20; // 512MB
 struct GuestIOvec
 {
 	uint64_t iov_base;
@@ -312,19 +311,7 @@ void Machine::setup_linux_system_calls()
 
 				uint64_t dst = 0x0;
 				if (address != 0x0 && (address + length) > cpu.machine().mmap_start()) {
-					dst = address;
-					// If the mapping is within a certain range, we should adjust
-					// the current mmap address to the end of the new mapping. This is
-					// to avoid future collisions when allocating.
-					if ((address + length) > cpu.machine().mmap_current() && address + length <= cpu.machine().mmap_current() + MMAP_COLLISION_TRESHOLD)
-					{
-						PRINTMMAP("Adjusting mmap current address from 0x%lX to 0x%lX\n",
-							cpu.machine().mmap(), address + length);
-						cpu.machine().mmap() = address + length;
-					} else {
-						PRINTMMAP("Not adjusting mmap current address to 0x%lX from 0x%lX\n",
-							address + length, cpu.machine().mmap());
-					}
+					dst = cpu.machine().mmap_fixed_allocate(address, length);
 				}
 				else if (address != 0x0 && address < cpu.machine().heap_address()) {
 					dst = address;
@@ -372,22 +359,10 @@ void Machine::setup_linux_system_calls()
 				// Existing range already mmap'ed
 				regs.rax = address;
 			}
-			else if (address != 0x0 && address >= cpu.machine().mmap_current() && !cpu.machine().relocate_fixed_mmap())
+			else if (address != 0x0 && (address + length) > cpu.machine().mmap_current() && !cpu.machine().relocate_fixed_mmap())
 			{
 				// Force mmap to a specific address
-				regs.rax = address;
-				// If the mapping is within a certain range, we should adjust
-				// the current mmap address to the end of the new mapping. This is
-				// to avoid future collisions when allocating.
-				if (address + length <= cpu.machine().mmap_current() + MMAP_COLLISION_TRESHOLD)
-				{
-					PRINTMMAP("Adjusting mmap current address to 0x%lX\n",
-						address + length);
-					cpu.machine().mmap() = address + length;
-				} else {
-					PRINTMMAP("Not adjusting mmap current address to 0x%lX\n",
-						address + length);
-				}
+				regs.rax = cpu.machine().mmap_fixed_allocate(address, length);
 			}
 			else
 			{
@@ -615,9 +590,9 @@ void Machine::setup_linux_system_calls()
 		SYS_pread64, [](vCPU& cpu) {
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
-			const auto g_buf = regs.rsi;
-			const auto bytes = regs.rdx;
-			const auto offset = regs.r10;
+			const uint64_t g_buf = regs.rsi;
+			const size_t   bytes = regs.rdx;
+			const off64_t  offset = regs.r10;
 			const int fd = cpu.machine().fds().translate(vfd);
 
 			// Readv into the area
@@ -627,7 +602,7 @@ void Machine::setup_linux_system_calls()
 				cpu.machine().writable_buffers_from_range(READV_BUFFERS, buffers, g_buf, bytes);
 
 			ssize_t result =
-				preadv64(fd, (const iovec *)&buffers[0], bufcount, offset);
+				preadv64(fd, (iovec *)&buffers[0], bufcount, offset);
 			if (result < 0) {
 				regs.rax = -errno;
 			}
@@ -635,7 +610,7 @@ void Machine::setup_linux_system_calls()
 				regs.rax = result;
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("pread64(fd=%d, buf=0x%llX, size=%llu, offset=%llu) = %lld\n",
+			SYSPRINT("pread64(fd=%d, buf=0x%lX, size=%zu, offset=%lu) = %lld\n",
 					 vfd, g_buf, bytes, offset, regs.rax);
 		});
 	Machine::install_syscall_handler( // pwrite64
@@ -794,28 +769,28 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_mremap, [](vCPU& cpu) { // MREMAP
 			auto& regs = cpu.registers();
-			auto& mm = cpu.machine().mmap();
-			uint64_t old_addr = regs.rdi & ~(uint64_t)0xFFF;
-			uint64_t old_len = (regs.rsi + 0xFFF) & ~(uint64_t)0xFFF;
-			uint64_t new_len = (regs.rdx + 0xFFF) & ~(uint64_t)0xFFF;
+			auto current = cpu.machine().mmap_current();
+			uint64_t old_addr = regs.rdi & ~PageMask;
+			uint64_t old_len = (regs.rsi + PageMask) & ~PageMask;
+			uint64_t new_len = (regs.rdx + PageMask) & ~PageMask;
 			unsigned flags = regs.r10;
 
-			if (false && old_addr + old_len == mm)
+			if (false && old_addr + old_len == current)
 			{
 				if (old_addr + new_len < old_addr)
 					throw MachineException("mremap: overflow");
-				mm = old_addr + new_len;
+				cpu.machine().mmap_cache().current() = old_addr + new_len;
 				regs.rax = old_addr;
 			}
 			else if (flags & MREMAP_FIXED)
 			{
 				// We don't support MREMAP_FIXED
-				regs.rax = ~0LL; /* MAP_FAILED */
+				regs.rax = ~0ULL; /* MAP_FAILED */
 			}
 			else
 			{
 				// We don't support other flags
-				regs.rax = ~0LL; /* MAP_FAILED */
+				regs.rax = ~0ULL; /* MAP_FAILED */
 			}
 			cpu.set_registers(regs);
 			PRINTMMAP("mremap(0x%llX, %llu, %llu, flags=0x%X) = 0x%llX\n",

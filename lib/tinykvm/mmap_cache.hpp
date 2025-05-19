@@ -19,15 +19,16 @@ namespace tinykvm
 			}
 		};
 
+		uint64_t& current() noexcept { return m_mm; }
+		const uint64_t& current() const noexcept { return m_mm; }
 
 		Range find(uint64_t size);
 
 		const Range* find_collision(const std::vector<Range>& ranges, const Range& r);
 
-		void invalidate(uint64_t addr, uint64_t size);
-
 		void insert_free(uint64_t addr, uint64_t size);
 		void insert_used(uint64_t addr, uint64_t size);
+		void remove_free(uint64_t addr, uint64_t size);
 		void remove_used(uint64_t addr, uint64_t size);
 
 		bool track_used_ranges() const noexcept { return m_track_used_ranges; }
@@ -36,8 +37,10 @@ namespace tinykvm
 		const std::vector<Range>& free_ranges() const noexcept { return m_free_ranges; }
 		const std::vector<Range>& used_ranges() const noexcept { return m_used_ranges; }
 	private:
+		void remove(uint64_t addr, uint64_t size, std::vector<Range>& ranges);
 		std::vector<Range> m_free_ranges;
 		std::vector<Range> m_used_ranges;
+		uint64_t m_mm = 0x0;
 		bool m_track_used_ranges = true;
 		size_t m_max_tracked_ranges = 4096;
 	};

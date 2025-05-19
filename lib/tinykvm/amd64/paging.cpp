@@ -76,8 +76,6 @@ static void add_remappings(vMemory& memory,
 		// Over-allocate rounding up to nearest 2MB
 		paddr_base = memory.machine.mmap_allocate(remapping.size + PD_ALIGN_MASK);
 		paddr_base = (paddr_base + PD_ALIGN_MASK) & ~PD_ALIGN_MASK;
-		// Relax allocation down to size
-		memory.machine.mmap() = paddr_base + remapping.size;
 	}
 
 	if (pml4[virt_tera_page] == 0) {

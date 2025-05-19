@@ -480,10 +480,22 @@ void Machine::print_exception_handlers() const
 	tinykvm::print_exception_handlers(memory.at(sregs.idt.base));
 }
 
-void Machine::enter_usermode()
+bool vCPU::is_usermode() const
+{
+	auto& sregs = this->get_special_registers();
+	/* If we are in user-mode ... */
+	return (sregs.cs.dpl == 3);
+}
+bool vCPU::is_kernelmode() const
+{
+	auto& sregs = this->get_special_registers();
+	/* If we are in kernel-mode ... */
+	return (sregs.cs.dpl == 0);
+}
+void vCPU::enter_usermode()
 {
 	// WARNING: This shortcut *requires* KVM_SYNC_X86_SREGS
-	auto& sregs = this->vcpu.get_special_registers();
+	auto& sregs = this->get_special_registers();
 	/* If we are in kernel-mode ... */
 	if (UNLIKELY(sregs.cs.dpl == 0)) {
 		/* Directly enter user-mode. */
@@ -491,8 +503,13 @@ void Machine::enter_usermode()
 		sregs.cs.dpl = 3;
 		sregs.ss.selector = 0x23;
 		sregs.ss.dpl = 3;
-		this->vcpu.set_special_registers(sregs);
+		this->set_special_registers(sregs);
 	}
+}
+
+void Machine::enter_usermode()
+{
+	vcpu.enter_usermode();
 }
 
 Machine::address_t Machine::entry_address() const noexcept {

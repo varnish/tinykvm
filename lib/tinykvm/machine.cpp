@@ -84,7 +84,6 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_brk_end_address {other.m_brk_end_address},
 	  m_start_address {other.m_start_address},
 	  m_kernel_end    {other.m_kernel_end},
-	  m_mm            {other.m_mm},
 	  m_mmap_cache    {other.m_mmap_cache},
 	  m_mt     {nullptr}
 {
@@ -198,7 +197,6 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 	   memory banks (or pagetables). Instead, we gamble that its
 	   cheaper to copy all used pages from the master machine. */
 	this->m_just_reset = full_reset;
-	this->m_mm = other.m_mm;
 	this->m_mmap_cache = other.m_mmap_cache;
 
 	if (other.has_threads() && has_threads()) {

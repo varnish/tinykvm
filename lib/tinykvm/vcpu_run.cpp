@@ -165,11 +165,11 @@ long vCPU::run_once()
 					machine().system_call(*this, intr);
 					// Verify that the system call didn't change any registers other than RAX
 					// These are the system calls that may change registers:
-					// SCHED_YIELD - 24, CLONE - 56
+					// SCHED_YIELD - 24, CLONE - 56, EXIT - 60
 					// FUTEX - 202, TGKILL - 234
-					// CLONE3 - 435
-					const bool is_allowed = (intr == 234 || intr == 24 ||
-						intr == 202 || intr == 435 || intr == 56);
+					// CLONE3 - 435, EPOLL_WAIT - 232
+					const bool is_allowed = (intr == 234 || intr == 24 || intr == 60 ||
+						intr == 202 || intr == 435 || intr == 56 || intr == 232);
 					if (!is_allowed && (
 						regs_copy.rdi != this->registers().rdi ||
 						regs_copy.rsi != this->registers().rsi ||

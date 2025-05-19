@@ -1,7 +1,9 @@
 #include "machine.hpp"
 
 namespace tinykvm {
-constexpr uint64_t PageMask = vMemory::PageSize()-1;
+static constexpr size_t MMAP_COLLISION_TRESHOLD = 512ULL << 20; // 512MB
+static constexpr uint64_t PageMask = vMemory::PageSize()-1;
+static constexpr bool VERBOSE_MMAP_CACHE = false;
 
 MMapCache::Range MMapCache::find(uint64_t size)
 {
@@ -9,18 +11,17 @@ MMapCache::Range MMapCache::find(uint64_t size)
 	while (it != m_free_ranges.end())
 	{
 		auto& r = *it;
-		if (!r.empty())
-		{
-			if (r.size >= size) {
-				const Range result { r.addr, size };
-				if (r.size > size) {
-					r.addr += size;
-					r.size -= size;
-				} else {
-					m_free_ranges.erase(it);
-				}
-				return result;
+		if (r.size >= size) {
+			const Range result { r.addr, size };
+			if (r.size > size) {
+				r.addr += size;
+				r.size -= size;
+			} else {
+				m_free_ranges.erase(it);
 			}
+			if constexpr (VERBOSE_MMAP_CACHE)
+				printf("MMapCache: Found free range %lx %lx\n", result.addr, result.addr + result.size);
+			return result;
 		}
 		++it;
 	}
@@ -33,58 +34,54 @@ const MMapCache::Range* MMapCache::find_collision(const std::vector<Range>& rang
 	{
 		if (line.overlaps(r.addr, r.size))
 		{
-			if (&r != &line)
-			{
-				// Collision with another range
-				return &line;
-			}
+			// Collision with another range
+			return &line;
 		}
 	}
 	return nullptr;
 }
 
-void MMapCache::invalidate(uint64_t addr, uint64_t size)
-{
-	auto it = m_free_ranges.begin();
-	while (it != m_free_ranges.end())
-	{
-		const auto r = *it;
-		if (r.overlaps(addr, size))
-		{
-			bool equals = r.equals(addr, size);
-			it = m_free_ranges.erase(it);
-			if (equals) return;
-		}
-		else ++it;
-	}
-}
-
 void MMapCache::insert_free(uint64_t addr, uint64_t size)
 {
-	if (!m_free_ranges.empty())
+	if (addr + size > current())
 	{
-		if (m_free_ranges.back().addr + m_free_ranges.back().size == addr) {
-			m_free_ranges.back().size += size;
+		throw MachineException("MMapCache: Invalid free range");
+	}
+	if constexpr (VERBOSE_MMAP_CACHE)
+		printf("MMapCache: Inserting free range %lx %lx\n", addr, addr + size);
+
+	// Check for collisions with other ranges
+	if (find_collision(m_free_ranges, { addr, size }))
+	{
+		throw MachineException("MMapCache: Collision detected");
+	}
+	// Connect existing ranges if they are adjacent
+	for (Range& free_range : m_free_ranges)
+	{
+		if (free_range.addr + free_range.size == addr)
+		{
+			if constexpr (VERBOSE_MMAP_CACHE)
+				printf("MMapCache: Merging free range *above* %lx %lx with result %lx %lx\n",
+					free_range.addr, free_range.addr + free_range.size,
+					free_range.addr, free_range.addr + free_range.size + size);
+
+			free_range.size += size;
 			return;
 		}
-		// Connect the free ranges if they are adjacent
-		for (auto it = m_free_ranges.begin(); it != m_free_ranges.end(); ++it)
-		{
-			if (it->addr + it->size == addr)
-			{
-				it->size += size;
-				return;
-			}
-			else if (it->addr == addr + size)
-			{
-				it->addr = addr;
-				it->size += size;
-				return;
-			}
-		}
+		//else if (free_range.addr == addr + size)
+		//{
+		//	if constexpr (VERBOSE_MMAP_CACHE)
+		//		printf("MMapCache: Merging free range *below* %lx %lx with result %lx %lx\n",
+		//			free_range.addr, free_range.addr + free_range.size,
+		//			addr, addr + size + free_range.size);
+		//	free_range.addr = addr;
+		//	free_range.size += size;
+		//	return;
+		//}
 	}
+
 	if (m_free_ranges.size() >= m_max_tracked_ranges) {
-		throw std::runtime_error("MMapCache: Too many free ranges");
+		throw MachineException("MMapCache: Too many free ranges");
 	}
 	m_free_ranges.push_back({addr, size});
 }
@@ -97,13 +94,14 @@ void MMapCache::insert_used(uint64_t addr, uint64_t size)
 		}
 	}
 	if (m_used_ranges.size() >= m_max_tracked_ranges) {
-		throw std::runtime_error("MMapCache: Too many used ranges");
+		throw MachineException("MMapCache: Too many used ranges");
 	}
 	m_used_ranges.push_back({addr, size});
 }
-void MMapCache::remove_used(uint64_t addr, uint64_t size)
+
+void MMapCache::remove(uint64_t addr, uint64_t size, std::vector<Range>& ranges)
 {
-	for (auto it = m_used_ranges.begin(); it != m_used_ranges.end();)
+	for (auto it = ranges.begin(); it != ranges.end();)
 	{
 		Range& r = *it;
 		if (r.overlaps(addr, size))
@@ -111,7 +109,7 @@ void MMapCache::remove_used(uint64_t addr, uint64_t size)
 			if (addr <= r.addr && addr + size >= r.addr + r.size)
 			{
 				// The range fully overlaps the given range
-				it = m_used_ranges.erase(it);
+				it = ranges.erase(it);
 				continue;
 			}
 			else if (addr < r.addr)
@@ -130,7 +128,7 @@ void MMapCache::remove_used(uint64_t addr, uint64_t size)
 				r.size = addr - r.addr;
 				if (r.size == 0)
 				{
-					it = m_used_ranges.erase(it);
+					it = ranges.erase(it);
 				}
 				else
 				{
@@ -138,10 +136,22 @@ void MMapCache::remove_used(uint64_t addr, uint64_t size)
 				}
 				continue;
 			}
-			throw std::runtime_error("Unreachable");
+			throw MachineException("Unreachable");
 		}
 		else ++it;
 	}
+	if (find_collision(ranges, { addr, size }))
+	{
+		throw MachineException("MMapCache: Failed to remove range");
+	}
+}
+void MMapCache::remove_free(uint64_t addr, uint64_t size)
+{
+	remove(addr, size, m_free_ranges);
+}
+void MMapCache::remove_used(uint64_t addr, uint64_t size)
+{
+	remove(addr, size, m_used_ranges);
 }
 
 Machine::address_t Machine::mmap_allocate(size_t bytes)
@@ -151,47 +161,98 @@ Machine::address_t Machine::mmap_allocate(size_t bytes)
 	auto range = mmap_cache().find(bytes);
 	if (!range.empty())
 	{
-		if (range.addr < this->mmap_start())
-		{
-			throw std::runtime_error("MMapCache: Invalid range");
+		if (UNLIKELY(range.addr < this->mmap_start())) {
+			throw MachineException("MMapCache: Invalid range (below mmap_start)", range.addr);
 		}
+		else if (UNLIKELY(range.addr + range.size > this->mmap_cache().current())) {
+			throw MachineException("MMapCache: Invalid range (exceeds current address)", range.addr);
+		}
+
 		if (this->mmap_cache().track_used_ranges())
 		{
 			if (this->mmap_cache().find_collision(this->mmap_cache().used_ranges(), range))
 			{
-				throw std::runtime_error("MMapCache: Collision detected");
+				throw MachineException("MMapCache: Collision detected");
 			}
 			this->mmap_cache().insert_used(range.addr, range.size);
 		}
 		return range.addr;
 	}
 
-	const address_t result = this->m_mm;
+	const address_t result = this->mmap_cache().current();
 	/* Bytes rounded up to nearest PAGE_SIZE. */
-	this->m_mm += bytes;
+	this->mmap_cache().current() += bytes;
 
 	if (this->mmap_cache().track_used_ranges())
 	{
 		MMapCache::Range range { result, bytes };
 		if (this->mmap_cache().find_collision(this->mmap_cache().used_ranges(), range))
 		{
-			throw std::runtime_error("MMapCache: Collision detected");
+			throw MachineException("MMapCache: Collision detected", result);
 		}
 		this->mmap_cache().insert_used(result, bytes);
 	}
 	return result;
 }
 
+Machine::address_t Machine::mmap_fixed_allocate(uint64_t addr, size_t bytes)
+{
+	if (UNLIKELY(addr < this->mmap_start())) {
+		throw MachineException("MMapCache: Invalid range (below mmap_start)", addr);
+	} else if (UNLIKELY(addr + bytes > this->mmap_cache().current())) {
+		throw MachineException("MMapCache: Invalid range (exceeds current address)", addr);
+	}
+
+	bytes = (bytes + PageMask) & ~PageMask;
+
+	// Make sure there is no free range in the way
+	mmap_cache().remove_free(addr, bytes);
+
+	if (this->mmap_cache().track_used_ranges())
+	{
+		MMapCache::Range range { addr, bytes };
+		// Only insert the range if it doesn't collide with any other used ranges
+		// as this is a fixed mapping, which can be placed anywhere.
+		if (this->mmap_cache().find_collision(this->mmap_cache().used_ranges(), range) == nullptr)
+		{
+			this->mmap_cache().insert_used(addr, bytes);
+		}
+	}
+
+	// If the mapping is within a certain range, we should adjust
+	// the current mmap address to the end of the new mapping. This is
+	// to avoid future collisions when allocating.
+	if (mmap_cache().current() < addr + bytes)
+	{
+		if (addr < mmap_cache().current() + MMAP_COLLISION_TRESHOLD)
+		{
+			const uint64_t current_addr = mmap_cache().current();
+			// Adjust the current mmap address to the end of the new mapping
+			mmap_cache().current() = addr + bytes;
+			// Insert the unused area between the current mmap address and the new mapping
+			const size_t unused_size = addr - current_addr;
+			if (unused_size > 0) {
+				mmap_cache().insert_free(current_addr, unused_size);
+			}
+			if constexpr (VERBOSE_MMAP_CACHE)
+				printf("MMapCache: Adjusting current mmap address to %lx\n", mmap_cache().current());
+		}
+	}
+
+	// Simply return the address
+	return addr;
+}
+
 bool Machine::mmap_unmap(uint64_t addr, size_t size)
 {
 	bool relaxed = false;
-	if (addr + size == this->m_mm && addr < this->m_mm)
+	if (addr + size == this->mmap_cache().current() && addr < this->mmap_cache().current())
 	{
-		this->m_mm = (addr + PageMask) & ~PageMask;
-		this->mmap_cache().invalidate(addr, size);
+		this->mmap_cache().remove_free(addr, size);
+		this->mmap_cache().current() = (addr + PageMask) & ~PageMask;
 		relaxed = true;
 	}
-	else if (addr >= this->mmap_start())
+	else if (addr >= this->heap_address())
 	{
 		// If relaxation didn't happen, put in the cache for later.
 		this->mmap_cache().insert_free(addr, size);
@@ -203,10 +264,15 @@ bool Machine::mmap_unmap(uint64_t addr, size_t size)
 	return relaxed;
 }
 
+Machine::address_t Machine::mmap_current() const noexcept
+{
+	return this->mmap_cache().current();
+}
+
 bool Machine::mmap_relax(uint64_t addr, size_t size, size_t new_size)
 {
-	if (this->m_mm == addr + size && new_size <= size) {
-		this->m_mm = (addr + new_size + PageMask) & ~PageMask;
+	if (this->mmap_cache().current() == addr + size && new_size <= size) {
+		this->mmap_cache().current() = (addr + new_size + PageMask) & ~PageMask;
 		return true;
 	}
 	return false;
