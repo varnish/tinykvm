@@ -208,8 +208,10 @@ void Machine::setup_multithreading()
 				const uint64_t oldstk_current = cpu.registers().rsp - 0x100;
 				size_t size = oldstk_top - oldstk_current;
 				if (size > 0x1000000) {
-					// Stack is too large, fail out
-					throw std::runtime_error("sys_clone: stack too large");
+					// Stack is too large, divination failed
+					THPRINT(">>> clone: stack too large %llX, making up a 2MB one\n",
+						size);
+					size = 0x2000000;
 				}
 				// Allocate a new stack + 2MB for extra space
 				static constexpr size_t STACK_EXTRA = 0x200000;
