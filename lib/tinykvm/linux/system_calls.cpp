@@ -579,6 +579,32 @@ void Machine::setup_linux_system_calls()
 					}
 				}
 				break;
+			case FIOCLEX: // Set close-on-exec
+				if (int(regs.rdi) >= 0 && int(regs.rdi) < 3) {
+					// Ignore
+					regs.rax = 0;
+				} else {
+					const int result = ioctl(fd, FIOCLEX);
+					if (result < 0) {
+						regs.rax = -errno;
+					} else {
+						regs.rax = 0;
+					}
+				}
+				break;
+			case FIONCLEX: // Clear close-on-exec
+				if (int(regs.rdi) >= 0 && int(regs.rdi) < 3) {
+					// Ignore
+					regs.rax = 0;
+				} else {
+					const int result = ioctl(fd, FIONCLEX);
+					if (result < 0) {
+						regs.rax = -errno;
+					} else {
+						regs.rax = 0;
+					}
+				}
+				break;
 			default:
 				regs.rax = -EINVAL;
 			}
