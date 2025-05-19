@@ -251,34 +251,29 @@ void Machine::setup_linux_system_calls()
 		SYS_poll, [](vCPU& cpu) { // POLL
 			auto& regs = cpu.registers();
 			const unsigned guest_count = regs.rsi;
-			const size_t bytes = sizeof(pollfd) * guest_count;
-			auto *fds = cpu.machine().template rw_memory_at<struct pollfd>(regs.rdi, bytes);
+			auto *fds = cpu.machine().template writable_memarray<struct pollfd>(regs.rdi, guest_count);
+			const int timeout = int(regs.rdx);
 			std::array<struct pollfd, 256> host_fds;
 			std::array<unsigned, 256> host_fds_indexes;
 			unsigned host_fds_count = 0;
 			for (unsigned i = 0; i < guest_count; i++)
 			{
-				// stdout/stderr
-				if (fds[i].fd == 1 || fds[i].fd == 2)
-					fds[i].revents = fds[i].events;
-				else {
-					// Translate the fd
-					const int fd = cpu.machine().fds().translate(fds[i].fd);
-					if (fd < 0) {
-						// Invalid fd, set revents to POLLNVAL
-						fds[i].revents = POLLNVAL;
-						continue;
-					}
-					host_fds.at(host_fds_count) = pollfd{fd, fds[i].events, 0};
-					host_fds_indexes.at(host_fds_count) = i;
-					host_fds_count++;
+				// Translate the fd
+				const int fd = cpu.machine().fds().translate(fds[i].fd);
+				if (fd < 0) {
+					// Invalid fd, set revents to POLLNVAL
+					fds[i].revents = POLLNVAL;
+					continue;
 				}
+				host_fds.at(host_fds_count) = pollfd{fd, fds[i].events, 0};
+				host_fds_indexes.at(host_fds_count) = i;
+				host_fds_count++;
 			}
 			if (host_fds_count == 0) {
 				regs.rax = 0;
 			} else {
 				// Call poll on the host
-				regs.rax = poll(host_fds.data(), host_fds_count, 250);
+				regs.rax = poll(host_fds.data(), host_fds_count, std::min(250, timeout));
 				if (int(regs.rax) < 0) {
 					regs.rax = -errno;
 				} else {
