@@ -169,9 +169,7 @@ void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 		Machine::machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
 	}
 
-	if (options.clock_gettime_uses_rdtsc) {
-		mutable_interrupt_header().set_clock_gettime_uses_rdtsc(true);
-	}
+	mutable_interrupt_header().set_clock_gettime_uses_rdtsc(options.clock_gettime_uses_rdtsc);
 }
 
 void vCPU::smp_init(int id, Machine& machine)
