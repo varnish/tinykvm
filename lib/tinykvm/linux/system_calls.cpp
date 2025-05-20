@@ -273,7 +273,7 @@ void Machine::setup_linux_system_calls()
 				regs.rax = 0;
 			} else {
 				// Call poll on the host
-				regs.rax = poll(host_fds.data(), host_fds_count, std::min(250, timeout));
+				regs.rax = poll(host_fds.data(), host_fds_count, std::min(1, timeout));
 				if (int(regs.rax) < 0) {
 					regs.rax = -errno;
 				} else {
@@ -287,6 +287,9 @@ void Machine::setup_linux_system_calls()
 				}
 			}
 			cpu.set_registers(regs);
+			if (regs.rax == 0) {
+				cpu.machine().threads().suspend_and_yield(-EINTR);
+			}
 			SYSPRINT("poll(fds=0x%llX, count=%u, timeout=%u) = %lld\n",
 				regs.rdi, guest_count, unsigned(regs.rdx), regs.rax);
 		});
