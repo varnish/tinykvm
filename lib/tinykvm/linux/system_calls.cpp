@@ -253,6 +253,12 @@ void Machine::setup_linux_system_calls()
 			const unsigned guest_count = regs.rsi;
 			auto *fds = cpu.machine().template writable_memarray<struct pollfd>(regs.rdi, guest_count);
 			const int timeout = int(regs.rdx);
+			// Check if we have a callback for poll, and if we do potentially
+			// skip the syscall if the callback returns false.
+			if (auto& callback = cpu.machine().fds().poll_callback; callback) {
+				if (!callback(fds, guest_count, timeout))
+					return;
+			}
 			std::array<struct pollfd, 256> host_fds;
 			std::array<unsigned, 256> host_fds_indexes;
 			unsigned host_fds_count = 0;
@@ -273,7 +279,8 @@ void Machine::setup_linux_system_calls()
 				regs.rax = 0;
 			} else {
 				// Call poll on the host
-				regs.rax = poll(host_fds.data(), host_fds_count, std::min(1, timeout));
+				const int real_timeout = cpu.machine().is_forked() ? timeout : std::min(1, timeout);
+				regs.rax = poll(host_fds.data(), host_fds_count, real_timeout);
 				if (int(regs.rax) < 0) {
 					regs.rax = -errno;
 				} else {

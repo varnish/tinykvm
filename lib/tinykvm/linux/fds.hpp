@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <sys/epoll.h>
 struct sockaddr_storage;
+struct pollfd;
 
 namespace tinykvm
 {
@@ -33,6 +34,7 @@ namespace tinykvm
 		using resolve_symlink_t = std::function<bool(std::string&)>;
 		using find_readonly_master_vm_fd_t = std::function<std::optional<const Entry*>(int)>;
 		using epoll_wait_t = std::function<bool(int, int, int)>;
+		using poll_t = std::function<bool(struct pollfd*, unsigned, int)>;
 		using free_fd_t = std::function<bool(int, Entry&)>;
 
 		FileDescriptors(Machine& machine);
@@ -346,6 +348,7 @@ namespace tinykvm
 		accept_socket_t    accept_socket_callback;
 		listening_socket_t listening_socket_callback;
 		epoll_wait_t       epoll_wait_callback;
+		poll_t             poll_callback;
 		free_fd_t          free_fd_callback;
 	};
 }
