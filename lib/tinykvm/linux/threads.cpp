@@ -27,11 +27,11 @@ Thread::Thread(MultiThreading& mtr, const Thread& other)
 void Thread::suspend(uint64_t return_value)
 {
 	// GPRs
-	stored_regs = mt.machine.registers();
-	stored_regs.rax = return_value;
+	this->stored_regs = mt.machine.registers();
+	this->stored_regs.rax = return_value;
 	// thread pointer
 	const auto& sregs = mt.machine.get_special_registers();
-	fsbase = sregs.fs.base;
+	this->fsbase = sregs.fs.base;
 	// add to suspended (NB: can throw)
 	mt.m_suspended.push_back(this);
 }
@@ -85,6 +85,14 @@ MultiThreading::MultiThreading(Machine& m)
 
 void MultiThreading::reset_to(const MultiThreading& other)
 {
+	const int old_current_tid = m_current->tid;
+	const int new_current_tid = other.m_current->tid;
+	if (new_current_tid != old_current_tid) {
+		// The thread ID changed in-between resets, so we have to
+		// update the FSBASE MSR to the new thread
+		this->machine.set_tls_base(other.machine.get_special_registers().fs.base);
+	}
+
 	m_threads.clear();
 	m_suspended.clear();
 
@@ -209,7 +217,7 @@ void Machine::setup_multithreading()
 				size_t size = oldstk_top - oldstk_current;
 				if (size > 0x1000000) {
 					// Stack is too large, divination failed
-					THPRINT(">>> clone: stack too large %llX, making up a 2MB one\n",
+					THPRINT(">>> clone: stack too large %zX, making up a 2MB one\n",
 						size);
 					size = 0x2000000;
 				}
@@ -228,7 +236,7 @@ void Machine::setup_multithreading()
 			auto& parent = cpu.machine().threads().get_thread();
 			auto& thread = cpu.machine().threads().create(flags, ctid, ptid, stack, tls);
 			THPRINT(">>> clone(func=0x%llX, stack=0x%llX, flags=%llX,"
-					" parent=%d, ctid=0x%llX ptid=0x%llX, tls=0x%llX) = %d\n",
+					" parent=%d, ctid=0x%llX ptid=0x%llX, tls=0x%lX) = %d\n",
 					func, stack, flags, parent.tid, ctid, ptid, tls, thread.tid);
 			// store return value for parent: child TID
 			parent.suspend(thread.tid);
@@ -365,7 +373,7 @@ void Machine::setup_multithreading()
 			/* Sets clear_tid and returns tid */
 			thread.clear_tid = regs.rdi;
 			regs.rax = thread.tid;
-			THPRINT("set_tid_address(clear_tid=0x%lX) = %d\n",
+			THPRINT("set_tid_address(clear_tid=0x%llX) = %d\n",
 				regs.rdi, thread.tid);
 			cpu.set_registers(regs);
 		});
