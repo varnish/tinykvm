@@ -2386,6 +2386,9 @@ void Machine::setup_linux_system_calls()
 			// Copy events back to guest
 			if (result > 0)
 			{
+				// NOTE: Setting the result early prevents logging from mistakenly
+				// using the wrong return value from regs.rax.
+				regs.rax = result;
 				if (cpu.machine().m_verbose_system_calls) {
 					for (int i = 0; i < result; ++i)
 					{
@@ -2418,7 +2421,6 @@ void Machine::setup_linux_system_calls()
 				}
 				cpu.machine().copy_to_guest(g_events, guest_events.data(),
 					result * sizeof(struct epoll_event));
-				regs.rax = result;
 			}
 			else if (UNLIKELY(result < 0))
 			{
