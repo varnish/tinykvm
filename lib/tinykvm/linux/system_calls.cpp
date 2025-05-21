@@ -7,6 +7,7 @@
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
+#include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/poll.h>
 #include <sys/prctl.h>
@@ -180,13 +181,14 @@ void Machine::setup_linux_system_calls()
 			}
 
 			struct stat vstat;
-			regs.rax = stat(path.c_str(), &vstat);
-			SYSPRINT("STAT to path=%s, data=0x%llX = %lld\n",
-				path.c_str(), regs.rsi, regs.rax);
-			if (regs.rax == 0) {
+			const int result = stat(path.c_str(), &vstat);
+			regs.rax = (result == 0) ? 0 : -errno;
+			if (result == 0) {
 				cpu.machine().copy_to_guest(regs.rsi, &vstat, sizeof(vstat));
 			}
 			cpu.set_registers(regs);
+			SYSPRINT("stat(path=%s, data=0x%llX) = %lld\n",
+				path.c_str(), regs.rsi, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_fstat, [] (vCPU& cpu) { // FSTAT
@@ -1736,6 +1738,30 @@ void Machine::setup_linux_system_calls()
 					 path.c_str(), regs.rdi, regs.rsi, regs.rax);
 		});
 	Machine::install_syscall_handler(
+		SYS_fchdir, [](vCPU& cpu) { // fchdir
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			const int fd = cpu.machine().fds().translate(vfd);
+			if (fd >= 0)
+			{
+				if (fchdir(fd) < 0)
+				{
+					regs.rax = -errno;
+				}
+				else
+				{
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EBADF;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("fchdir(fd=%d (%d)) = %lld\n",
+					 fd, vfd, regs.rax);
+		});
+	Machine::install_syscall_handler(
 		SYS_rename, [](vCPU& cpu) { // RENAME
 			auto& regs = cpu.registers();
 			std::string from_path = cpu.machine().memcstring(regs.rdi, PATH_MAX);
@@ -1759,6 +1785,42 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 			SYSPRINT("rename(%s (0x%llX), %s (0x%llX)) = %lld\n",
 					 from_path.c_str(), regs.rdi, to_path.c_str(), regs.rsi, regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_symlink, [](vCPU& cpu) { // symlink
+			auto& regs = cpu.registers();
+			std::string target = cpu.machine().memcstring(regs.rdi, PATH_MAX);
+			std::string linkpath = cpu.machine().memcstring(regs.rsi, PATH_MAX);
+			if (linkpath.find("..") != std::string::npos ||
+				linkpath.find("./") != std::string::npos)
+			{
+				throw MachineException("symlink: invalid link path");
+			}
+			if (target.find("..") != std::string::npos ||
+				target.find("./") != std::string::npos)
+			{
+				throw MachineException("symlink: invalid target path");
+			}
+			// Check if the link path is writable (path can be modified),
+			// and that the target path is readable (path can be modified)
+			if (cpu.machine().fds().is_writable_path(linkpath)
+				&& cpu.machine().fds().is_readable_path(target))
+			{
+				// Create the symlink
+				if (symlink(target.c_str(), linkpath.c_str()) < 0) {
+					regs.rax = -errno;
+				}
+				else {
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EPERM;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("symlink(%s (0x%llX), %s (0x%llX)) = %lld\n",
+					 target.c_str(), regs.rdi, linkpath.c_str(), regs.rsi, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_readlink, [](vCPU& cpu) { // READLINK
@@ -2275,6 +2337,42 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 			SYSPRINT("timerfd_create(%d, ...) = %d (%lld)\n",
 				clockid, real_fd, regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_timerfd_settime, [](vCPU& cpu)
+		{
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			const int flags = regs.rsi;
+			const uint64_t g_new_value = regs.rdx;
+			const uint64_t g_old_value = regs.r10;
+			struct itimerspec new_value {};
+			struct itimerspec old_value {};
+			if (g_new_value != 0x0) {
+				cpu.machine().copy_from_guest(&new_value, g_new_value, sizeof(new_value));
+			}
+			const int fd = cpu.machine().fds().translate(vfd);
+			if (fd >= 0)
+			{
+				if (timerfd_settime(fd, flags, &new_value, g_old_value != 0x0 ? &old_value : nullptr) < 0)
+				{
+					regs.rax = -errno;
+				}
+				else
+				{
+					if (g_old_value != 0x0) {
+						cpu.machine().copy_to_guest(g_old_value, &old_value, sizeof(old_value));
+					}
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EBADF;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("timerfd_settime(%d, %d, new_value=0x%lX, old_value=0x%lX) = %lld\n",
+				vfd, flags, g_new_value, g_old_value, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_epoll_create1, [](vCPU& cpu)
@@ -2815,6 +2913,47 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("io_uring_setup(...) = %lld\n",
 					 regs.rax);
 		});
+	//Machine::install_syscall_handler(
+	//	SYS_inotify_init1, [](vCPU& cpu) { // inotify_init1
+	//		auto& regs = cpu.registers();
+	//		const int flags = regs.rdi;
+	//		const int real_fd = inotify_init1(flags);
+	//		const int vfd = cpu.machine().fds().manage(real_fd, false, true);
+	//		if (UNLIKELY(vfd < 0)) {
+	//			regs.rax = -errno;
+	//		}
+	//		else {
+	//			regs.rax = vfd;
+	//		}
+	//		cpu.set_registers(regs);
+	//		SYSPRINT("inotify_init1(flags=0x%X) = %d (%lld)\n",
+	//			flags, real_fd, regs.rax);
+	//	});
+	//Machine::install_syscall_handler(
+	//	SYS_inotify_add_watch, [](vCPU& cpu) { // inotify_add_watch
+	//		auto& regs = cpu.registers();
+	//		const int vfd = regs.rdi;
+	//		const uint64_t g_path = regs.rsi;
+	//		const int mask = regs.rdx;
+	//		std::string path = cpu.machine().memcstring(g_path, PATH_MAX);
+	//		if (!cpu.machine().fds().is_writable_path(path)) {
+	//			regs.rax = -EPERM;
+	//			cpu.set_registers(regs);
+	//			SYSPRINT("inotify_add_watch fd=%d path was not writable: %s\n", vfd, path.c_str());
+	//			return;
+	//		}
+	//		const int fd = cpu.machine().fds().translate(vfd);
+	//		if (fd > 0) {
+	//			regs.rax = inotify_add_watch(fd, path.c_str(), mask);
+	//			if (int(regs.rax) < 0)
+	//				regs.rax = -errno;
+	//		} else {
+	//			regs.rax = -EBADF;
+	//		}
+	//		cpu.set_registers(regs);
+	//		SYSPRINT("inotify_add_watch(fd=%d, path=%s, mask=0x%X) = %lld\n",
+	//				 fd, path.c_str(), mask, regs.rax);
+	//	});
 
 	// Threads: clone, futex, block/tkill etc.
 	Machine::setup_multithreading();
