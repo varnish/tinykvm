@@ -814,7 +814,7 @@ void Machine::setup_linux_system_calls()
 			uint64_t new_len = (regs.rdx + PageMask) & ~PageMask;
 			unsigned flags = regs.r10;
 
-			if (false && old_addr + old_len == current)
+			if (old_addr + old_len == current)
 			{
 				if (old_addr + new_len < old_addr)
 					throw MachineException("mremap: overflow");
@@ -828,12 +828,23 @@ void Machine::setup_linux_system_calls()
 			}
 			else
 			{
-				// We don't support other flags
-				regs.rax = ~0ULL; /* MAP_FAILED */
+				// We support this by allocating a new area and copying the contents
+				const uint64_t new_addr = cpu.machine().mmap_allocate(new_len);
+				cpu.machine().copy_from_machine(new_addr, cpu.machine(), old_addr, old_len);
+				cpu.machine().mmap_unmap(old_addr, old_len);
+				regs.rax = new_addr;
 			}
 			cpu.set_registers(regs);
 			PRINTMMAP("mremap(0x%llX, %llu, %llu, flags=0x%X) = 0x%llX\n",
 					  regs.rdi, regs.rsi, regs.rdx, flags, regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_msync, [](vCPU& cpu) { // msync
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			cpu.set_registers(regs);
+			SYSPRINT("msync(0x%llX, %llu, %llu) = %lld\n",
+					 regs.rdi, regs.rsi, regs.rdx, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_mincore, [](vCPU& cpu) { // mincore
