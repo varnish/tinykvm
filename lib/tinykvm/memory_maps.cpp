@@ -68,16 +68,16 @@ void MMapCache::insert_free(uint64_t addr, uint64_t size)
 			free_range.size += size;
 			return;
 		}
-		//else if (free_range.addr == addr + size)
-		//{
-		//	if constexpr (VERBOSE_MMAP_CACHE)
-		//		printf("MMapCache: Merging free range *below* %lx %lx with result %lx %lx\n",
-		//			free_range.addr, free_range.addr + free_range.size,
-		//			addr, addr + size + free_range.size);
-		//	free_range.addr = addr;
-		//	free_range.size += size;
-		//	return;
-		//}
+		else if (free_range.addr == addr + size)
+		{
+			if constexpr (VERBOSE_MMAP_CACHE)
+				printf("MMapCache: Merging free range *below* %lx %lx with result %lx %lx\n",
+					free_range.addr, free_range.addr + free_range.size,
+					addr, addr + size + free_range.size);
+			free_range.addr = addr;
+			free_range.size += size;
+			return;
+		}
 	}
 
 	if (m_free_ranges.size() >= m_max_tracked_ranges) {
@@ -196,7 +196,7 @@ Machine::address_t Machine::mmap_allocate(size_t bytes, int prot)
 	return result;
 }
 
-Machine::address_t Machine::mmap_fixed_allocate(uint64_t addr, size_t bytes, int prot)
+Machine::address_t Machine::mmap_fixed_allocate(uint64_t addr, size_t bytes, bool is_fixed, int prot)
 {
 	if (UNLIKELY(addr < this->mmap_start())) {
 		throw MachineException("MMapCache: Invalid range (below mmap_start)", addr);
@@ -205,7 +205,7 @@ Machine::address_t Machine::mmap_fixed_allocate(uint64_t addr, size_t bytes, int
 	}
 
 	bytes = (bytes + PageMask) & ~PageMask;
-	if (prot == 0x0)
+	if (!is_fixed)
 	{
 		return mmap_allocate(bytes);
 	}
@@ -257,7 +257,7 @@ bool Machine::mmap_unmap(uint64_t addr, size_t size)
 		this->mmap_cache().current() = (addr + PageMask) & ~PageMask;
 		relaxed = true;
 	}
-	else if (addr >= this->heap_address())
+	else if (addr >= this->mmap_start())
 	{
 		// If relaxation didn't happen, put in the cache for later.
 		this->mmap_cache().insert_free(addr, size);
