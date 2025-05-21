@@ -168,8 +168,8 @@ struct Machine
 	void set_brk_address(address_t addr) { this->m_brk_address = addr; }
 	address_t mmap_start() const noexcept { return this->m_heap_address; }
 	address_t mmap_current() const noexcept;
-	address_t mmap_allocate(size_t bytes);
-	address_t mmap_fixed_allocate(uint64_t addr, size_t bytes);
+	address_t mmap_allocate(size_t bytes, int prot = 0x3);
+	address_t mmap_fixed_allocate(uint64_t addr, size_t bytes, int prot = 0x3);
 	bool      mmap_unmap(uint64_t addr, size_t size);
 	bool relocate_fixed_mmap() const noexcept { return m_relocate_fixed_mmap; }
 	bool mmap_relax(uint64_t addr, size_t size, size_t new_size);

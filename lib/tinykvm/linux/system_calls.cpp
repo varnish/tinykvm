@@ -359,19 +359,24 @@ void Machine::setup_linux_system_calls()
 						  regs.rax, cpu.machine().mmap_current());
 				return;
 			}
-			else if (address != 0x0 && address >= cpu.machine().heap_address() && address + length <= cpu.machine().mmap_current())
+			else if (address != 0x0 && address >= cpu.machine().heap_address() && address + length <= cpu.machine().mmap_start())
 			{
-				// Existing range already mmap'ed
+				// Existing range already mmap'ed below mmap_start
 				regs.rax = address;
+			}
+			else if (address != 0x0 && address >= cpu.machine().mmap_start() && address + length <= cpu.machine().mmap_current())
+			{
+				// Existing range already mmap'ed within mmap area
+				regs.rax = cpu.machine().mmap_fixed_allocate(address, length, prot);
 			}
 			else if (address != 0x0 && (address + length) > cpu.machine().mmap_current() && !cpu.machine().relocate_fixed_mmap())
 			{
 				// Force mmap to a specific address
-				regs.rax = cpu.machine().mmap_fixed_allocate(address, length);
+				regs.rax = cpu.machine().mmap_fixed_allocate(address, length, prot);
 			}
 			else
 			{
-				regs.rax = cpu.machine().mmap_allocate(length);
+				regs.rax = cpu.machine().mmap_allocate(length, prot);
 			}
 			/* If MAP_ANON is set, the memory must be zeroed. memzero() will only
 			   zero the pages that are dirty, preventing RSS from exploding. */

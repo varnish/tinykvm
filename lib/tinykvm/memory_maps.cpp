@@ -154,8 +154,9 @@ void MMapCache::remove_used(uint64_t addr, uint64_t size)
 	remove(addr, size, m_used_ranges);
 }
 
-Machine::address_t Machine::mmap_allocate(size_t bytes)
+Machine::address_t Machine::mmap_allocate(size_t bytes, int prot)
 {
+	(void)prot;
 	bytes = (bytes + PageMask) & ~PageMask;
 
 	auto range = mmap_cache().find(bytes);
@@ -195,7 +196,7 @@ Machine::address_t Machine::mmap_allocate(size_t bytes)
 	return result;
 }
 
-Machine::address_t Machine::mmap_fixed_allocate(uint64_t addr, size_t bytes)
+Machine::address_t Machine::mmap_fixed_allocate(uint64_t addr, size_t bytes, int prot)
 {
 	if (UNLIKELY(addr < this->mmap_start())) {
 		throw MachineException("MMapCache: Invalid range (below mmap_start)", addr);
@@ -204,6 +205,10 @@ Machine::address_t Machine::mmap_fixed_allocate(uint64_t addr, size_t bytes)
 	}
 
 	bytes = (bytes + PageMask) & ~PageMask;
+	if (prot == 0x0)
+	{
+		return mmap_allocate(bytes);
+	}
 
 	// Make sure there is no free range in the way
 	mmap_cache().remove_free(addr, bytes);
