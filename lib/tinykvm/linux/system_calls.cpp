@@ -558,12 +558,13 @@ void Machine::setup_linux_system_calls()
 					regs.rax = 0;
 				} else {
 					int arg = 0;
-					cpu.machine().copy_from_guest(&arg, regs.rsi, sizeof(arg));
-					if (arg != 0)
-						fcntl(fd, F_SETFL, O_NONBLOCK);
-					else
-						fcntl(fd, F_SETFL, ~O_NONBLOCK);
-					regs.rax = 0;
+					cpu.machine().copy_from_guest(&arg, regs.rdx, sizeof(arg));
+					const int result = ioctl(fd, FIONBIO, &arg);
+					if (result < 0) {
+						regs.rax = -errno;
+					} else {
+						regs.rax = 0;
+					}
 				}
 				break;
 			case FIONREAD: {
