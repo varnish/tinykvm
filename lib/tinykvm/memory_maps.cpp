@@ -45,7 +45,7 @@ void MMapCache::insert_free(uint64_t addr, uint64_t size)
 {
 	if (addr + size > current())
 	{
-		throw MachineException("MMapCache: Invalid free range");
+		throw MemoryException("MMapCache: Invalid free range", addr, size);
 	}
 	if constexpr (VERBOSE_MMAP_CACHE)
 		printf("MMapCache: Inserting free range %lx %lx\n", addr, addr + size);
@@ -53,7 +53,7 @@ void MMapCache::insert_free(uint64_t addr, uint64_t size)
 	// Check for collisions with other ranges
 	if (find_collision(m_free_ranges, { addr, size }))
 	{
-		throw MachineException("MMapCache: Collision detected");
+		throw MemoryException("MMapCache: Collision detected inserting free range", addr, size);
 	}
 	// Connect existing ranges if they are adjacent
 	for (Range& free_range : m_free_ranges)
@@ -81,7 +81,7 @@ void MMapCache::insert_free(uint64_t addr, uint64_t size)
 	}
 
 	if (m_free_ranges.size() >= m_max_tracked_ranges) {
-		throw MachineException("MMapCache: Too many free ranges");
+		throw MemoryException("MMapCache: Too many free ranges", addr, size);
 	}
 	m_free_ranges.push_back({addr, size});
 }
@@ -94,7 +94,7 @@ void MMapCache::insert_used(uint64_t addr, uint64_t size)
 		}
 	}
 	if (m_used_ranges.size() >= m_max_tracked_ranges) {
-		throw MachineException("MMapCache: Too many used ranges");
+		throw MemoryException("MMapCache: Too many used ranges", addr, size);
 	}
 	m_used_ranges.push_back({addr, size});
 }
@@ -136,13 +136,13 @@ void MMapCache::remove(uint64_t addr, uint64_t size, std::vector<Range>& ranges)
 				}
 				continue;
 			}
-			throw MachineException("Unreachable");
+			throw MemoryException("Unreachable", addr, size);
 		}
 		else ++it;
 	}
 	if (find_collision(ranges, { addr, size }))
 	{
-		throw MachineException("MMapCache: Failed to remove range");
+		throw MemoryException("MMapCache: Failed to remove range", addr, size);
 	}
 }
 void MMapCache::remove_free(uint64_t addr, uint64_t size)
@@ -163,17 +163,17 @@ Machine::address_t Machine::mmap_allocate(size_t bytes, int prot)
 	if (!range.empty())
 	{
 		if (UNLIKELY(range.addr < this->mmap_start())) {
-			throw MachineException("MMapCache: Invalid range (below mmap_start)", range.addr);
+			throw MemoryException("MMapCache: Invalid range (below mmap_start)", range.addr, range.size);
 		}
 		else if (UNLIKELY(range.addr + range.size > this->mmap_cache().current())) {
-			throw MachineException("MMapCache: Invalid range (exceeds current address)", range.addr);
+			throw MemoryException("MMapCache: Invalid range (exceeds current address)", range.addr, range.size);
 		}
 
 		if (this->mmap_cache().track_used_ranges())
 		{
 			if (this->mmap_cache().find_collision(this->mmap_cache().used_ranges(), range))
 			{
-				throw MachineException("MMapCache: Collision detected");
+				throw MemoryException("MMapCache: Collision detected re-using free range", range.addr, range.size);
 			}
 			this->mmap_cache().insert_used(range.addr, range.size);
 		}
@@ -189,7 +189,7 @@ Machine::address_t Machine::mmap_allocate(size_t bytes, int prot)
 		MMapCache::Range range { result, bytes };
 		if (this->mmap_cache().find_collision(this->mmap_cache().used_ranges(), range))
 		{
-			throw MachineException("MMapCache: Collision detected", result);
+			throw MemoryException("MMapCache: Collision detected after incrementing current", result, bytes);
 		}
 		this->mmap_cache().insert_used(result, bytes);
 	}
@@ -199,9 +199,9 @@ Machine::address_t Machine::mmap_allocate(size_t bytes, int prot)
 Machine::address_t Machine::mmap_fixed_allocate(uint64_t addr, size_t bytes, bool is_fixed, int prot)
 {
 	if (UNLIKELY(addr < this->mmap_start())) {
-		throw MachineException("MMapCache: Invalid range (below mmap_start)", addr);
+		throw MemoryException("MMapCache: Invalid range (below mmap_start)", addr, bytes);
 	} else if (UNLIKELY(addr + bytes > this->mmap_cache().current())) {
-		throw MachineException("MMapCache: Invalid range (exceeds current address)", addr);
+		throw MemoryException("MMapCache: Invalid range (exceeds current address)", addr, bytes);
 	}
 
 	bytes = (bytes + PageMask) & ~PageMask;
