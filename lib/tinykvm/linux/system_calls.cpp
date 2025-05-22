@@ -45,6 +45,13 @@ static int sanitize_at_flags(int flags)
 	// enforce AT_SYMLINK_NOFOLLOW to prevent symlink following.
 	return (flags & (AT_EMPTY_PATH)) | AT_SYMLINK_NOFOLLOW;
 }
+static bool compare_getenv(const std::string& key, const std::string& value) {
+	const char* env = getenv(key.c_str());
+	if (env == nullptr) {
+		return false;
+	}
+	return strcmp(env, value.c_str()) == 0;
+}
 
 void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 {
@@ -225,7 +232,24 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const auto vpath = regs.rdi;
 			std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
 			if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
-				regs.rax = -EPERM;
+				// Some paths are extremely annoyingly "required" by some guests
+				// in order to proceed with things *unrelated* to the path.
+				if (path == "/home" || path == "/home/" || compare_getenv("HOME", path)) {
+					// Make up a fake stat structure
+					struct stat vstat;
+					std::memset(&vstat, 0, sizeof(vstat));
+					vstat.st_mode = S_IFDIR | 0755;
+					vstat.st_size = 0;
+					vstat.st_dev = 0x1234;
+					vstat.st_ino = 0x5678;
+					vstat.st_nlink = 2;
+					vstat.st_blksize = 4096;
+					vstat.st_blocks = 8;
+					cpu.machine().copy_to_guest(regs.rsi, &vstat, sizeof(vstat));
+					regs.rax = 0;
+				} else {
+					regs.rax = -EACCES;
+				}
 			} else {
 				struct stat vstat;
 				const int result = lstat(path.c_str(), &vstat);
@@ -553,14 +577,12 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					// TODO: Construct fake termios
 					regs.rax = 0;
 				} else {
-					regs.rax = -EPERM;
+					regs.rax = -EINVAL;
 				}
 				break;
-			case TCSETS: { // Set terminal attributes
-					// Ignore
-					regs.rax = 0;
-					break;
-				}
+			case TCSETS: // Set terminal attributes
+				regs.rax = 0;
+				break;
 			case TIOCGWINSZ: // Get window size
 				regs.rax = 80;
 				break;
@@ -605,30 +627,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				}
 				break;
 			case FIOCLEX: // Set close-on-exec
-				if (int(regs.rdi) >= 0 && int(regs.rdi) < 3) {
-					// Ignore
-					regs.rax = 0;
-				} else {
-					const int result = ioctl(fd, FIOCLEX);
-					if (result < 0) {
-						regs.rax = -errno;
-					} else {
-						regs.rax = 0;
-					}
-				}
-				break;
 			case FIONCLEX: // Clear close-on-exec
-				if (int(regs.rdi) >= 0 && int(regs.rdi) < 3) {
-					// Ignore
-					regs.rax = 0;
-				} else {
-					const int result = ioctl(fd, FIONCLEX);
-					if (result < 0) {
-						regs.rax = -errno;
-					} else {
-						regs.rax = 0;
-					}
-				}
+				regs.rax = 0;
 				break;
 			default:
 				regs.rax = -EINVAL;
@@ -1824,7 +1824,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				regs.rax = -EINVAL;
 			} else {
 				// Read the link
-				ssize_t result = readlink(path.c_str(), buf.data(), bufsiz);
+				const int guest_cwd = cpu.machine().fds().current_working_directory_fd();
+				ssize_t result = readlinkat(guest_cwd, path.c_str(), buf.data(), bufsiz);
 				if (result < 0)
 				{
 					regs.rax = -errno;
@@ -2163,7 +2164,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					if (UNLIKELY(!cpu.machine().fds().is_readable_path(real_path))) {
 						regs.rax = -EACCES;
 						cpu.set_registers(regs);
-						SYSPRINT("OPENAT fd=%ld path was not readable: %s\n", vfd, real_path.c_str());
+						SYSPRINT("OPENAT fd=%d path was not readable: %s\n",
+							vfd, real_path.c_str());
 						return;
 					}
 
@@ -2205,13 +2207,24 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 
 					real_path = path;
 					if (!cpu.machine().fds().is_writable_path(real_path)) {
-						SYSPRINT("OPENAT fd=%ld path was not writable: %s\n", vfd, real_path.c_str());
+						SYSPRINT("OPENAT fd=%d path was not writable: %s\n", vfd, real_path.c_str());
 						regs.rax = -EPERM;
 						cpu.set_registers(regs);
 						return;
 					}
 
-					int fd = openat(pfd, real_path.c_str(), flags, S_IWUSR | S_IRUSR);
+					__u64 resolve = 0;
+					if (vfd == AT_FDCWD && !real_path.empty() && real_path[0] == '/') {
+						resolve |= RESOLVE_NO_MAGICLINKS; // NO_XDEV doesn't work here :(
+					} else {
+						resolve |= RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV;
+					}
+					struct open_how how {
+						.flags = __u64(flags),
+						.mode  = __u64(S_IWUSR | S_IRUSR),
+						.resolve = resolve,
+					};
+					int fd = syscall(SYS_openat2, pfd, real_path.c_str(), &how, sizeof(how));
 					SYSPRINT("OPENAT where=%lld path=%s (real_path=%s) flags=%X = fd %d\n",
 						regs.rdi, path.c_str(), real_path.c_str(), flags, fd);
 
@@ -2746,7 +2759,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				regs.rax = -1;
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("STATX to vfd=%lld, fd=%d, path=%s, data=0x%llX, flags=0x%llX, mask=0x%llX = %lld\n",
+			SYSPRINT("STATX to vfd=%lld, fd=%d, path=%s, data=0x%llX, flags=0x%X, mask=0x%llX = %lld\n",
 				regs.rdi, fd, path.c_str(), buffer, flags, mask, regs.rax);
 		});
 	Machine::install_syscall_handler(

@@ -503,13 +503,7 @@ namespace tinykvm
 			throw std::runtime_error("Empty path in FileDescriptors::add_readonly_file");
 		if (path.find("..") != std::string::npos)
 			throw std::runtime_error("Path contains parent directory in FileDescriptors::add_readonly_file");
-		// We allow paths that start with $ to be treated as
-		// a prefix for the allowed paths. This is useful for
-		// allowing directories and other prefixes.
-		if (path.front() == '$')
-			this->m_allowed_readable_paths_starts_with->push_back(path.substr(1));
-		else
-			this->m_allowed_readable_paths->insert(path);
+		this->m_allowed_readable_paths->insert(path);
 	}
 
 	void FileDescriptors::add_readonly_prefix(const std::string& path)
