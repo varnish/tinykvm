@@ -46,6 +46,8 @@ namespace tinykvm
 		this->add_readonly_file("/lib/x86_64-linux-gnu/libdl.so.2");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/libstdc++.so.6");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/librt.so.1");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/libz.so.1");
+		this->add_readonly_file("/lib/x86_64-linux-gnu/libexpat.so.1");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v2/libstdc++.so.6");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3/libstdc++.so.6");
 		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v4/libstdc++.so.6");

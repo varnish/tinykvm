@@ -981,6 +981,14 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const int domain = regs.rdi;
 			const int type = regs.rsi;
 			const int protocol = regs.rdx;
+			if (domain != AF_INET && domain != AF_INET6 && domain != AF_UNIX)
+			{
+				regs.rax = -EAFNOSUPPORT;
+				cpu.set_registers(regs);
+				SYSPRINT("socket(domain=%d, type=%d, protocol=%d) = %lld (EAFNOSUPPORT)\n",
+						 domain, type, protocol, regs.rax);
+				return;
+			}
 			const int fd = socket(domain, type, protocol);
 			if (UNLIKELY(fd < 0))
 			{
