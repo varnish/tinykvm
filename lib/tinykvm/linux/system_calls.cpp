@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <sys/inotify.h>
 #include <sys/mman.h>
+#include <linux/openat2.h>
 #include <sys/poll.h>
 #include <sys/prctl.h>
 #include <sys/random.h>
@@ -38,7 +39,14 @@ struct GuestIOvec
 	uint64_t iov_len;
 };
 
-void Machine::setup_linux_system_calls()
+static int sanitize_at_flags(int flags)
+{
+	// We only allow AT_EMPTY_PATH. We also
+	// enforce AT_SYMLINK_NOFOLLOW to prevent symlink following.
+	return (flags & (AT_EMPTY_PATH)) | AT_SYMLINK_NOFOLLOW;
+}
+
+void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 {
 	Machine::install_unhandled_syscall_handler(
 		[](vCPU& cpu, unsigned scall)
@@ -1542,7 +1550,6 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 			SYSPRINT("sendmsg(fd=%d (%d), msg=0x%lX, flags=0x%X) = %lld\n",
 					 vfd, fd, g_msg, flags, regs.rax);
-			throw std::runtime_error("sendmsg not implemented");
 		});
 	Machine::install_syscall_handler(
 		SYS_uname, [](vCPU& cpu) { // UNAME
@@ -1634,11 +1641,11 @@ void Machine::setup_linux_system_calls()
 				}
 				else if (cmd == F_SETLK)
 				{
-					throw std::runtime_error("fcntl: F_SETLK not implemented");
+					throw MachineException("fcntl: F_SETLK not implemented");
 				}
 				else if (cmd == F_GETLK)
 				{
-					throw std::runtime_error("fcntl: F_GETLK not implemented");
+					throw MachineException("fcntl: F_GETLK not implemented");
 				}
 				else if (cmd == F_GETOWN)
 				{
@@ -1761,30 +1768,6 @@ void Machine::setup_linux_system_calls()
 					 path.c_str(), regs.rdi, regs.rsi, regs.rax);
 		});
 	Machine::install_syscall_handler(
-		SYS_fchdir, [](vCPU& cpu) { // fchdir
-			auto& regs = cpu.registers();
-			const int vfd = regs.rdi;
-			const int fd = cpu.machine().fds().translate(vfd);
-			if (fd >= 0)
-			{
-				if (fchdir(fd) < 0)
-				{
-					regs.rax = -errno;
-				}
-				else
-				{
-					regs.rax = 0;
-				}
-			}
-			else
-			{
-				regs.rax = -EBADF;
-			}
-			cpu.set_registers(regs);
-			SYSPRINT("fchdir(fd=%d (%d)) = %lld\n",
-					 fd, vfd, regs.rax);
-		});
-	Machine::install_syscall_handler(
 		SYS_rename, [](vCPU& cpu) { // RENAME
 			auto& regs = cpu.registers();
 			std::string from_path = cpu.machine().memcstring(regs.rdi, PATH_MAX);
@@ -1808,42 +1791,6 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 			SYSPRINT("rename(%s (0x%llX), %s (0x%llX)) = %lld\n",
 					 from_path.c_str(), regs.rdi, to_path.c_str(), regs.rsi, regs.rax);
-		});
-	Machine::install_syscall_handler(
-		SYS_symlink, [](vCPU& cpu) { // symlink
-			auto& regs = cpu.registers();
-			std::string target = cpu.machine().memcstring(regs.rdi, PATH_MAX);
-			std::string linkpath = cpu.machine().memcstring(regs.rsi, PATH_MAX);
-			if (linkpath.find("..") != std::string::npos ||
-				linkpath.find("./") != std::string::npos)
-			{
-				throw MachineException("symlink: invalid link path");
-			}
-			if (target.find("..") != std::string::npos ||
-				target.find("./") != std::string::npos)
-			{
-				throw MachineException("symlink: invalid target path");
-			}
-			// Check if the link path is writable (path can be modified),
-			// and that the target path is readable (path can be modified)
-			if (cpu.machine().fds().is_writable_path(linkpath)
-				&& cpu.machine().fds().is_readable_path(target))
-			{
-				// Create the symlink
-				if (symlink(target.c_str(), linkpath.c_str()) < 0) {
-					regs.rax = -errno;
-				}
-				else {
-					regs.rax = 0;
-				}
-			}
-			else
-			{
-				regs.rax = -EPERM;
-			}
-			cpu.set_registers(regs);
-			SYSPRINT("symlink(%s (0x%llX), %s (0x%llX)) = %lld\n",
-					 target.c_str(), regs.rdi, linkpath.c_str(), regs.rsi, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_readlink, [](vCPU& cpu) { // READLINK
@@ -2192,7 +2139,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
 			const auto vpath = regs.rsi;
-			int flags = regs.rdx | AT_SYMLINK_NOFOLLOW;
+			const int flags = regs.rdx & (O_CREAT | O_TRUNC | O_APPEND | O_RDWR | O_WRONLY);
 
 			std::string path = cpu.machine().memcstring(vpath, PATH_MAX);
 			std::string real_path;
@@ -2206,21 +2153,32 @@ void Machine::setup_linux_system_calls()
 					}
 					real_path = path;
 					if (UNLIKELY(!cpu.machine().fds().is_readable_path(real_path))) {
-						SYSPRINT("OPENAT fd=%ld path was not readable: %s\n", vfd, real_path.c_str());
-						regs.rax = -EPERM;
+						regs.rax = -EACCES;
 						cpu.set_registers(regs);
+						SYSPRINT("OPENAT fd=%ld path was not readable: %s\n", vfd, real_path.c_str());
 						return;
 					}
 
-					int fd = openat(pfd, real_path.c_str(), flags);
+					__u64 resolve = 0;
+					if (vfd == AT_FDCWD && !real_path.empty() && real_path[0] == '/') {
+						resolve |= RESOLVE_NO_MAGICLINKS; // NO_XDEV doesn't work here :(
+					} else {
+						resolve |= RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV;
+					}
+					struct open_how how {
+						.flags = __u64(flags),
+						.mode  = __u64(0),
+						.resolve = resolve,
+					};
+					int fd = syscall(SYS_openat2, pfd, real_path.c_str(), &how, sizeof(how));
 					if (fd > 0) {
 						regs.rax = cpu.machine().fds().manage(fd, false);
 					} else {
 						regs.rax = -errno;
 					}
+					cpu.set_registers(regs);
 					SYSPRINT("OPENAT fd=%lld path=%s (real_path=%s) = %d (%lld)\n",
 						regs.rdi, path.c_str(), real_path.c_str(), fd, regs.rax);
-					cpu.set_registers(regs);
 					return;
 				} catch (const std::exception& e) {
 					SYSPRINT("OPENAT failed: %s\n", e.what());
@@ -2265,10 +2223,10 @@ void Machine::setup_linux_system_calls()
 	Machine::install_syscall_handler(
 		SYS_newfstatat, [] (vCPU& cpu) { // NEWFSTATAT
 			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
 			const auto vpath  = regs.rsi;
 			const auto buffer = regs.rdx;
-			int flags  = AT_SYMLINK_NOFOLLOW; // regs.r10;
-			const int vfd = regs.rdi;
+			int flags = sanitize_at_flags(regs.r10);
 			int fd = cpu.machine().fds().current_working_directory_fd();
 			std::string path;
 
@@ -2299,7 +2257,7 @@ void Machine::setup_linux_system_calls()
 
 					struct stat64 vstat {};
 					// Path is in allow-list
-					const int result = fstatat64(fd, path.c_str(), &vstat, flags);
+					const int result = syscall(SYS_newfstatat, fd, path.c_str(), &vstat, flags);
 					if (result == 0) {
 						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
 						regs.rax = 0;
@@ -2397,10 +2355,9 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("timerfd_settime(%d, %d, new_value=0x%lX, old_value=0x%lX) = %lld\n",
 				vfd, flags, g_new_value, g_old_value, regs.rax);
 		});
-	Machine::install_syscall_handler(
+	Machine::install_syscall_handler( // epoll_create1
 		SYS_epoll_create1, [](vCPU& cpu)
 		{
-			/* SYS epoll_create1 */
 			auto& regs = cpu.registers();
 			const int fd = epoll_create1(0);
 			if (UNLIKELY(fd < 0))
@@ -2415,10 +2372,9 @@ void Machine::setup_linux_system_calls()
 			cpu.set_registers(regs);
 			SYSPRINT("epoll_create1() = %d (%lld)\n", fd, regs.rax);
 		});
-	Machine::install_syscall_handler(
+	Machine::install_syscall_handler( // nanosleep
 		SYS_nanosleep, [](vCPU& cpu)
 		{
-			/* SYS nanosleep */
 			auto& regs = cpu.registers();
 			regs.rax = 0;
 			cpu.set_registers(regs);
@@ -2728,14 +2684,13 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const uint64_t g_buf = regs.rdi;
 			const uint32_t bytes = regs.rsi;
-			const int flags = regs.rdx;
-			(void)flags;
+			const int flags = regs.rdx & GRND_NONBLOCK;
 
 			/* Max 256b randomness. */
 			if (bytes <= 256)
 			{
 				char buffer[256];
-				ssize_t actual = getrandom(buffer, bytes, 0);
+				ssize_t actual = getrandom(buffer, bytes, flags);
 				if (actual > 0)
 					cpu.machine().copy_to_guest(g_buf, buffer, actual);
 				regs.rax = actual;
@@ -2753,7 +2708,7 @@ void Machine::setup_linux_system_calls()
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
 			const auto vpath  = regs.rsi;
-			const auto flags  = regs.rdx | AT_SYMLINK_NOFOLLOW;
+			const auto flags  = sanitize_at_flags(regs.rdx);
 			const auto mask   = regs.r10;
 			const auto buffer = regs.r8;
 			std::string path;
@@ -2792,6 +2747,7 @@ void Machine::setup_linux_system_calls()
 			const int  vfd      = regs.rdi;
 			const auto vpath    = regs.rsi;
 			const auto g_buffer = regs.rdx;
+			const auto g_size   = regs.r10;
 			std::string path;
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
@@ -2810,7 +2766,7 @@ void Machine::setup_linux_system_calls()
 					if (vfd != AT_FDCWD)
 						fd = cpu.machine().fds().translate(vfd);
 					// Path is in allow-list
-					regs.rax = readlinkat(fd, path.c_str(), (char *)g_buffer, regs.rdx);
+					regs.rax = readlinkat(fd, path.c_str(), (char *)g_buffer, g_size);
 					if (regs.rax > 0) {
 						cpu.machine().copy_to_guest(g_buffer, path.c_str(), regs.rax);
 					} else {
@@ -2832,7 +2788,7 @@ void Machine::setup_linux_system_calls()
 			const int vfd = regs.rdi;
 			const uint64_t g_path = regs.rsi;
 			const uint64_t g_times = regs.rdx;
-			const int flags = regs.r10;
+			const int flags = sanitize_at_flags(regs.r10);
 			(void)flags;
 			std::string path;
 			struct timespec times[2];
@@ -2928,55 +2884,121 @@ void Machine::setup_linux_system_calls()
 			SYSPRINT("sysinfo(...) = %lld\n",
 					 regs.rax);
 		});
-	Machine::install_syscall_handler(
-		SYS_io_uring_setup, [](vCPU& cpu) { // io_uring_setup
+
+	// Some system calls are problematic and should be default
+	// disabled in the guest.
+	if (unsafe_syscalls)
+	{
+		Machine::install_syscall_handler(SYS_symlink,
+		[](vCPU& cpu) { // symlink
+			auto& regs = cpu.registers();
+			std::string target = cpu.machine().memcstring(regs.rdi, PATH_MAX);
+			std::string linkpath = cpu.machine().memcstring(regs.rsi, PATH_MAX);
+			if (linkpath.find("..") != std::string::npos ||
+				linkpath.find("./") != std::string::npos)
+			{
+				throw MachineException("symlink: invalid link path");
+			}
+			if (target.find("..") != std::string::npos ||
+				target.find("./") != std::string::npos)
+			{
+				throw MachineException("symlink: invalid target path");
+			}
+			// Check if the link path is writable (path can be modified),
+			// and that the target path is readable (path can be modified)
+			if (cpu.machine().fds().is_writable_path(linkpath)
+				&& cpu.machine().fds().is_readable_path(target))
+			{
+				// Create the symlink
+				if (symlink(target.c_str(), linkpath.c_str()) < 0) {
+					regs.rax = -errno;
+				}
+				else {
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EPERM;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("symlink(%s (0x%llX), %s (0x%llX)) = %lld\n",
+					 target.c_str(), regs.rdi, linkpath.c_str(), regs.rsi, regs.rax);
+		});
+		Machine::install_syscall_handler(SYS_fchdir,
+		[](vCPU& cpu) { // fchdir
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			const int fd = cpu.machine().fds().translate(vfd);
+			if (fd >= 0)
+			{
+				if (fchdir(fd) < 0)
+				{
+					regs.rax = -errno;
+				}
+				else
+				{
+					regs.rax = 0;
+				}
+			}
+			else
+			{
+				regs.rax = -EBADF;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("fchdir(fd=%d (%d)) = %lld\n",
+					 fd, vfd, regs.rax);
+		});
+		Machine::install_syscall_handler(SYS_io_uring_setup,
+		[](vCPU& cpu) { // io_uring_setup
 			auto& regs = cpu.registers();
 			regs.rax = -ENOSYS;
 			cpu.set_registers(regs);
 			SYSPRINT("io_uring_setup(...) = %lld\n",
 					 regs.rax);
 		});
-	//Machine::install_syscall_handler(
-	//	SYS_inotify_init1, [](vCPU& cpu) { // inotify_init1
-	//		auto& regs = cpu.registers();
-	//		const int flags = regs.rdi;
-	//		const int real_fd = inotify_init1(flags);
-	//		const int vfd = cpu.machine().fds().manage(real_fd, false, true);
-	//		if (UNLIKELY(vfd < 0)) {
-	//			regs.rax = -errno;
-	//		}
-	//		else {
-	//			regs.rax = vfd;
-	//		}
-	//		cpu.set_registers(regs);
-	//		SYSPRINT("inotify_init1(flags=0x%X) = %d (%lld)\n",
-	//			flags, real_fd, regs.rax);
-	//	});
-	//Machine::install_syscall_handler(
-	//	SYS_inotify_add_watch, [](vCPU& cpu) { // inotify_add_watch
-	//		auto& regs = cpu.registers();
-	//		const int vfd = regs.rdi;
-	//		const uint64_t g_path = regs.rsi;
-	//		const int mask = regs.rdx;
-	//		std::string path = cpu.machine().memcstring(g_path, PATH_MAX);
-	//		if (!cpu.machine().fds().is_writable_path(path)) {
-	//			regs.rax = -EPERM;
-	//			cpu.set_registers(regs);
-	//			SYSPRINT("inotify_add_watch fd=%d path was not writable: %s\n", vfd, path.c_str());
-	//			return;
-	//		}
-	//		const int fd = cpu.machine().fds().translate(vfd);
-	//		if (fd > 0) {
-	//			regs.rax = inotify_add_watch(fd, path.c_str(), mask);
-	//			if (int(regs.rax) < 0)
-	//				regs.rax = -errno;
-	//		} else {
-	//			regs.rax = -EBADF;
-	//		}
-	//		cpu.set_registers(regs);
-	//		SYSPRINT("inotify_add_watch(fd=%d, path=%s, mask=0x%X) = %lld\n",
-	//				 fd, path.c_str(), mask, regs.rax);
-	//	});
+		Machine::install_syscall_handler(SYS_inotify_init1,
+		[](vCPU& cpu) { // inotify_init1
+			auto& regs = cpu.registers();
+			const int flags = regs.rdi;
+			const int real_fd = inotify_init1(flags);
+			const int vfd = cpu.machine().fds().manage(real_fd, false, true);
+			if (UNLIKELY(vfd < 0)) {
+				regs.rax = -errno;
+			}
+			else {
+				regs.rax = vfd;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("inotify_init1(flags=0x%X) = %d (%lld)\n",
+				flags, real_fd, regs.rax);
+		});
+		Machine::install_syscall_handler(SYS_inotify_add_watch,
+		[](vCPU& cpu) { // inotify_add_watch
+			auto& regs = cpu.registers();
+			const int vfd = regs.rdi;
+			const uint64_t g_path = regs.rsi;
+			const int mask = regs.rdx;
+			std::string path = cpu.machine().memcstring(g_path, PATH_MAX);
+			if (!cpu.machine().fds().is_writable_path(path)) {
+				regs.rax = -EPERM;
+				cpu.set_registers(regs);
+				SYSPRINT("inotify_add_watch fd=%d path was not writable: %s\n", vfd, path.c_str());
+				return;
+			}
+			const int fd = cpu.machine().fds().translate(vfd);
+			if (fd > 0) {
+				regs.rax = inotify_add_watch(fd, path.c_str(), mask);
+				if (int(regs.rax) < 0)
+					regs.rax = -errno;
+			} else {
+				regs.rax = -EBADF;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("inotify_add_watch(fd=%d, path=%s, mask=0x%X) = %lld\n",
+					 fd, path.c_str(), mask, regs.rax);
+		});
+	} // if (unsafe_syscalls)
 
 	// Threads: clone, futex, block/tkill etc.
 	Machine::setup_multithreading();

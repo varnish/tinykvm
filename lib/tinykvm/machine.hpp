@@ -264,7 +264,7 @@ struct Machine
 	   one thread, and using it in another. */
 	void migrate_to_this_thread();
 	static void init();
-	static void setup_linux_system_calls();
+	static void setup_linux_system_calls(bool unsafe_syscalls = false);
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);
 	Machine(const Machine& other, const MachineOptions&);
