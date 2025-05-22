@@ -29,7 +29,7 @@ namespace tinykvm
 		using open_readable_t = std::function<bool(std::string&)>;
 		using open_writable_t = std::function<bool(std::string&)>;
 		using connect_socket_t = std::function<bool(int, struct sockaddr_storage&)>;
-		using listening_socket_t = std::function<void(int, int)>;
+		using listening_socket_t = std::function<bool(int, int)>;
 		using accept_socket_t = std::function<int(int, int, int, struct sockaddr_storage&, socklen_t&)>;
 		using resolve_symlink_t = std::function<bool(std::string&)>;
 		using find_readonly_master_vm_fd_t = std::function<std::optional<const Entry*>(int)>;

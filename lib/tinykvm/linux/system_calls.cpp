@@ -1145,9 +1145,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				if (auto& callback = cpu.machine().fds().listening_socket_callback;
 					callback != nullptr)
 				{
-					callback(vfd, fd);
+					const bool allowed = callback(vfd, fd);
+					regs.rax = allowed ? 0 : -EPERM;
+				} else {
+					regs.rax = 0;
 				}
-				regs.rax = 0;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("listen(fd=%d (%d), backlog=%d) = %lld\n",
