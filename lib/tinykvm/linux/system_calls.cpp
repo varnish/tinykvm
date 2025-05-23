@@ -1583,6 +1583,33 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					 regs.rdi, regs.rax);
 		});
 	Machine::install_syscall_handler(
+		SYS_flock, [](vCPU& cpu) { // FLOCK
+			auto& regs = cpu.registers();
+			// int flock(int fd, int operation);
+			const int vfd = regs.rdi;
+			const int fd = cpu.machine().fds().translate(vfd);
+			const int operation = regs.rsi;
+			if (fd < 0)
+			{
+				regs.rax = -EBADF;
+			}
+			else if (operation == LOCK_UN)
+			{
+				regs.rax = 0;
+			}
+			else if (operation == LOCK_EX || operation == LOCK_SH)
+			{
+				regs.rax = 0;
+			}
+			else
+			{
+				regs.rax = -EINVAL;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("flock(fd=%d (%d), operation=0x%llX) = %lld\n",
+					 vfd, fd, operation, regs.rax);
+		});
+	Machine::install_syscall_handler(
 		SYS_fcntl, [](vCPU& cpu) { // FCNTL
 			auto& regs = cpu.registers();
 			const int vfd = regs.rdi;
@@ -2395,6 +2422,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			cpu.set_registers(regs);
 			SYSPRINT("epoll_create1() = %d (%lld)\n", fd, regs.rax);
 		});
+	Machine::install_syscall_handler(SYS_epoll_create,
+		Machine::get_syscall_handler(SYS_epoll_create1));
 	Machine::install_syscall_handler( // nanosleep
 		SYS_nanosleep, [](vCPU& cpu)
 		{
@@ -2424,7 +2453,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				else
 				{
 					auto& ee = cpu.machine().fds().get_epoll_entry_for_vfd(regs.rdi);
-					if (op == EPOLL_CTL_ADD) {
+					if (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) {
 						ee.epoll_fds[vfd] = event;
 					} else if (op == EPOLL_CTL_DEL) {
 						ee.epoll_fds.erase(vfd);
@@ -2862,6 +2891,14 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			regs.rax = -ENOSYS;
 			cpu.set_registers(regs);
 			SYSPRINT("faccessat(...) = %lld\n",
+					 regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_faccessat2, [](vCPU& cpu) { // faccessat2
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			cpu.set_registers(regs);
+			SYSPRINT("faccessat2(...) = %lld\n",
 					 regs.rax);
 		});
 	Machine::install_syscall_handler(
