@@ -80,6 +80,55 @@ ALIGN 0x10
 	out 0, ax
 	jmp .vm64_prctl_end
 
+.read_system_time:
+	push rbx
+	push rcx
+	push rdx
+	;; Check if the system time MSR has already been set
+	mov rax, [0x3030]    ;; system-time nanoseconds
+	;; If the system time is zero, we need to set it
+	test rax, rax
+	jnz .system_time_already_set
+	;; 0x4b564d01  MSR_KVM_SYSTEM_TIME_NEW
+	mov ecx, 0x4b564d01  ;; MSR_KVM_SYSTEM_TIME_NEW
+	mov eax, 0x3021      ;; data
+	mov edx, 0           ;; zero high-32 bits
+	wrmsr
+.system_time_already_set:
+	;; Read TSC
+	rdtsc
+	;; Add EDX to RAX for full 64-bit TSC value
+	shl rdx, 32
+	or  rax, rdx
+	;; Calculate the system time in nanoseconds
+	;; time = (current_tsc - tsc_timestamp)
+	;; if (tsc_shift >= 0)
+	;;         time <<= tsc_shift;
+	;; else
+	;;         time >>= -tsc_shift;
+	;; time = (time * tsc_to_system_mul) >> 32
+	;; time = time + system_time
+	mov rdx, [0x3028]      ;; tsc_timestamp
+	sub rax, rdx           ;; current_tsc - tsc_timestamp
+	;; Check if tsc_shift is negative
+	;; For now assume positive shift
+	movzx cx, [0x3030 + 28] ;; tsc_shift
+	and ecx, 0xFF
+	;; Left shift (assumes tsc_shift >= 0)
+	shl rax, cl
+	;; Multiply by tsc_to_system_mul
+	mov rdx, [0x3038]    ;; tsc_to_system_mul
+	mul rdx              ;; into RAX:RDX
+	;; Right shift by 32 bits
+	shr rax, 32
+	;; Add the system time base
+	mov rdx, [0x3030 + 16] ;; system_time_base
+	add rax, rdx           ;; time = time + system_time_base
+	pop rdx
+	pop rcx
+	pop rbx
+	ret
+
 .vm64_clock_gettime:
 	;; Emulate CLOCK_GETTIME syscall
 	;; rdi = clockid
@@ -89,34 +138,32 @@ ALIGN 0x10
 	push rcx
 	push rdx
 	;; Check if clock_gettime_uses_rdtsc is enabled
-	movzx bx, [0x2000 + .clock_gettime_uses_rdtsc]
+	mov bx, WORD [0x2000 + .clock_gettime_uses_rdtsc]
 	test bx, bx
 	jz .vm64_clock_gettime_syscall
-	;; Use KVM_HC_CLOCK_PAIRING to get the time
-	;; EAX = Hypercall number
-	;; RBX = Pointer to kvm_clock_pairing structure
-	;; RCX = Clock pairing type
-	;; struct kvm_clock_pairing {
-	;;     s64 sec;
-	;;     s64 nsec;
-	;;     u64 tsc;
-	;;     u32 flags;
-	;;     u32 pad[9];
-	;; };
-	;; Use KVM_HC_CLOCK_PAIRING to get the time
-	sub rsp, 32 + 8 * 4  ;; Allocate the clock structure
-    mov eax, 9           ;; KVM_HC_CLOCK_PAIRING
-    mov rbx, rsp         ;; rbx = pointer to clock_structure
-    mov ecx, 0           ;; KVM_CLOCK_PAIRING_WALLCLOCK
-    vmcall
-	add rsp, 32 + 8 * 4  ;; Deallocate the clock structure
-	;; If vmcall failed, use syscall
-	test rax, rax
-	jnz .vm64_clock_gettime_syscall
-	mov rcx, [rbx]       ;; rcx = sec
-	mov rdx, [rbx + 8]   ;; rdx = nsec
-	mov [rsi], rcx       ;; timespec sec
-	mov [rsi + 8], rdx   ;; timespec nsec
+	;; Read the PV clock MSR
+	mov ecx, 0x4b564d00  ;; MSR_KVM_WALL_CLOCK_NEW
+	mov eax, 0x3000      ;; data
+	mov edx, 0           ;; zero high-32 bits
+	wrmsr
+repeat_wall_clock_read:
+	;; Read-fence to ensure we read the latest wall clock
+	lfence
+	;; Check if the version has changed
+	mov edx, DWORD [0x3000] ;; version
+	and edx, 1
+	test edx, edx
+	jnz repeat_wall_clock_read
+	;; Read the wall clock
+	mov ebx, DWORD [0x3004] ;; sec
+	mov ecx, DWORD [0x3008] ;; nsec
+	;; Get system time into rax
+	call .read_system_time
+	;; Add the system time to the wall clock nanoseconds
+	add rcx, rax
+	;; Store to guest timespec
+	mov [rsi], rbx      ;; Store tv_sec
+	mov [rsi + 8], rcx  ;; Store tv_nsec
 	;; Restore registers
 	pop rdx
 	pop rcx

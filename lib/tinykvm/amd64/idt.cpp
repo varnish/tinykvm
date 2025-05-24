@@ -67,7 +67,8 @@ void set_exception_handler(void* area, uint8_t vec, uint64_t handler)
 
 /* unsigned interrupts[] = { ... } */
 #include "builtin/kernel_assembly.h"
-static_assert(sizeof(interrupts) > 10);
+static_assert(sizeof(interrupts) > 10 && sizeof(interrupts) <= 4096,
+	"Interrupts array must be container within a 4KB page");
 
 const iasm_header& interrupt_header() {
 	return *(const iasm_header*) &interrupts[0];
