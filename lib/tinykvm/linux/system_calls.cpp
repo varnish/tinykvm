@@ -2522,7 +2522,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				// Wait for as long as the timeout
 				result = epoll_wait(epollfd, guest_events.data(), maxevents, timeout);
 			}
-			if (cpu.timed_out()) {
+			if (UNLIKELY(cpu.timed_out())) {
 				throw MachineTimeoutException("epoll_wait timed out");
 			}
 			// Copy events back to guest
@@ -2531,7 +2531,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				// NOTE: Setting the result early prevents logging from mistakenly
 				// using the wrong return value from regs.rax.
 				regs.rax = result;
-				if (cpu.machine().m_verbose_system_calls) {
+				if (UNLIKELY(cpu.machine().m_verbose_system_calls)) {
 					for (int i = 0; i < result; ++i)
 					{
 						std::string event_str;

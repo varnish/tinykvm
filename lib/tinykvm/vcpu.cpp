@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstring>
 #include <linux/kvm.h>
+#include <linux/kvm_para.h>
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -26,6 +27,7 @@ extern "C" void tinykvm_timer_signal_handler(int);
 #error "SYS_gettid unavailable on this system"
 #endif
 #define gettid() ((pid_t)syscall(SYS_gettid))
+static_assert(sizeof(kvm_clock_pairing) == 64, "kvm_clock_data size mismatch");
 
 struct ksigevent
 {

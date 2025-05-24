@@ -84,49 +84,54 @@ ALIGN 0x10
 	;; Emulate CLOCK_GETTIME syscall
 	;; rdi = clockid
 	;; rsi = timespec
-	cmp rdi, 0 ;; CLOCK_REALTIME
-	je .vm64_clock_gettime_trap
 	stac
-	push rax
+	push rbx
 	push rcx
 	push rdx
-	;; Check if clock_gettime_uses_rdtsc using RIP-relative addressing
-	mov ax, [0x2000 + .clock_gettime_uses_rdtsc]
-	cmp rax, 0
-	je .vm64_clock_gettime_syscall
-	;; TSC puts 64-bit timestamp in EAX:EDX
-	rdtsc
-	mov     ecx, eax
-	mov     eax, eax
-	shl     rdx, 32
-	or      rax, rdx
-	;; Convert TSC to nanoseconds
-	;; 1 TSC = 1.0 / 4.0 GHz = 0.25 ns
-	shr     rax, 2
-	;; Set tv_sec and tv_nsec
-	mov     rdx, 4835703278458516699
-	mul     rdx
-	shr     rdx, 18
-	imul    rax, rdx, 1000000
-	sub     rcx, rax
-	mov     rax, rcx
-	mov [rsi], rax     ;; seconds
-	mov [rsi + 8], rdx ;; nanoseconds
+	;; Check if clock_gettime_uses_rdtsc is enabled
+	movzx bx, [0x2000 + .clock_gettime_uses_rdtsc]
+	test bx, bx
+	jz .vm64_clock_gettime_syscall
+	;; Use KVM_HC_CLOCK_PAIRING to get the time
+	;; EAX = Hypercall number
+	;; RBX = Pointer to kvm_clock_pairing structure
+	;; RCX = Clock pairing type
+	;; struct kvm_clock_pairing {
+	;;     s64 sec;
+	;;     s64 nsec;
+	;;     u64 tsc;
+	;;     u32 flags;
+	;;     u32 pad[9];
+	;; };
+	;; Use KVM_HC_CLOCK_PAIRING to get the time
+	sub rsp, 32 + 8 * 4  ;; Allocate the clock structure
+    mov eax, 9           ;; KVM_HC_CLOCK_PAIRING
+    mov rbx, rsp         ;; rbx = pointer to clock_structure
+    mov ecx, 0           ;; KVM_CLOCK_PAIRING_WALLCLOCK
+    vmcall
+	add rsp, 32 + 8 * 4  ;; Deallocate the clock structure
+	;; If vmcall failed, use syscall
+	test rax, rax
+	jnz .vm64_clock_gettime_syscall
+	mov rcx, [rbx]       ;; rcx = sec
+	mov rdx, [rbx + 8]   ;; rdx = nsec
+	mov [rsi], rcx       ;; timespec sec
+	mov [rsi + 8], rdx   ;; timespec nsec
 	;; Restore registers
 	pop rdx
 	pop rcx
-	pop rax
+	pop rbx
 	clac
 	;; Return to the caller
-	mov eax, 0
+	xor eax, eax
 	o64 sysret
 .vm64_clock_gettime_syscall:
 	;; Restore registers
+	mov eax, 228 ;; CLOCK_GETTIME
 	pop rdx
 	pop rcx
-	pop rax
+	pop rbx
 	clac
-.vm64_clock_gettime_trap:
 	out 0, ax
 	o64 sysret
 
