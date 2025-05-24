@@ -80,8 +80,97 @@ ALIGN 0x10
 	out 0, ax
 	jmp .vm64_prctl_end
 
+.read_system_time:
+	push rbx
+	push rcx
+	push rdx
+	;; Check if the system time MSR has already been set
+	mov rax, [0x3030]    ;; system-time nanoseconds
+	;; If the system time is zero, we need to set it
+	test rax, rax
+	jnz .system_time_already_set
+	;; 0x4b564d01  MSR_KVM_SYSTEM_TIME_NEW
+	mov ecx, 0x4b564d01  ;; MSR_KVM_SYSTEM_TIME_NEW
+	mov eax, 0x3021      ;; data
+	mov edx, 0           ;; zero high-32 bits
+	wrmsr
+.system_time_already_set:
+	;; Read TSC
+	rdtsc
+	;; Add EDX to RAX for full 64-bit TSC value
+	shl rdx, 32
+	or  rax, rdx
+	;; Calculate the system time in nanoseconds
+	;; time = (current_tsc - tsc_timestamp)
+	;; if (tsc_shift >= 0)
+	;;         time <<= tsc_shift;
+	;; else
+	;;         time >>= -tsc_shift;
+	;; time = (time * tsc_to_system_mul) >> 32
+	;; time = time + system_time
+	mov rdx, [0x3028]      ;; tsc_timestamp
+	sub rax, rdx           ;; current_tsc - tsc_timestamp
+	;; Check if tsc_shift is negative
+	;; Load 8-bit signed value from system-time
+	mov cl, [0x3030 + 28] ;; tsc_shift
+	;; Left shift (assumes tsc_shift >= 0)
+	test cl, cl
+	js .system_time_neg_tsc_shift
+	;; If tsc_shift is positive, shift left
+	shl rax, cl            ;; rax = rax << tsc_shift
+	jmp .system_time_tsc_shift_done
+.system_time_neg_tsc_shift:
+	;; If tsc_shift is negative, shift right
+	neg ecx
+	shr rax, cl            ;; rax = rax >> -tsc_shift
+.system_time_tsc_shift_done:
+	;; Multiply by tsc_to_system_mul
+	mov ecx, [0x3038]      ;; tsc_to_system_mul
+	mul rcx                ;; into RAX:RDX
+	;; Right shift by 32 bits
+	shr rax, 32
+	;; Add the system time base
+	mov rdx, [0x3030 + 16] ;; system_time_base
+	add rax, rdx           ;; time = time + system_time_base
+
+	;; Test version is even
+	mov ebx, [0x3030]    ;; version
+	and ebx, 1
+	;;jnp .system_time_already_set ;; read again
+
+	pop rdx
+	pop rcx
+	pop rbx
+	ret
+
+.read_wall_clock:
+	push rbx
+	push rcx
+	push rdx
+	;; Check if the wall clock MSR has already been set
+	mov eax, [0x3004]    ;; seconds since epoch
+	test eax, eax
+	jnz .wall_clock_already_set
+	;; Read the PV clock MSR
+	mov ecx, 0x4b564d00  ;; MSR_KVM_WALL_CLOCK_NEW
+	mov eax, 0x3000      ;; data
+	mov edx, 0           ;; zero high-32 bits
+	wrmsr
+.wall_clock_already_set:
+	;; Read the wall clock
+	mov eax, DWORD [0x3004] ;; sec
+	mov ecx, DWORD [0x3008] ;; nsec
+	;; Convert to nanoseconds
+	mov rbx, 1000000000   ;; 1e9
+	mov rdx, 0            ;; clear rdx
+	mul rbx               ;; rax = sec * 1e9
+	add rax, rcx          ;; rax = sec * 1e9 + nsec
+	pop rdx
+	pop rcx
+	pop rbx
+	ret
+
 .vm64_clock_gettime:
-	;; Emulate CLOCK_GETTIME syscall
 	;; rdi = clockid
 	;; rsi = timespec
 	stac
@@ -89,34 +178,26 @@ ALIGN 0x10
 	push rcx
 	push rdx
 	;; Check if clock_gettime_uses_rdtsc is enabled
-	movzx bx, [0x2000 + .clock_gettime_uses_rdtsc]
+	mov bx, WORD [0x2000 + .clock_gettime_uses_rdtsc]
 	test bx, bx
 	jz .vm64_clock_gettime_syscall
-	;; Use KVM_HC_CLOCK_PAIRING to get the time
-	;; EAX = Hypercall number
-	;; RBX = Pointer to kvm_clock_pairing structure
-	;; RCX = Clock pairing type
-	;; struct kvm_clock_pairing {
-	;;     s64 sec;
-	;;     s64 nsec;
-	;;     u64 tsc;
-	;;     u32 flags;
-	;;     u32 pad[9];
-	;; };
-	;; Use KVM_HC_CLOCK_PAIRING to get the time
-	sub rsp, 32 + 8 * 4  ;; Allocate the clock structure
-    mov eax, 9           ;; KVM_HC_CLOCK_PAIRING
-    mov rbx, rsp         ;; rbx = pointer to clock_structure
-    mov ecx, 0           ;; KVM_CLOCK_PAIRING_WALLCLOCK
-    vmcall
-	add rsp, 32 + 8 * 4  ;; Deallocate the clock structure
-	;; If vmcall failed, use syscall
-	test rax, rax
-	jnz .vm64_clock_gettime_syscall
-	mov rcx, [rbx]       ;; rcx = sec
-	mov rdx, [rbx + 8]   ;; rdx = nsec
-	mov [rsi], rcx       ;; timespec sec
-	mov [rsi + 8], rdx   ;; timespec nsec
+	;; Get system time into rax
+	call .read_system_time
+	;; If clockid is CLOCK_MONOTONIC, we are done
+	test rdi, rdi
+	jnz .finish_up_clock_gettime
+	;; If clockid is CLOCK_REALTIME, we need to add
+	;; the wall clock time from system time
+	call .read_wall_clock
+.finish_up_clock_gettime:
+	;; RAX now contains the clock time in nanoseconds
+	;; Split RAX into seconds and nanoseconds
+	mov rdx, 0            ;; 
+	mov rbx, 1000000000   ;; 1e9
+	div rbx               ;; rax = seconds, rdx = clock_time % 1e9
+	;; Store to guest timespec
+	mov [rsi], rax        ;; Store tv_sec
+	mov [rsi + 8], rdx    ;; Store tv_nsec
 	;; Restore registers
 	pop rdx
 	pop rcx
