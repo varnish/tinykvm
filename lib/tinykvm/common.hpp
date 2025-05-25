@@ -68,9 +68,6 @@ namespace tinykvm
 		bool relocate_fixed_mmap = true;
 		/* Make heap executable, to support JIT. */
 		bool executable_heap = false;
-		/* When enabled, the VM will use rdtsc for all clocks
-		   except CLOCK_REALTIME. */
-		bool clock_gettime_uses_rdtsc = false;
 		/* When using hugepages, cover the given size with
 		   hugepages, unless 0, in which case the entire
 		   main memory will be covered. */

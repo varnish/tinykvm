@@ -27,8 +27,6 @@ dw .vm64_gettimeofday
 dw .vm64_exception
 dw .vm64_except1 - .vm64_exception
 dw .vm64_dso
-.clock_gettime_uses_rdtsc:
-dw 1 ;; clock_gettime_uses_rdtsc
 
 ALIGN 0x10
 .vm64_syscall:
@@ -177,10 +175,9 @@ ALIGN 0x10
 	push rbx
 	push rcx
 	push rdx
-	;; Check if clock_gettime_uses_rdtsc is enabled
-	mov bx, WORD [0x2000 + .clock_gettime_uses_rdtsc]
-	test bx, bx
-	jz .vm64_clock_gettime_syscall
+	;; Verify that destination is at least 0x100000
+	cmp rsi, 0x100000
+	jb .vm64_clock_gettime_error
 	;; Get system time into rax
 	call .read_system_time
 	;; If clockid is CLOCK_MONOTONIC, we are done
@@ -206,14 +203,8 @@ ALIGN 0x10
 	;; Return to the caller
 	xor eax, eax
 	o64 sysret
-.vm64_clock_gettime_syscall:
-	;; Restore registers
-	mov eax, 228 ;; CLOCK_GETTIME
-	pop rdx
-	pop rcx
-	pop rbx
-	clac
-	out 0, ax
+.vm64_clock_gettime_error:
+	mov rax, -14 ;; EFAULT
 	o64 sysret
 
 .vm64_gettimeofday:

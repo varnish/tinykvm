@@ -19,16 +19,10 @@ struct iasm_header {
 	uint16_t vm64_exception;
 	uint16_t vm64_except_size;
 	uint16_t vm64_dso;
-	uint16_t clock_gettime_uses_rdtsc;
 
 	uint64_t translated_vm_syscall(const vMemory& memory) const noexcept
 	{
 		return memory.physbase + INTR_ASM_ADDR + vm64_syscall;
-	}
-
-	void set_clock_gettime_uses_rdtsc(bool use_rdtsc) noexcept
-	{
-		clock_gettime_uses_rdtsc = use_rdtsc ? 1 : 0;
 	}
 };
 const iasm_header& interrupt_header();
