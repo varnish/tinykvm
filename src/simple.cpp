@@ -1,4 +1,5 @@
 #include <tinykvm/machine.hpp>
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 #include "assert.hpp"
@@ -88,7 +89,30 @@ int main(int argc, char** argv)
 	tinykvm::Machine master_vm {binary, options};
 	//master_vm.print_pagetables();
 	if (dyn_elf.is_dynamic) {
-		master_vm.fds().add_readonly_file(argv[1]);
+		static const std::vector<std::string> allowed_readable_paths({
+			argv[1],
+			// Add all common standard libraries to the list of allowed readable paths
+			"/lib64/ld-linux-x86-64.so.2",
+			"/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+			"/lib/x86_64-linux-gnu/libgcc_s.so.1",
+			"/lib/x86_64-linux-gnu/libc.so.6",
+			"/lib/x86_64-linux-gnu/libm.so.6",
+			"/lib/x86_64-linux-gnu/libpthread.so.0",
+			"/lib/x86_64-linux-gnu/libdl.so.2",
+			"/lib/x86_64-linux-gnu/libstdc++.so.6",
+			"/lib/x86_64-linux-gnu/librt.so.1",
+			"/lib/x86_64-linux-gnu/libz.so.1",
+			"/lib/x86_64-linux-gnu/libexpat.so.1",
+			"/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v2/libstdc++.so.6",
+			"/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3/libstdc++.so.6",
+			"/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v4/libstdc++.so.6",
+		});
+		master_vm.fds().set_open_readable_callback(
+			[&] (std::string& path) -> bool {
+				return std::find(allowed_readable_paths.begin(),
+					allowed_readable_paths.end(), path) != allowed_readable_paths.end();
+			}
+		);
 	}
 
 	master_vm.setup_linux(

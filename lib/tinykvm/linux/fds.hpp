@@ -105,27 +105,6 @@ namespace tinykvm
 			m_open_writable = callback;
 		}
 
-		/// @brief Add a read-only file
-		/// @note If the path starts with a $ character, it is treated as a prefix
-		/// for the allowed paths. This is useful for allowing directories and
-		/// other prefixes. The path must not contain any parent-directory
-		/// components (..).
-		/// @param path The path to add.
-		void add_readonly_file(const std::string& path);
-
-		/// @brief Add a read-only file that starts with a prefix. This is used
-		/// to allow directories and other prefixes. The path must not contain
-		/// any parent-directory components (..).
-		/// @param path The prefix path to add.
-		void add_readonly_prefix(const std::string& path);
-
-		/// @brief Add a writable prefix path
-		/// @note The path must not contain any parent-directory components (..).
-		/// @note This is not passed to forks, so it is not accessible in forked
-		/// VMs. Can only be used in the main VM (during startup).
-		/// @param path The prefix path to add.
-		void add_writable_prefix(const std::string& path);
-
 		/// @brief Check if a path is allowed to be opened for reading.
 		/// @param modifiable_path The path to check. This may be modified by
 		/// the callback to indicate which real path to open.
@@ -321,9 +300,6 @@ namespace tinykvm
 	private:
 		Machine& m_machine;
 		std::map<int, Entry> m_fds;
-		std::shared_ptr<std::unordered_set<std::string>> m_allowed_readable_paths;
-		std::shared_ptr<std::vector<std::string>> m_allowed_readable_paths_starts_with;
-		std::vector<std::string> m_allowed_writable_paths_starts_with; // Not passed to forks
 		int m_next_file_fd = 0x1000;
 		int m_next_socket_fd = 0x1000 | SOCKET_BIT;
 		std::array<int, 3> m_stdout_redirects { 0, 1, 2 };

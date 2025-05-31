@@ -32,26 +32,6 @@ namespace tinykvm
 		: m_machine(machine),
 		  m_current_working_directory_fd(AT_FDCWD)
 	{
-		m_allowed_readable_paths =
-			std::make_shared<std::unordered_set<std::string>>();
-		m_allowed_readable_paths_starts_with =
-			std::make_shared<std::vector<std::string>>();
-		// Add all common standard libraries to the list of allowed readable paths
-		this->add_readonly_file("/lib64/ld-linux-x86-64.so.2");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/libgcc_s.so.1");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/libc.so.6");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/libm.so.6");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/libpthread.so.0");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/libdl.so.2");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/libstdc++.so.6");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/librt.so.1");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/libz.so.1");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/libexpat.so.1");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v2/libstdc++.so.6");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3/libstdc++.so.6");
-		this->add_readonly_file("/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v4/libstdc++.so.6");
-
 		// XXX: TODO: Create proper redirects for stdout/stderr by
 		// for example providing a pipe to stdout/stderr.
 	}
@@ -77,7 +57,6 @@ namespace tinykvm
 		m_fds.clear();
 		m_next_file_fd = other.m_next_file_fd;
 		m_next_socket_fd = other.m_next_socket_fd;
-		m_allowed_readable_paths = other.m_allowed_readable_paths;
 		this->m_max_files = other.m_max_files;
 		this->m_total_fds_opened = other.m_total_fds_opened;
 		this->m_max_total_fds_opened = other.m_max_total_fds_opened;
@@ -497,102 +476,35 @@ namespace tinykvm
 		return false;
 	}
 
-	void FileDescriptors::add_readonly_file(const std::string& path)
-	{
-		if (path.empty())
-			throw std::runtime_error("Empty path in FileDescriptors::add_readonly_file");
-		if (path.find("..") != std::string::npos)
-			throw std::runtime_error("Path contains parent directory in FileDescriptors::add_readonly_file");
-		this->m_allowed_readable_paths->insert(path);
-	}
-
-	void FileDescriptors::add_readonly_prefix(const std::string& path)
-	{
-		if (path.empty())
-			throw std::runtime_error("Empty path in FileDescriptors::add_readonly_prefix");
-		if (path.find("..") != std::string::npos)
-			throw std::runtime_error("Path contains parent directory in FileDescriptors::add_readonly_prefix");
-		this->m_allowed_readable_paths_starts_with->push_back(path);
-	}
-
-	void FileDescriptors::add_writable_prefix(const std::string& path) {
-		if (path.empty())
-			throw std::runtime_error("Empty path in FileDescriptors::add_writable_prefix");
-		if (path.find("..") != std::string::npos)
-			throw std::runtime_error("Path contains parent directory in FileDescriptors::add_writable_prefix");
-		this->m_allowed_writable_paths_starts_with.push_back(path);
-	}
-
 	bool FileDescriptors::is_readable_path(std::string& modifiable_path) const noexcept
 	{
-		if (modifiable_path.empty())
+		if (!m_open_readable)
 			return false;
-
-		if (m_open_readable)
-		{
-			if (m_open_readable(modifiable_path)) {
-				if (UNLIKELY(this->m_verbose)) {
-					fprintf(stderr, "TinyKVM: %s is allowed (read, callback)\n", modifiable_path.c_str());
-				}
-				return true;
-			}
-		}
-		auto it = m_allowed_readable_paths->find(modifiable_path);
-		if (it != m_allowed_readable_paths->end())
-		{
+		if (m_open_readable(modifiable_path)) {
 			if (UNLIKELY(this->m_verbose)) {
-				fprintf(stderr, "TinyKVM: %s is allowed (read)\n", modifiable_path.c_str());
+				fprintf(stderr, "TinyKVM: allow read %s\n", modifiable_path.c_str());
 			}
 			return true;
 		}
-		// Iterate over the allowed paths and check if a path
-		// starts with modifiable_path, however path cannot contain
-		// any parent-directory components (..)
-		if (modifiable_path.find("..") != std::string::npos)
-		{
-			return false;
-		}
-		for (const auto& path : *m_allowed_readable_paths_starts_with)
-		{
-			if (modifiable_path.find(path) == 0)
-			{
-				if (UNLIKELY(this->m_verbose)) {
-					fprintf(stderr, "TinyKVM: %s is allowed (read, prefixed)\n", modifiable_path.c_str());
-				}
-				return true;
-			}
-		}
 		if (UNLIKELY(this->m_verbose)) {
-			fprintf(stderr, "TinyKVM: %s is not a readable path\n", modifiable_path.c_str());
+			fprintf(stderr, "TinyKVM: deny read %s\n", modifiable_path.c_str());
 		}
 		return false;
 	}
 
 	bool FileDescriptors::is_writable_path(std::string& modifiable_path) const noexcept
 	{
-		// Check if the path contains any parent-directory components (..)
-		if (modifiable_path.find("..") != std::string::npos) {
-			return false;
-		}
-		// Check if the path is in the allowed writable prefix paths
-		for (const auto& path : m_allowed_writable_paths_starts_with) {
-			if (modifiable_path.find(path) == 0) {
-				if (UNLIKELY(this->m_verbose)) {
-					fprintf(stderr, "TinyKVM: %s is allowed (write, prefixed)\n", modifiable_path.c_str());
-				}
-				return true;
-			}
-		}
 		// Fallback to the writable path callback if it is set
-		if (m_open_writable) {
-			bool success = m_open_writable(modifiable_path);
-			if (this->m_verbose && success) {
-				fprintf(stderr, "TinyKVM: %s is allowed (write, callback)\n", modifiable_path.c_str());
+		if (!m_open_writable)
+			return false;
+		if (m_open_writable(modifiable_path)) {
+			if (UNLIKELY(this->m_verbose)) {
+				fprintf(stderr, "TinyKVM: allow write %s\n", modifiable_path.c_str());
 			}
-			return success;
+			return true;
 		}
 		if (UNLIKELY(this->m_verbose)) {
-			fprintf(stderr, "TinyKVM: %s is not a writable path\n", modifiable_path.c_str());
+			fprintf(stderr, "TinyKVM: deny write %s\n", modifiable_path.c_str());
 		}
 		return false;
 	}
