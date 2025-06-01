@@ -45,13 +45,6 @@ static int sanitize_at_flags(int flags)
 	// enforce AT_SYMLINK_NOFOLLOW to prevent symlink following.
 	return (flags & (AT_EMPTY_PATH)) | AT_SYMLINK_NOFOLLOW;
 }
-static bool compare_getenv(const std::string& key, const std::string& value) {
-	const char* env = getenv(key.c_str());
-	if (env == nullptr) {
-		return false;
-	}
-	return strcmp(env, value.c_str()) == 0;
-}
 
 void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 {
@@ -234,7 +227,16 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
 				// Some paths are extremely annoyingly "required" by some guests
 				// in order to proceed with things *unrelated* to the path.
-				if (path == "/home" || path == "/home/" || compare_getenv("HOME", path)) {
+				std::string cwd(PATH_MAX, '\0');
+				if (UNLIKELY(getcwd(cwd.data(), cwd.size()) == nullptr)) {
+					regs.rax = -errno;
+					cpu.set_registers(regs);
+					SYSPRINT("lstat(path=%s, data=0x%llX) = %lld\n",
+						path.c_str(), regs.rsi, regs.rax);
+					return;
+				}
+				const size_t prefixed = cwd.find(path);
+				if (prefixed != std::string::npos) {
 					// Make up a fake stat structure
 					struct stat vstat;
 					std::memset(&vstat, 0, sizeof(vstat));
@@ -1606,7 +1608,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				regs.rax = -EINVAL;
 			}
 			cpu.set_registers(regs);
-			SYSPRINT("flock(fd=%d (%d), operation=0x%llX) = %lld\n",
+			SYSPRINT("flock(fd=%d (%d), operation=0x%X) = %lld\n",
 					 vfd, fd, operation, regs.rax);
 		});
 	Machine::install_syscall_handler(
@@ -1644,11 +1646,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				else if (cmd == F_SETFL)
 				{
 					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
-					const int flags = fcntl(writable_fd, cmd, regs.rdx);
-					if (flags < 0)
-						regs.rax = -errno;
-					else
-						regs.rax = 0;
+					(void)writable_fd;
+					regs.rax = 0; // Ignore the new flags
 				}
 				else if (cmd == F_GETLK64)
 				{
