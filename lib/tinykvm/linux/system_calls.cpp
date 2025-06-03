@@ -1138,20 +1138,18 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const int vfd = regs.rdi;
 			const int fd = cpu.machine().fds().translate_writable_vfd(vfd);
 			const int backlog = regs.rsi;
-			if (UNLIKELY(listen(fd, backlog) < 0))
+			if (auto& callback = cpu.machine().fds().listening_socket_callback;
+				UNLIKELY(callback == nullptr || !callback(vfd, fd)))
+			{
+				regs.rax = -EPERM;
+			}
+			else if (UNLIKELY(listen(fd, backlog) < 0))
 			{
 				regs.rax = -errno;
 			}
 			else
 			{
-				if (auto& callback = cpu.machine().fds().listening_socket_callback;
-					callback != nullptr)
-				{
-					const bool allowed = callback(vfd, fd);
-					regs.rax = allowed ? 0 : -EPERM;
-				} else {
-					regs.rax = 0;
-				}
+				regs.rax = 0;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("listen(fd=%d (%d), backlog=%d) = %lld\n",
