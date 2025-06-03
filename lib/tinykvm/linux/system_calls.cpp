@@ -1637,17 +1637,26 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				else if (cmd == F_GETFL)
 				{
 					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
+					const int allowed_flags = O_NONBLOCK;
 					const int flags = fcntl(writable_fd, cmd);
 					if (flags < 0)
 						regs.rax = -errno;
 					else
-						regs.rax = flags;
+						regs.rax = flags & allowed_flags;
 				}
 				else if (cmd == F_SETFL)
 				{
 					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
-					(void)writable_fd;
-					regs.rax = 0; // Ignore the new flags
+					const int allowed_flags = O_NONBLOCK;
+					const int flags = regs.rdx & allowed_flags;
+					if (fcntl(writable_fd, F_SETFL, flags) < 0)
+					{
+						regs.rax = -errno;
+					}
+					else
+					{
+						regs.rax = 0;
+					}
 				}
 				else if (cmd == F_GETLK64)
 				{
@@ -1683,22 +1692,6 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				{
 					throw MachineException("fcntl: F_GETLK not implemented");
 				}
-				else if (cmd == F_GETOWN)
-				{
-					regs.rax = 0;
-				}
-				else if (cmd == F_SETOWN)
-				{
-					regs.rax = 0;
-				}
-				else if (cmd == F_GETSIG)
-				{
-					regs.rax = 0;
-				}
-				else if (cmd == F_SETSIG)
-				{
-					regs.rax = 0;
-				}
 				else if (cmd == F_DUPFD_CLOEXEC)
 				{
 					if (fd > 2)
@@ -1730,6 +1723,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				{
 					SYSPRINT("fcntl(%d (%d), cmd=0x%X (%d), ...) is not implemented\n",
 							 fd, vfd, cmd, cmd);
+					regs.rax = 0; // Pretend success
 				}
 			} catch (...) {
 				regs.rax = -EBADF;
