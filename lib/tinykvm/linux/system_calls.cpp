@@ -1333,7 +1333,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					// Ignore too large buffers
 					regs.rax = -ENOMEM;
 				}
-				else if (UNLIKELY(addrlen > sizeof(struct sockaddr)))
+				else if (UNLIKELY(addrlen > sizeof(struct sockaddr_storage)))
 				{
 					regs.rax = -EINVAL;
 				}
@@ -1345,7 +1345,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					const auto bufcount =
 						cpu.machine().gather_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
 
-					struct sockaddr addr;
+					struct sockaddr_storage addr {};
 					struct msghdr msg {};
 					msg.msg_name = nullptr;
 					msg.msg_namelen = 0;
@@ -1360,13 +1360,20 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						msg.msg_name = &addr;
 						msg.msg_namelen = addrlen;
 					}
-
-					ssize_t result = sendmsg(fd, &msg, flags);
-					if (UNLIKELY(result < 0)) {
-						regs.rax = -errno;
-					}
-					else {
-						regs.rax = result;
+					// Validate the address
+					if (UNLIKELY(addrlen > 0 && g_addr != 0x0 &&
+							!cpu.machine().fds().validate_socket_address(fd, addr)))
+					{
+						regs.rax = -EPERM;
+					} else
+					{
+						ssize_t result = sendmsg(fd, &msg, flags);
+						if (UNLIKELY(result < 0)) {
+							regs.rax = -errno;
+						}
+						else {
+							regs.rax = result;
+						}
 					}
 				}
 			} catch (...) {
