@@ -1646,8 +1646,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				else if (cmd == F_SETFL)
 				{
 					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
-					(void)writable_fd;
-					regs.rax = 0; // Ignore the new flags
+					const int flags = fcntl(writable_fd, cmd, regs.rdx);
+					if (flags < 0)
+						regs.rax = -errno;
+					else
+						regs.rax = 0;
 				}
 				else if (cmd == F_GETLK64)
 				{
