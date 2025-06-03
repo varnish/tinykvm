@@ -1111,7 +1111,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			{
 				cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
 				// Validate the address
-				if (UNLIKELY(!cpu.machine().fds().validate_socket_address(fd, addr)))
+				if (auto& callback = cpu.machine().fds().bind_socket_callback;
+						UNLIKELY(callback == nullptr || !callback(fd, addr)))
 				{
 					regs.rax = -EPERM;
 				} else {
