@@ -1547,21 +1547,36 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 							g_base, g_len);
 					bufcount += this_bufcount;
 				}
-				struct sockaddr addr {};
+				struct sockaddr_storage addr {};
 				struct msghdr msg_send {};
-				msg_send.msg_name = &addr;
-				msg_send.msg_namelen = sizeof(addr);
+				msg_send.msg_name = nullptr;
+				msg_send.msg_namelen = 0;
 				msg_send.msg_iov = (struct iovec *)&buffers[0];
 				msg_send.msg_iovlen = bufcount;
 				msg_send.msg_control = nullptr;
 				msg_send.msg_controllen = 0;
 				msg_send.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
-				// Perform the sendmsg
-				ssize_t result = sendmsg(fd, &msg_send, flags);
-				if (UNLIKELY(result < 0)) {
-					regs.rax = -errno;
-				} else {
-					regs.rax = result;
+
+				if (msg.msg_namelen > 0 && msg.msg_name != 0x0) {
+					cpu.machine().copy_from_guest(&addr, reinterpret_cast<uint64_t>(msg.msg_name), msg.msg_namelen);
+					msg_send.msg_name = &addr;
+					msg_send.msg_namelen = msg.msg_namelen;
+				}
+				// Validate the address
+				if (UNLIKELY(msg.msg_namelen > 0 && msg.msg_name != 0x0 &&
+						!cpu.machine().fds().validate_socket_address(fd, addr)))
+				{
+					regs.rax = -EPERM;
+				}
+				else
+				{
+					// Perform the sendmsg
+					ssize_t result = sendmsg(fd, &msg_send, flags);
+					if (UNLIKELY(result < 0)) {
+						regs.rax = -errno;
+					} else {
+						regs.rax = result;
+					}
 				}
 			} catch (...) {
 				regs.rax = -EBADF;
