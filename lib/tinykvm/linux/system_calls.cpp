@@ -1111,7 +1111,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			{
 				cpu.machine().copy_from_guest(&addr, g_addr, addrlen);
 				// Validate the address
-				if (UNLIKELY(!cpu.machine().fds().validate_socket_address(fd, addr)))
+				if (auto& callback = cpu.machine().fds().bind_socket_callback;
+						UNLIKELY(callback == nullptr || !callback(fd, addr)))
 				{
 					regs.rax = -EPERM;
 				} else {
@@ -1138,20 +1139,18 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const int vfd = regs.rdi;
 			const int fd = cpu.machine().fds().translate_writable_vfd(vfd);
 			const int backlog = regs.rsi;
-			if (UNLIKELY(listen(fd, backlog) < 0))
+			if (auto& callback = cpu.machine().fds().listening_socket_callback;
+				UNLIKELY(callback == nullptr || !callback(vfd, fd)))
+			{
+				regs.rax = -EPERM;
+			}
+			else if (UNLIKELY(listen(fd, backlog) < 0))
 			{
 				regs.rax = -errno;
 			}
 			else
 			{
-				if (auto& callback = cpu.machine().fds().listening_socket_callback;
-					callback != nullptr)
-				{
-					const bool allowed = callback(vfd, fd);
-					regs.rax = allowed ? 0 : -EPERM;
-				} else {
-					regs.rax = 0;
-				}
+				regs.rax = 0;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("listen(fd=%d (%d), backlog=%d) = %lld\n",
@@ -1333,7 +1332,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					// Ignore too large buffers
 					regs.rax = -ENOMEM;
 				}
-				else if (UNLIKELY(addrlen > sizeof(struct sockaddr)))
+				else if (UNLIKELY(addrlen > sizeof(struct sockaddr_storage)))
 				{
 					regs.rax = -EINVAL;
 				}
@@ -1345,7 +1344,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					const auto bufcount =
 						cpu.machine().gather_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
 
-					struct sockaddr addr;
+					struct sockaddr_storage addr {};
 					struct msghdr msg {};
 					msg.msg_name = nullptr;
 					msg.msg_namelen = 0;
@@ -1360,13 +1359,20 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						msg.msg_name = &addr;
 						msg.msg_namelen = addrlen;
 					}
-
-					ssize_t result = sendmsg(fd, &msg, flags);
-					if (UNLIKELY(result < 0)) {
-						regs.rax = -errno;
-					}
-					else {
-						regs.rax = result;
+					// Validate the address
+					if (UNLIKELY(addrlen > 0 && g_addr != 0x0 &&
+							!cpu.machine().fds().validate_socket_address(fd, addr)))
+					{
+						regs.rax = -EPERM;
+					} else
+					{
+						ssize_t result = sendmsg(fd, &msg, flags);
+						if (UNLIKELY(result < 0)) {
+							regs.rax = -errno;
+						}
+						else {
+							regs.rax = result;
+						}
 					}
 				}
 			} catch (...) {
@@ -1540,21 +1546,36 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 							g_base, g_len);
 					bufcount += this_bufcount;
 				}
-				struct sockaddr addr {};
+				struct sockaddr_storage addr {};
 				struct msghdr msg_send {};
-				msg_send.msg_name = &addr;
-				msg_send.msg_namelen = sizeof(addr);
+				msg_send.msg_name = nullptr;
+				msg_send.msg_namelen = 0;
 				msg_send.msg_iov = (struct iovec *)&buffers[0];
 				msg_send.msg_iovlen = bufcount;
 				msg_send.msg_control = nullptr;
 				msg_send.msg_controllen = 0;
 				msg_send.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
-				// Perform the sendmsg
-				ssize_t result = sendmsg(fd, &msg_send, flags);
-				if (UNLIKELY(result < 0)) {
-					regs.rax = -errno;
-				} else {
-					regs.rax = result;
+
+				if (msg.msg_namelen > 0 && msg.msg_name != 0x0) {
+					cpu.machine().copy_from_guest(&addr, reinterpret_cast<uint64_t>(msg.msg_name), msg.msg_namelen);
+					msg_send.msg_name = &addr;
+					msg_send.msg_namelen = msg.msg_namelen;
+				}
+				// Validate the address
+				if (UNLIKELY(msg.msg_namelen > 0 && msg.msg_name != 0x0 &&
+						!cpu.machine().fds().validate_socket_address(fd, addr)))
+				{
+					regs.rax = -EPERM;
+				}
+				else
+				{
+					// Perform the sendmsg
+					ssize_t result = sendmsg(fd, &msg_send, flags);
+					if (UNLIKELY(result < 0)) {
+						regs.rax = -errno;
+					} else {
+						regs.rax = result;
+					}
 				}
 			} catch (...) {
 				regs.rax = -EBADF;

@@ -29,6 +29,7 @@ namespace tinykvm
 		using open_readable_t = std::function<bool(std::string&)>;
 		using open_writable_t = std::function<bool(std::string&)>;
 		using connect_socket_t = std::function<bool(int, struct sockaddr_storage&)>;
+		using bind_socket_t = std::function<bool(int, struct sockaddr_storage&)>;
 		using listening_socket_t = std::function<bool(int, int)>;
 		using accept_socket_t = std::function<int(int, int, int, struct sockaddr_storage&, socklen_t&)>;
 		using resolve_symlink_t = std::function<bool(std::string&)>;
@@ -321,6 +322,7 @@ namespace tinykvm
 
 	public:
 		connect_socket_t   connect_socket_callback;
+		bind_socket_t      bind_socket_callback;
 		accept_socket_t    accept_socket_callback;
 		listening_socket_t listening_socket_callback;
 		epoll_wait_t       epoll_wait_callback;
