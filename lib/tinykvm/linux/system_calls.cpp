@@ -2529,7 +2529,9 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					.tv_sec = 0,
 					.tv_nsec = 25000000,
 				};
-				result = epoll_pwait2(epollfd, guest_events.data(), maxevents, &ts, nullptr);
+				// Use syscall wrapper since RHEL9 has new enough kernel but not glibc
+				result = syscall(SYS_epoll_pwait2, epollfd, guest_events.data(),
+					maxevents, &ts, nullptr);
 			}
 			else
 			{
