@@ -478,6 +478,9 @@ namespace tinykvm
 
 	bool FileDescriptors::is_readable_path(std::string& modifiable_path) const noexcept
 	{
+		if (modifiable_path.empty())
+			return false;
+
 		if (!m_open_readable)
 			return false;
 		if (m_open_readable(modifiable_path)) {
