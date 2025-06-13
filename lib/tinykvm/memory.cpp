@@ -72,6 +72,8 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 			}
 		}
 		try {
+		uint64_t dupes = 0;
+		uint64_t nondupes = 0;
 		foreach_page(*this, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
 			// If the page is writable, we will restore the original
 			// memory from the master VM. We only care about leaf pages.
@@ -92,18 +94,23 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				tinykvm::page_at(const_cast<vMemory&> (main_vm.main_memory()), addr,
 					[&](uint64_t, uint64_t& entry, size_t) {
 						if ((entry & PDE64_DIRTY) == 0) {
+							fprintf(stderr, "nondupe: addr=%lx entry=%lx\n", addr, entry);
 							madvise(our_page, page_size, MADV_FREE);
 							duplicate = false;
 						}
 					});
 				if (duplicate) {
+					dupes++;
 					page_duplicate((uint64_t*)our_page,
 						(const uint64_t*)main_vm.main_memory().safely_at(addr, page_size));
 					//entry |= PDE64_CLONEABLE;
 					//entry &= ~(PDE64_PRESENT | PDE64_RW);
+				} else {
+					nondupes++;
 				}
 			}
 		}, false);
+		fprintf(stderr, "Reset memory: duplicates %lu nondupes %lu\n", dupes, nondupes);
 		return false;
 		} catch (const std::exception& e) {
 			/// XXX: Silently ignore the exception, as we will just completely reset the memory banks
