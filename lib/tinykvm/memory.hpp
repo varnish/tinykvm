@@ -4,6 +4,7 @@
 #include "virtual_mem.hpp"
 #include <cstddef>
 #include <mutex>
+#include <set>
 #include <string_view>
 
 namespace tinykvm {
@@ -16,7 +17,7 @@ struct vMemory {
 	}
 
 	Machine& machine;
-	std::vector<uint64_t> cow_written_pages{};
+	std::set<uint64_t> cow_written_pages{};
 	uint64_t physbase;
 	uint64_t safebase;
 	uint64_t page_tables;

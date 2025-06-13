@@ -345,7 +345,7 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)
 			const bool is_leaf = (page_size == PAGE_SIZE) || (entry & PDE64_PS) != 0;
 			const uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
 			if ((entry & flags) == flags && is_leaf) {
-				cow_written_pages.push_back(addr);
+				cow_written_pages.insert(addr);
 			}
 		});
 	}
