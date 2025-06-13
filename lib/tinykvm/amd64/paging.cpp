@@ -771,6 +771,7 @@ entry_is_no_longer_copy_on_write:
 							pt[e] &= ~PDE64_CLONEABLE;
 							pt[e] |= PDE64_RW | PDE64_PRESENT;
 						}
+						memory.record_cow_page(addr, pt[e]);
 						CLPRINT("-> Cloning a PT entry: 0x%lX\n", pt[e]);
 					}
 					if ((pt[e] & verify_flags) == verify_flags) {

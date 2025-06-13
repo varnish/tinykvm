@@ -48,6 +48,16 @@ bool vMemory::compare(const vMemory& other)
 	return this->ptr == other.ptr;
 }
 
+void vMemory::record_cow_page(uint64_t addr, uint64_t entry)
+{
+	// If the page is writable, we will restore the original
+	// memory from the master VM. We only care about leaf pages.
+	if (machine.is_forked() && entry & PDE64_USER) {
+		auto [it, is_new] = cow_written_pages.insert(addr);
+		fprintf(stderr, "%s: 0x%x\n", is_new ? "inserted" : "existing", addr);
+	}
+}
+
 bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 {
 	if (options.reset_keep_all_work_memory) {
@@ -336,19 +346,6 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)
 	if (UNLIKELY(this->smp_guards_enabled == true))
 		std::lock_guard<std::mutex> lock (this->mtx_smp);
 	char* ret = writable_page_at(*this, addr, flags, zeroes);
-
-	if (machine.is_forked())
-	{
-		tinykvm::page_at(*this, addr, [&](uint64_t, uint64_t& entry, uint64_t page_size) {
-			// If the page is writable, we will restore the original
-			// memory from the master VM. We only care about leaf pages.
-			const bool is_leaf = (page_size == PAGE_SIZE) || (entry & PDE64_PS) != 0;
-			const uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
-			if ((entry & flags) == flags && is_leaf) {
-				cow_written_pages.insert(addr);
-			}
-		});
-	}
 
 	//printf("-> Translation of 0x%lX: 0x%lX\n",
 	//	addr, machine.translate(addr));
