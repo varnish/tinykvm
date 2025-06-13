@@ -68,18 +68,15 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 			if (used > uint64_t(options.reset_free_work_mem)) {
 				//fprintf(stderr, "Freeing %zu bytes of work memory\n", used);
 				this->banks.reset(options);
+				cow_written_pages.clear();
 				return true;
 			}
 		}
 		try {
-		uint64_t dupes = 0;
-		uint64_t nondupes = 0;
-		foreach_page(*this, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
-			// If the page is writable, we will restore the original
-			// memory from the master VM. We only care about leaf pages.
-			const bool is_leaf = (page_size == PAGE_SIZE) || (entry & PDE64_PS) != 0;
-			const uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
-			if ((entry & flags) == flags && is_leaf) {
+		uint64_t erased = 0;
+		for (auto it = cow_written_pages.begin(); it != cow_written_pages.end(); ) {
+			uint64_t addr = *it;
+			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
 #define PDE64_CLONEABLE  (1ul << 11)
 				static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
 				const uint64_t bank_addr = entry & PDE64_ADDR_MASK;
@@ -100,17 +97,18 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 						}
 					});
 				if (duplicate) {
-					dupes++;
 					page_duplicate((uint64_t*)our_page,
 						(const uint64_t*)main_vm.main_memory().safely_at(addr, page_size));
 					//entry |= PDE64_CLONEABLE;
 					//entry &= ~(PDE64_PRESENT | PDE64_RW);
+					++it;
 				} else {
-					nondupes++;
+					++erased;
+					it = cow_written_pages.erase(it);
 				}
-			}
-		}, false);
-		fprintf(stderr, "Reset memory: duplicates %lu nondupes %lu\n", dupes, nondupes);
+			}, false);
+		}
+		fprintf(stderr, "Reset memory: pages %lu erased %lu\n", cow_written_pages.size(), erased);
 		return false;
 		} catch (const std::exception& e) {
 			/// XXX: Silently ignore the exception, as we will just completely reset the memory banks
@@ -120,6 +118,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 	}
 	// Reset the memory banks (also fallback if the above fails)
 	banks.reset(options);
+	cow_written_pages.clear();
 	return true;
 }
 void vMemory::fork_reset(const vMemory& other, const MachineOptions& options)
@@ -334,11 +333,23 @@ MemoryBank::Page vMemory::new_hugepage()
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)
 {
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
-	if (LIKELY(this->smp_guards_enabled == false))
-		return writable_page_at(*this, addr, flags, zeroes);
-
-	std::lock_guard<std::mutex> lock (this->mtx_smp);
+	if (UNLIKELY(this->smp_guards_enabled == true))
+		std::lock_guard<std::mutex> lock (this->mtx_smp);
 	char* ret = writable_page_at(*this, addr, flags, zeroes);
+
+	if (machine.uses_cow_memory())
+	{
+		tinykvm::page_at(*this, addr, [&](uint64_t, uint64_t& entry, uint64_t page_size) {
+			// If the page is writable, we will restore the original
+			// memory from the master VM. We only care about leaf pages.
+			const bool is_leaf = (page_size == PAGE_SIZE) || (entry & PDE64_PS) != 0;
+			const uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
+			if ((entry & flags) == flags && is_leaf) {
+				cow_written_pages.push_back(addr);
+			}
+		});
+	}
+
 	//printf("-> Translation of 0x%lX: 0x%lX\n",
 	//	addr, machine.translate(addr));
 	//print_pagetables(*this);
