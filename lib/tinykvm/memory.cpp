@@ -73,7 +73,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 			}
 		}
 		try {
-		uint64_t erased = 0;
+		//uint64_t erased = 0;
 		for (auto it = cow_written_pages.begin(); it != cow_written_pages.end(); ) {
 			uint64_t addr = *it;
 			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
@@ -103,12 +103,12 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 					//entry &= ~(PDE64_PRESENT | PDE64_RW);
 					++it;
 				} else {
-					++erased;
+					//++erased;
 					it = cow_written_pages.erase(it);
 				}
 			}, false);
 		}
-		fprintf(stderr, "Reset memory: pages %lu erased %lu\n", cow_written_pages.size(), erased);
+		//fprintf(stderr, "Reset memory: pages %lu erased %lu\n", cow_written_pages.size(), erased);
 		return false;
 		} catch (const std::exception& e) {
 			/// XXX: Silently ignore the exception, as we will just completely reset the memory banks
