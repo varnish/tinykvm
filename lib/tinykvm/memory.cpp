@@ -337,7 +337,7 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)
 		std::lock_guard<std::mutex> lock (this->mtx_smp);
 	char* ret = writable_page_at(*this, addr, flags, zeroes);
 
-	if (machine.uses_cow_memory())
+	if (machine.is_forked())
 	{
 		tinykvm::page_at(*this, addr, [&](uint64_t, uint64_t& entry, uint64_t page_size) {
 			// If the page is writable, we will restore the original
