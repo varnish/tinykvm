@@ -83,9 +83,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 			}
 		}
 		try {
-		//uint64_t erased = 0;
-		for (auto it = cow_written_pages.begin(); it != cow_written_pages.end(); ) {
-			uint64_t addr = *it;
+		for (const uint64_t addr : cow_written_pages) {
 			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
 #define PDE64_CLONEABLE  (1ul << 11)
 				static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
@@ -101,7 +99,6 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				tinykvm::page_at(const_cast<vMemory&> (main_vm.main_memory()), addr,
 					[&](uint64_t, uint64_t& entry, size_t) {
 						if ((entry & PDE64_DIRTY) == 0) {
-							fprintf(stderr, "nondupe: addr=%lx entry=%lx\n", addr, entry);
 							madvise(our_page, page_size, MADV_FREE);
 							duplicate = false;
 						}
@@ -111,14 +108,9 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 						(const uint64_t*)main_vm.main_memory().safely_at(addr, page_size));
 					//entry |= PDE64_CLONEABLE;
 					//entry &= ~(PDE64_PRESENT | PDE64_RW);
-					++it;
-				} else {
-					//++erased;
-					it = cow_written_pages.erase(it);
 				}
 			}, false);
 		}
-		//fprintf(stderr, "Reset memory: pages %lu erased %lu\n", cow_written_pages.size(), erased);
 		return false;
 		} catch (const std::exception& e) {
 			/// XXX: Silently ignore the exception, as we will just completely reset the memory banks
