@@ -4,6 +4,7 @@
 #include "smp.hpp"
 #include "util/threadpool.h"
 #include <cassert>
+#include <chrono>
 #include <cstring>
 #include <fcntl.h>
 #include <linux/kvm.h>
@@ -189,7 +190,11 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		}
 		full_reset = true;
 	} else {
+		//auto t1 = std::chrono::steady_clock::now();
 		full_reset = memory.fork_reset(other, options);
+		//auto t2 = std::chrono::steady_clock::now();
+		//auto us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1);
+		//fprintf(stderr, "fork_reset: %ld\n", us);
 	}
 
 	/* We don't need to reset the pagetables with an expensive
