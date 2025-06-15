@@ -1,4 +1,5 @@
 #include "machine.hpp"
+#include <algorithm>
 #include <cstring>
 #include <sys/mman.h>
 #include <stdexcept>
@@ -48,6 +49,16 @@ bool vMemory::compare(const vMemory& other)
 	return this->ptr == other.ptr;
 }
 
+void vMemory::record_cow_leaf_user_page(uint64_t addr)
+{
+	// When running forked, record page address to be restored in fork_reset.
+	// Pages are assumed to be leaf user pages.
+	if (machine.is_forked()) {
+		auto it = std::lower_bound(cow_written_pages.begin(), cow_written_pages.end(), addr);
+		cow_written_pages.insert(it, addr);
+	}
+}
+
 bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 {
 	if (options.reset_keep_all_work_memory) {
@@ -68,16 +79,14 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 			if (used > uint64_t(options.reset_free_work_mem)) {
 				//fprintf(stderr, "Freeing %zu bytes of work memory\n", used);
 				this->banks.reset(options);
+				cow_written_pages.clear();
 				return true;
 			}
 		}
+		// Restore the original memory from the master VM.
 		try {
-		foreach_page(*this, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
-			// If the page is writable, we will restore the original
-			// memory from the master VM. We only care about leaf pages.
-			const bool is_leaf = (page_size == PAGE_SIZE) || (entry & PDE64_PS) != 0;
-			const uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
-			if ((entry & flags) == flags && is_leaf) {
+		for (const uint64_t addr : cow_written_pages) {
+			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
 #define PDE64_CLONEABLE  (1ul << 11)
 				static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
 				const uint64_t bank_addr = entry & PDE64_ADDR_MASK;
@@ -92,7 +101,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				tinykvm::page_at(const_cast<vMemory&> (main_vm.main_memory()), addr,
 					[&](uint64_t, uint64_t& entry, size_t) {
 						if ((entry & PDE64_DIRTY) == 0) {
-							madvise(our_page, page_size, MADV_FREE);
+							madvise(our_page, page_size, MADV_DONTNEED);
 							duplicate = false;
 						}
 					});
@@ -102,8 +111,8 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 					//entry |= PDE64_CLONEABLE;
 					//entry &= ~(PDE64_PRESENT | PDE64_RW);
 				}
-			}
-		}, false);
+			}, false);
+		}
 		return false;
 		} catch (const std::exception& e) {
 			/// XXX: Silently ignore the exception, as we will just completely reset the memory banks
@@ -113,6 +122,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 	}
 	// Reset the memory banks (also fallback if the above fails)
 	banks.reset(options);
+	cow_written_pages.clear();
 	return true;
 }
 void vMemory::fork_reset(const vMemory& other, const MachineOptions& options)

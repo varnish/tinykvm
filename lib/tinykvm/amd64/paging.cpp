@@ -526,7 +526,7 @@ void foreach_page_makecow(vMemory& mem, uint64_t kernel_end, uint64_t shared_mem
 	}
 	foreach_page(mem,
 	[=] (uint64_t addr, uint64_t& entry, size_t /*size*/) {
-		if (addr < shared_memory_boundary && addr != 0xffe00000) {
+		if (addr < shared_memory_boundary) {
 			const uint64_t flags = (PDE64_PRESENT | PDE64_RW);
 			if ((entry & flags) == flags) {
 				entry &= ~PDE64_RW;
@@ -727,6 +727,8 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 
 						/* Return 4k page offset to new duplicated page. */
 						const uint64_t e = index_from_pt_entry(addr);
+						if (pt[e] & PDE64_USER)
+							memory.record_cow_leaf_user_page(addr);
 						return (char *)page.pmem + e * PAGE_SIZE;
 					}
 
@@ -771,6 +773,8 @@ entry_is_no_longer_copy_on_write:
 							pt[e] &= ~PDE64_CLONEABLE;
 							pt[e] |= PDE64_RW | PDE64_PRESENT;
 						}
+						if (pt[e] & PDE64_USER)
+							memory.record_cow_leaf_user_page(addr);
 						CLPRINT("-> Cloning a PT entry: 0x%lX\n", pt[e]);
 					}
 					if ((pt[e] & verify_flags) == verify_flags) {
