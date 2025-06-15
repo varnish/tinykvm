@@ -727,7 +727,8 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 
 						/* Return 4k page offset to new duplicated page. */
 						const uint64_t e = index_from_pt_entry(addr);
-						memory.record_cow_page(addr, pt[e]);
+						if (pt[e] & PDE64_USER)
+							memory.record_cow_leaf_user_page(addr);
 						return (char *)page.pmem + e * PAGE_SIZE;
 					}
 
@@ -772,7 +773,8 @@ entry_is_no_longer_copy_on_write:
 							pt[e] &= ~PDE64_CLONEABLE;
 							pt[e] |= PDE64_RW | PDE64_PRESENT;
 						}
-						memory.record_cow_page(addr, pt[e]);
+						if (pt[e] & PDE64_USER)
+							memory.record_cow_leaf_user_page(addr);
 						CLPRINT("-> Cloning a PT entry: 0x%lX\n", pt[e]);
 					}
 					if ((pt[e] & verify_flags) == verify_flags) {

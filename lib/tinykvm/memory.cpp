@@ -49,11 +49,11 @@ bool vMemory::compare(const vMemory& other)
 	return this->ptr == other.ptr;
 }
 
-void vMemory::record_cow_page(uint64_t addr, uint64_t entry)
+void vMemory::record_cow_leaf_user_page(uint64_t addr)
 {
-	// If the page is writable, we will restore the original
-	// memory from the master VM. We only care about leaf pages.
-	if (machine.is_forked() && entry & PDE64_USER) {
+	// When running forked, record page address to be restored in fork_reset.
+	// Pages are assumed to be leaf user pages.
+	if (machine.is_forked()) {
 		auto it = std::lower_bound(cow_written_pages.begin(), cow_written_pages.end(), addr);
 		cow_written_pages.insert(it, addr);
 	}
@@ -83,6 +83,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				return true;
 			}
 		}
+		// Restore the original memory from the master VM.
 		try {
 		for (const uint64_t addr : cow_written_pages) {
 			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
