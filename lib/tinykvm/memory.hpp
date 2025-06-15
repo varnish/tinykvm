@@ -4,6 +4,7 @@
 #include "virtual_mem.hpp"
 #include <cstddef>
 #include <mutex>
+#include <set>
 #include <string_view>
 
 namespace tinykvm {
@@ -16,6 +17,7 @@ struct vMemory {
 	}
 
 	Machine& machine;
+	std::set<uint64_t> cow_written_pages{};
 	uint64_t physbase;
 	uint64_t safebase;
 	uint64_t page_tables;
@@ -76,6 +78,7 @@ struct vMemory {
 	VirtualMem vmem() const;
 
 	[[noreturn]] static void memory_exception(const char*, uint64_t, uint64_t);
+	void record_cow_page(uint64_t addr, uint64_t entry);
 	bool fork_reset(const Machine&, const MachineOptions&); // Returns true if a full reset was done
 	void fork_reset(const vMemory& other, const MachineOptions&);
 	static vMemory New(Machine&, const MachineOptions&, uint64_t phys, uint64_t safe, size_t size);
