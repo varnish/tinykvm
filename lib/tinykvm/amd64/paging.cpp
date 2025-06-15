@@ -526,7 +526,7 @@ void foreach_page_makecow(vMemory& mem, uint64_t kernel_end, uint64_t shared_mem
 	}
 	foreach_page(mem,
 	[=] (uint64_t addr, uint64_t& entry, size_t /*size*/) {
-		if (addr < shared_memory_boundary && addr != 0xffe00000) {
+		if (addr < shared_memory_boundary) {
 			const uint64_t flags = (PDE64_PRESENT | PDE64_RW);
 			if ((entry & flags) == flags) {
 				entry &= ~PDE64_RW;
