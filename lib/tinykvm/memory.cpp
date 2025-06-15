@@ -53,7 +53,7 @@ void vMemory::record_cow_page(uint64_t addr, uint64_t entry)
 	// If the page is writable, we will restore the original
 	// memory from the master VM. We only care about leaf pages.
 	if (machine.is_forked() && entry & PDE64_USER) {
-		cow_written_pages.insert(addr);
+		cow_written_pages.push_back(addr);
 	}
 }
 
