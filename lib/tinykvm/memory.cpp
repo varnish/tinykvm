@@ -92,7 +92,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				tinykvm::page_at(const_cast<vMemory&> (main_vm.main_memory()), addr,
 					[&](uint64_t, uint64_t& entry, size_t) {
 						if ((entry & PDE64_DIRTY) == 0) {
-							madvise(our_page, page_size, MADV_FREE);
+							madvise(our_page, page_size, MADV_DONTNEED);
 							duplicate = false;
 						}
 					});
