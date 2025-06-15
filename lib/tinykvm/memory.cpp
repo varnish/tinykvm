@@ -87,7 +87,6 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 		try {
 		for (const uint64_t addr : cow_written_pages) {
 			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
-#define PDE64_CLONEABLE  (1ul << 11)
 				static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
 				const uint64_t bank_addr = entry & PDE64_ADDR_MASK;
 				//fprintf(stderr, "Copying virtual page %016lx from physical %016lx with size %lu\n",
@@ -97,20 +96,8 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				// address from the master VM.
 				auto* our_page = this->safely_at(bank_addr, page_size);
 				// Find the page in the main VM
-				bool duplicate = true;
-				tinykvm::page_at(const_cast<vMemory&> (main_vm.main_memory()), addr,
-					[&](uint64_t, uint64_t& entry, size_t) {
-						if ((entry & PDE64_DIRTY) == 0) {
-							madvise(our_page, page_size, MADV_DONTNEED);
-							duplicate = false;
-						}
-					});
-				if (duplicate) {
-					page_duplicate((uint64_t*)our_page,
-						(const uint64_t*)main_vm.main_memory().safely_at(addr, page_size));
-					//entry |= PDE64_CLONEABLE;
-					//entry &= ~(PDE64_PRESENT | PDE64_RW);
-				}
+				page_duplicate((uint64_t*)our_page,
+					(const uint64_t*)main_vm.main_memory().safely_at(addr, page_size));
 			}, false);
 		}
 		return false;
