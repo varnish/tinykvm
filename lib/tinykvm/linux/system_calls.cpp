@@ -183,13 +183,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
 				regs.rax = -EACCES;
 				cpu.set_registers(regs);
-				SYSPRINT("STAT to path=%s, data=0x%llX = %lld\n",
+				SYSPRINT("STAT to path=%s, data=0x%llX = %lld (not readable)\n",
 					path.c_str(), regs.rsi, regs.rax);
 				return;
 			}
 
 			struct stat vstat;
-			const int result = stat(path.c_str(), &vstat);
+			const int result = syscall(SYS_stat, path.c_str(), &vstat);
 			regs.rax = (result == 0) ? 0 : -errno;
 			if (result == 0) {
 				cpu.machine().copy_to_guest(regs.rsi, &vstat, sizeof(vstat));
@@ -227,14 +227,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
 				// Some paths are extremely annoyingly "required" by some guests
 				// in order to proceed with things *unrelated* to the path.
-				std::string cwd(PATH_MAX, '\0');
-				if (UNLIKELY(getcwd(cwd.data(), cwd.size()) == nullptr)) {
-					regs.rax = -errno;
-					cpu.set_registers(regs);
-					SYSPRINT("lstat(path=%s, data=0x%llX) = %lld\n",
-						path.c_str(), regs.rsi, regs.rax);
-					return;
-				}
+				const std::string& cwd = cpu.machine().fds().current_working_directory();
 				const size_t prefixed = cwd.find(path);
 				if (prefixed != std::string::npos) {
 					// Make up a fake stat structure
@@ -254,7 +247,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				}
 			} else {
 				struct stat vstat;
-				const int result = lstat(path.c_str(), &vstat);
+				const int result = syscall(SYS_lstat, path.c_str(), &vstat);
 				if (result == 0) {
 					cpu.machine().copy_to_guest(regs.rsi, &vstat, sizeof(vstat));
 					regs.rax = 0;
