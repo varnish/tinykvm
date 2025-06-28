@@ -66,9 +66,10 @@ struct Machine
 	   Returns the number of buffers filled, or an exception if not enough. */
 	struct Buffer { const char* ptr; size_t len; };
 	size_t gather_buffers_from_range(size_t cnt, Buffer[], address_t addr, size_t len) const;
+	size_t gather_buffers_from_range(std::vector<Buffer>&, address_t addr, size_t len) const;
 	/* Same as above, but all buffers have pre-allocated writable pages. */
 	struct WrBuffer { char* ptr; size_t len; };
-	size_t writable_buffers_from_range(size_t cnt, WrBuffer[], address_t addr, size_t len);
+	size_t writable_buffers_from_range(std::vector<WrBuffer>&, address_t addr, size_t len);
 	/* Build std::string from zero-terminated memory. */
 	std::string copy_from_cstring(address_t src, size_t maxlen = 65535u) const;
 	/* Build std::string from buffer, length in memory. */

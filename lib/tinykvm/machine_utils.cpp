@@ -129,12 +129,35 @@ size_t Machine::gather_buffers_from_range(
 	}
 	return index;
 }
-size_t Machine::writable_buffers_from_range(
-	size_t cnt, WrBuffer buffers[], address_t addr, size_t len)
+size_t Machine::gather_buffers_from_range(
+	std::vector<Buffer>& buffers, address_t addr, size_t len) const
 {
-	size_t index = 0;
+	Buffer* last = nullptr;
+	while (len != 0)
+	{
+		const size_t offset = addr & PageMask();
+		const size_t size = std::min(vMemory::PageSize() - offset, len);
+		auto* page = memory.get_userpage_at(addr & ~PageMask());
+
+		auto* ptr = (const char*) &page[offset];
+		if (last && ptr == last->ptr + last->len) {
+			last->len += size;
+		} else {
+			buffers.emplace_back();
+			last = &buffers.back();
+			last->ptr = ptr;
+			last->len = size;
+		}
+		addr += size;
+		len -= size;
+	}
+	return buffers.size();
+}
+size_t Machine::writable_buffers_from_range(
+	std::vector<WrBuffer>& buffers, address_t addr, size_t len)
+{
 	WrBuffer* last = nullptr;
-	while (len != 0 && index < cnt)
+	while (len != 0)
 	{
 		const size_t offset = addr & PageMask();
 		const size_t size = std::min(vMemory::PageSize() - offset, len);
@@ -144,27 +167,22 @@ size_t Machine::writable_buffers_from_range(
 		if (last && ptr == last->ptr + last->len) {
 			last->len += size;
 		} else {
-			last = &buffers[index];
+			buffers.emplace_back();
+			last = &buffers.back();
 			last->ptr = ptr;
 			last->len = size;
-			index ++;
 		}
 		addr += size;
 		len -= size;
 	}
-	if (UNLIKELY(len != 0)) {
-		throw MemoryException("Out of buffers", index, cnt);
-	}
-	return index;
+	return buffers.size();
 }
 
 void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size_t len)
 {
-	/* Over-estimate the number of buffers needed */
-	const size_t nbuffers = 2 + (len / vMemory::PageSize());
-	Buffer buffers[nbuffers];
+	std::vector<Buffer> buffers;
 	const size_t count =
-		src.gather_buffers_from_range(nbuffers, buffers, sa, len);
+		src.gather_buffers_from_range(buffers, sa, len);
 	/* NOTE: Forked and some prepared VMs use CoW pages */
 	if (uses_cow_memory())
 	{

@@ -62,14 +62,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			const int vfd = int(regs.rdi);
 			int fd = cpu.machine().fds().translate(vfd);
-
-			static constexpr size_t MAX_READ_BUFFERS = 128;
-			tinykvm::Machine::WrBuffer buffers[MAX_READ_BUFFERS];
+			std::vector<tinykvm::Machine::WrBuffer> buffers;
 
 			/* Writable readv buffers */
 			auto bufcount = cpu.machine().writable_buffers_from_range(
-				MAX_READ_BUFFERS, buffers,
-				regs.rsi, regs.rdx);
+				buffers, regs.rsi, regs.rdx);
 
 			ssize_t result = 0;
 			if (bufcount == 1) {
@@ -112,15 +109,14 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			}
 			if (vfd != 1 && vfd != 2) {
 				/* Use gather-buffers and writev */
-				static constexpr size_t WRITEV_BUFFERS = 64;
-				tinykvm::Machine::Buffer buffers[WRITEV_BUFFERS];
+				std::vector<tinykvm::Machine::Buffer> buffers;
 				const auto bufcount =
-					cpu.machine().gather_buffers_from_range(WRITEV_BUFFERS, buffers, regs.rsi, bytes);
+					cpu.machine().gather_buffers_from_range(buffers, regs.rsi, bytes);
 
 				/* Complain about writes outside of existing FDs */
 				const int fd = cpu.machine().fds().translate_writable_vfd(regs.rdi);
 				if (bufcount > 1) {
-					regs.rax = writev(fd, (const struct iovec *)buffers, bufcount);
+					regs.rax = writev(fd, (const struct iovec *)buffers.data(), bufcount);
 				} else {
 					regs.rax = write(fd, buffers[0].ptr, buffers[0].len);
 				}
@@ -349,18 +345,20 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				}
 				else if (address != 0x0 && address < cpu.machine().heap_address()) {
 					dst = address;
-					fprintf(stderr,
-						"mmap: address 0x%lX is below heap address 0x%lX\n",
-						address, cpu.machine().heap_address());
+					if (cpu.machine().m_verbose_system_calls) {
+						fprintf(stderr,
+							"mmap: address 0x%lX is below heap address 0x%lX\n",
+							address, cpu.machine().heap_address());
+					}
 				}
 				else {
 					dst = cpu.machine().mmap_allocate(length);
 				}
 				// Readv into the area
 				const uint64_t read_length = regs.rsi; // Don't align the read length
-				std::array<Machine::WrBuffer, 256> buffers;
+				std::vector<tinykvm::Machine::WrBuffer> buffers;
 				const size_t cnt =
-					cpu.machine().writable_buffers_from_range(buffers.size(), buffers.data(), dst, read_length);
+					cpu.machine().writable_buffers_from_range(buffers, dst, read_length);
 				// Seek to the given offset in the file and read the contents into guest memory
 				if (preadv64(real_fd, (const iovec *)&buffers[0], cnt, voff) < 0) {
 					PRINTMMAP("preadv64 failed: %s for %zu buffers at offset %ld\n",
@@ -642,10 +640,9 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const int fd = cpu.machine().fds().translate(vfd);
 
 			// Readv into the area
-			static constexpr size_t READV_BUFFERS = 128;
-			tinykvm::Machine::WrBuffer buffers[READV_BUFFERS];
+			std::vector<tinykvm::Machine::WrBuffer> buffers;
 			const auto bufcount =
-				cpu.machine().writable_buffers_from_range(READV_BUFFERS, buffers, g_buf, bytes);
+				cpu.machine().writable_buffers_from_range(buffers, g_buf, bytes);
 
 			ssize_t result =
 				preadv64(fd, (iovec *)&buffers[0], bufcount, offset);
@@ -669,10 +666,9 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const int fd = cpu.machine().fds().translate_writable_vfd(vfd);
 
 			// writev into the area
-			static constexpr size_t WRITEV_BUFFERS = 64;
-			tinykvm::Machine::Buffer buffers[WRITEV_BUFFERS];
+			std::vector<tinykvm::Machine::Buffer> buffers;
 			const auto bufcount =
-				cpu.machine().gather_buffers_from_range(WRITEV_BUFFERS, buffers, g_buf, bytes);
+				cpu.machine().gather_buffers_from_range(buffers, g_buf, bytes);
 
 			if (pwritev64(fd, (const iovec *)&buffers[0], bufcount, offset) < 0) {
 				regs.rax = -errno;
@@ -734,13 +730,12 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					std::array<g_iovec, 64> vecs;
 					cpu.machine().copy_from_guest(vecs.data(), regs.rsi, count * sizeof(g_iovec));
 					ssize_t written = 0;
-					std::array<Machine::Buffer, 256> buffers;
+					std::vector<tinykvm::Machine::Buffer> buffers;
 
 					for (size_t i = 0; i < count; i++)
 					{
 						const size_t n = cpu.machine().gather_buffers_from_range(
-								buffers.size(), buffers.data(),
-								vecs[i].iov_base, vecs[i].iov_len);
+								buffers, vecs[i].iov_base, vecs[i].iov_len);
 
 						ssize_t result = writev(fd,
 							(const struct iovec *)buffers.data(), n);
@@ -1333,9 +1328,9 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				{
 					fd = cpu.machine().fds().translate_writable_vfd(vfd);
 					// Gather memory buffers from the guest
-					std::array<tinykvm::Machine::Buffer, 256> buffers;
+					std::vector<tinykvm::Machine::Buffer> buffers;
 					const auto bufcount =
-						cpu.machine().gather_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
+						cpu.machine().gather_buffers_from_range(buffers, g_buf, bytes);
 
 					struct sockaddr_storage addr {};
 					struct msghdr msg {};
@@ -1396,9 +1391,9 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				else
 				{
 					fd = cpu.machine().fds().translate(vfd);
-					std::array<tinykvm::Machine::WrBuffer, 256> buffers;
+					std::vector<tinykvm::Machine::WrBuffer> buffers;
 					const auto bufcount =
-						cpu.machine().writable_buffers_from_range(buffers.size(), buffers.data(), g_buf, bytes);
+						cpu.machine().writable_buffers_from_range(buffers, g_buf, bytes);
 					// We can't use recvfrom here, but there is recvmsg()
 					// All the guest data is in the buffers, which is compatible with iovec
 					struct sockaddr addr {};
@@ -1457,16 +1452,15 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				const uint64_t g_iov = (uintptr_t)msg.msg_iov;
 				cpu.machine().copy_from_guest(iovecs.data(), g_iov, msg.msg_iovlen * sizeof(GuestIOvec));
 				// Gather iovec information from the guest
-				std::array<tinykvm::Machine::Buffer, 256> buffers;
+				std::vector<tinykvm::Machine::WrBuffer> buffers;
 				size_t bufcount = 0;
 				for (size_t i = 0; i < msg.msg_iovlen; i++)
 				{
 					const uint64_t g_base = iovecs.at(i).iov_base;
 					const size_t   g_len = iovecs[i].iov_len;
 					const auto this_bufcount =
-						cpu.machine().gather_buffers_from_range(
-							buffers.size() - bufcount, buffers.data() + bufcount,
-							g_base, g_len);
+						cpu.machine().writable_buffers_from_range(
+							buffers, g_base, g_len);
 					bufcount += this_bufcount;
 				}
 				struct sockaddr addr {};
@@ -1514,7 +1508,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				fd = cpu.machine().fds().translate_writable_vfd(vfd);
 				struct msghdr msg {};
 				cpu.machine().copy_from_guest(&msg, g_msg, sizeof(msg));
-				std::array<tinykvm::Machine::Buffer, 256> buffers;
+				std::vector<tinykvm::Machine::Buffer> buffers;
 				std::array<GuestIOvec, 128> iovecs;
 				if (msg.msg_iovlen > iovecs.size())
 				{
@@ -1535,8 +1529,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					const size_t   g_len = iovecs[i].iov_len;
 					const auto this_bufcount =
 						cpu.machine().gather_buffers_from_range(
-							buffers.size() - bufcount, buffers.data() + bufcount,
-							g_base, g_len);
+							buffers, g_base, g_len);
 					bufcount += this_bufcount;
 				}
 				struct sockaddr_storage addr {};
@@ -2679,7 +2672,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			{
 				std::array<struct mmsghdr, 1024> guest_msgs;
 				std::array<GuestIOvec, 1024> guest_iovecs;
-				std::array<Machine::Buffer, 1024> buffers;
+				std::vector<tinykvm::Machine::Buffer> buffers;
 				// Fetch the mmsghdrs from the guest
 				cpu.machine().copy_from_guest(guest_msgs.data(), g_buf, vcnt * sizeof(struct mmsghdr));
 				// For each mmsghdr, fetch the iovec and sockaddr
@@ -2709,9 +2702,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					for (size_t j = 0; j < iovlen; ++j)
 					{
 						auto& iov = guest_iovecs.at(j);
+						buffers.clear();
 						const size_t cnt =
 							cpu.machine().gather_buffers_from_range(
-								buffers.size(), buffers.data(), iov.iov_base, iov.iov_len);
+								buffers, iov.iov_base, iov.iov_len);
 						ssize_t result = writev(fd, (const iovec *)&buffers[0], cnt);
 						if (result < 0)
 						{
