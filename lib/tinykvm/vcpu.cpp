@@ -157,13 +157,23 @@ void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 		__u32 nmsrs; /* number of msrs in entries */
 		__u32 pad = 0;
 
-		struct kvm_msr_entry entries[3];
+		struct kvm_msr_entry entries[8];
 	} msrs;
 	msrs.nmsrs = 2;
 	msrs.entries[0].index = AMD64_MSR_STAR;
 	msrs.entries[1].index = AMD64_MSR_LSTAR;
 	msrs.entries[0].data  = (0x8LL << 32) | (0x1BLL << 48);
 	msrs.entries[1].data  = interrupt_header().translated_vm_syscall(machine.main_memory());
+
+	if (!this->machine().is_forked())
+	{
+		// KVM PV wall clock and system time
+		msrs.entries[2].index = 0x4b564d00; // MSR_KVM_WALL_CLOCK_NEW
+		msrs.entries[2].data  = 0x2010;
+		msrs.entries[3].index = 0x4b564d01; // MSR_KVM_SYSTEM_TIME_NEW
+		msrs.entries[3].data  = 0x2021;
+		msrs.nmsrs += 2; // Add 2 more MSRs
+	}
 
 	if (ioctl(this->fd, KVM_SET_MSRS, &msrs) < (int)msrs.nmsrs) {
 		Machine::machine_exception("KVM_SET_MSRS: failed to set STAR/LSTAR");
