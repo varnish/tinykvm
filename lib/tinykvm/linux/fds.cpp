@@ -237,7 +237,11 @@ namespace tinykvm
 		Entry entry{fd, is_writable, false};
 		auto res = m_fds.insert_or_assign(vfd, entry);
 		// Make sure we are not overwriting the vfd
-		this->m_next_file_fd = std::max(this->m_next_file_fd, vfd + 1);
+		if (is_socket_vfd(vfd)) {
+			this->m_next_socket_fd = std::max(this->m_next_socket_fd, vfd + 1);
+		} else {
+			this->m_next_file_fd = std::max(this->m_next_file_fd, vfd + 1);
+		}
 		return res.first->second;
 	}
 
