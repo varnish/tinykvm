@@ -345,9 +345,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				}
 				else if (address != 0x0 && address < cpu.machine().heap_address()) {
 					dst = address;
-					fprintf(stderr,
-						"mmap: address 0x%lX is below heap address 0x%lX\n",
-						address, cpu.machine().heap_address());
+					if (cpu.machine().m_verbose_system_calls) {
+						fprintf(stderr,
+							"mmap: address 0x%lX is below heap address 0x%lX\n",
+							address, cpu.machine().heap_address());
+					}
 				}
 				else {
 					dst = cpu.machine().mmap_allocate(length);
