@@ -145,6 +145,7 @@ ALIGN 0x10
 	push rbx
 	push rcx
 	push rdx
+	push rax
 	;; Check if the wall clock MSR has already been set
 	mov eax, [0x3004]    ;; seconds since epoch
 	test eax, eax
@@ -152,7 +153,7 @@ ALIGN 0x10
 	;; Read the PV clock MSR
 	mov ecx, 0x4b564d00  ;; MSR_KVM_WALL_CLOCK_NEW
 	mov eax, 0x3000      ;; data
-	mov edx, 0           ;; zero high-32 bits
+	xor edx, edx         ;; zero high-32 bits
 	wrmsr
 .wall_clock_already_set:
 	;; Read the wall clock
@@ -160,9 +161,12 @@ ALIGN 0x10
 	mov ecx, DWORD [0x3008] ;; nsec
 	;; Convert to nanoseconds
 	mov rbx, 1000000000   ;; 1e9
-	mov rdx, 0            ;; clear rdx
+	xor rdx, rdx          ;; clear rdx
 	mul rbx               ;; rax = sec * 1e9
 	add rax, rcx          ;; rax = sec * 1e9 + nsec
+	mov rdx, rax
+	pop rax
+	add rax, rdx
 	pop rdx
 	pop rcx
 	pop rbx
@@ -178,6 +182,9 @@ ALIGN 0x10
 	;; Verify that destination is at least 0x100000
 	cmp rsi, 0x100000
 	jb .vm64_clock_gettime_error
+	;; If clockid is CLOCK_REALTIME, go to a fallback
+	test rdi, rdi
+	jz .vm64_clock_gettime_fallback
 	;; Get system time into rax
 	call .read_system_time
 	;; If clockid is CLOCK_MONOTONIC, we are done
@@ -205,6 +212,15 @@ ALIGN 0x10
 	o64 sysret
 .vm64_clock_gettime_error:
 	mov rax, -14 ;; EFAULT
+	o64 sysret
+.vm64_clock_gettime_fallback:
+	;; Fallback to host syscall trap
+	pop rdx
+	pop rcx
+	pop rbx
+	clac
+	mov ax, 228 ;; CLOCK_GETTIME
+	out 0, ax
 	o64 sysret
 
 .vm64_gettimeofday:

@@ -2136,7 +2136,17 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 	Machine::install_syscall_handler(
 		SYS_clock_getres, [](vCPU& cpu) { // clock_getres
 			auto& regs = cpu.registers();
-			regs.rax = clock_getres(CLOCK_MONOTONIC, nullptr);
+			const clockid_t vclk = regs.rdi;
+			const address_t g_buf = regs.rsi;
+			struct timespec ts;
+			const int res = clock_getres(vclk, &ts);
+			if (res < 0) {
+				regs.rax = -errno;
+			} else {
+				if (g_buf != 0x0)
+					cpu.machine().copy_to_guest(g_buf, &ts, sizeof(ts));
+				regs.rax = res;
+			}
 			cpu.set_registers(regs);
 			SYSPRINT("clock_getres(clk=%lld) = %lld\n",
 					 regs.rdi, regs.rax);
