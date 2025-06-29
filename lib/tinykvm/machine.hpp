@@ -54,7 +54,7 @@ struct Machine
 	bool is_forkable() const noexcept { return m_prepped; }
 	void stop(bool = true);
 	bool stopped() const noexcept { return vcpu.stopped; }
-	void reset_to(const Machine&, const MachineOptions&);
+	bool reset_to(const Machine&, const MachineOptions&); // true = full reset
 	void reset_to(std::string_view binary, const MachineOptions&);
 
 	/* When zeroes == true, new pages will be zeroed instead of duplicated */

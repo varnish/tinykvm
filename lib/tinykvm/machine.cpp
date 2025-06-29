@@ -152,7 +152,7 @@ void Machine::reset_to(std::string_view binary, const MachineOptions& options)
 	this->set_registers(regs);
 }
 
-void Machine::reset_to(const Machine& other, const MachineOptions& options)
+bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 {
 	assert(m_forked && other.m_prepped &&
 		"This machine must be forked, and the source must be prepped");
@@ -225,6 +225,7 @@ void Machine::reset_to(const Machine& other, const MachineOptions& options)
 		   that were handling a system call during fork. */
 		this->enter_usermode();
 	}
+	return full_reset;
 }
 
 uint64_t Machine::stack_push(__u64& sp, const void* data, size_t length)
