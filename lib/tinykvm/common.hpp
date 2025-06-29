@@ -95,15 +95,17 @@ namespace tinykvm
 
 	class MemoryException: public MachineException {
 	public:
-	    MemoryException(const char* msg, uint64_t addr, uint64_t sz)
-			: MachineException{msg, addr}, m_size(sz) {}
+	    MemoryException(const char* msg, uint64_t addr, uint64_t sz, bool oom = false)
+			: MachineException{msg, addr}, m_size(sz), m_is_oom(oom) {}
 	    const char* what() const noexcept override {
 	        return m_msg;
 	    }
 		auto addr() const noexcept { return data(); }
 		auto size() const noexcept { return m_size; }
+		bool is_oom() const noexcept { return m_is_oom; }
 	private:
 		uint64_t m_size;
+		bool m_is_oom = false; /* True if the exception was caused by OOM */
 	};
 
 	template <class...> constexpr std::false_type always_false {};

@@ -377,9 +377,9 @@ size_t Machine::banked_memory_capacity_pages() const noexcept
 }
 
 __attribute__((cold, noreturn))
-void vMemory::memory_exception(const char* msg, uint64_t addr, uint64_t size)
+void vMemory::memory_exception(const char* msg, uint64_t addr, uint64_t size, bool oom)
 {
-	throw MemoryException(msg, addr, size);
+	throw MemoryException(msg, addr, size, oom);
 }
 
 void vMemory::increment_unlocked_pages(size_t pages)
@@ -388,7 +388,7 @@ void vMemory::increment_unlocked_pages(size_t pages)
 		this->unlocked_pages += pages;
 		if (this->unlocked_pages > this->banks.max_pages()) {
 			memory_exception("Out of working memory",
-				this->unlocked_pages * PAGE_SIZE, this->banks.max_pages() * PAGE_SIZE);
+				this->unlocked_pages * PAGE_SIZE, this->banks.max_pages() * PAGE_SIZE, true);
 		}
 	} else {
 		memory_exception("Memory::increment_unlocked_pages() without direct main memory writes enabled", 0, pages);

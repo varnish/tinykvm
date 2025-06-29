@@ -76,7 +76,7 @@ struct vMemory {
 
 	VirtualMem vmem() const;
 
-	[[noreturn]] static void memory_exception(const char*, uint64_t, uint64_t);
+	[[noreturn]] static void memory_exception(const char*, uint64_t, uint64_t, bool oom = false);
 	void record_cow_leaf_user_page(uint64_t addr);
 	bool fork_reset(const Machine&, const MachineOptions&); // Returns true if a full reset was done
 	void fork_reset(const vMemory& other, const MachineOptions&);

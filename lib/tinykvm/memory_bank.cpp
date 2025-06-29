@@ -95,7 +95,7 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 			pages, m_num_pages, m_max_pages);
 	}
 	throw MemoryException("Out of working memory",
-		m_num_pages * vMemory::PageSize(), m_max_pages * vMemory::PageSize());
+		m_num_pages * vMemory::PageSize(), m_max_pages * vMemory::PageSize(), true);
 }
 void MemoryBanks::reset(const MachineOptions& options)
 {
