@@ -727,7 +727,7 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 
 						/* Return 4k page offset to new duplicated page. */
 						const uint64_t e = index_from_pt_entry(addr);
-						if (pt[e] & PDE64_USER)
+						if (pd[k] & PDE64_USER)
 							memory.record_cow_leaf_user_page(addr);
 						return WritablePage {
 							.page = (char *)page.pmem + e * PAGE_SIZE,
