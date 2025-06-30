@@ -185,7 +185,7 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 	const auto offset   = addr & PageMask();
 	if (offset + asize <= vMemory::PageSize())
 	{
-		auto* page = this->get_writable_page(pagebase, expectedUsermodeFlags(), false);
+		auto* page = this->get_writable_page(pagebase, expectedUsermodeFlags(), false, false);
 		return &page[offset];
 	}
 
@@ -321,18 +321,14 @@ MemoryBank::Page vMemory::new_hugepage()
 	return banks.get_available_bank(512u).get_next_page(512u);
 }
 
-char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes)
+char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, bool dirty)
 {
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
-	if (LIKELY(this->smp_guards_enabled == false))
-		return writable_page_at(*this, addr, flags, zeroes);
-
-	std::lock_guard<std::mutex> lock (this->mtx_smp);
-	char* ret = writable_page_at(*this, addr, flags, zeroes);
-	//printf("-> Translation of 0x%lX: 0x%lX\n",
-	//	addr, machine.translate(addr));
-	//print_pagetables(*this);
-	return ret;
+	auto writable_page = writable_page_at(*this, addr, flags, zeroes);
+	if (dirty) {
+		writable_page.set_dirty();
+	}
+	return writable_page.page;
 }
 
 char* vMemory::get_kernelpage_at(uint64_t addr) const

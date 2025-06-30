@@ -241,7 +241,7 @@ long vCPU::run_once()
 					Machine::machine_exception("Kernel or zero page fault", intr);
 				}
 
-				machine().memory.get_writable_page(addr, PDE64_USER | PDE64_RW, false);
+				machine().memory.get_writable_page(addr, PDE64_USER | PDE64_RW, false, false);
 				return KVM_EXIT_IO;
 			}
 			else if (intr == 1) /* Debug trap */

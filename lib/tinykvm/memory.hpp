@@ -60,7 +60,7 @@ struct vMemory {
 
 	char *get_userpage_at(uint64_t addr) const;
 	char *get_kernelpage_at(uint64_t addr) const;
-	char *get_writable_page(uint64_t addr, uint64_t flags, bool zeroes);
+	char *get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, bool dirty);
 	MemoryBank::Page new_page();
 	MemoryBank::Page new_hugepage();
 
