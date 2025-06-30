@@ -278,6 +278,11 @@ bool Machine::mmap_relax(uint64_t addr, size_t size, size_t new_size)
 {
 	if (this->mmap_cache().current() == addr + size && new_size <= size) {
 		this->mmap_cache().current() = (addr + new_size + PageMask) & ~PageMask;
+		if (this->mmap_cache().track_used_ranges())
+		{
+			this->mmap_cache().remove_used(addr, size);
+			this->mmap_cache().insert_used(addr, new_size);
+		}
 		return true;
 	}
 	return false;
