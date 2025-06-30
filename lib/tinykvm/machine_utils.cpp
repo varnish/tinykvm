@@ -23,7 +23,7 @@ void Machine::memzero(address_t addr, size_t len)
 				}
 			}, true); // Ignore missing pages
 		if (UNLIKELY(must_be_zeroed)) {
-			auto* page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), true);
+			auto* page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), true, false);
 			std::memset(&page[offset], 0, size);
 		}
 
@@ -41,7 +41,7 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 		{
 			const size_t offset = addr & PageMask();
 			const size_t size = std::min(vMemory::PageSize() - offset, len);
-			auto* page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), zeroes);
+			auto* page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), zeroes, true);
 			std::copy(src, src + size, &page[offset]);
 
 			addr += size;
@@ -161,7 +161,7 @@ size_t Machine::writable_buffers_from_range(
 	{
 		const size_t offset = addr & PageMask();
 		const size_t size = std::min(vMemory::PageSize() - offset, len);
-		auto *page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), false);
+		auto *page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), false, true);
 
 		auto* ptr = (char*) &page[offset];
 		if (last && ptr == last->ptr + last->len) {
@@ -194,7 +194,7 @@ void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size
 			const size_t offset = addr & PageMask();
 			const size_t size = std::min(vMemory::PageSize() - offset, buf.len);
 			/* NOTE: We could use zeroes if remaining is >= PageSize() */
-			auto *page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), false);
+			auto *page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), false, false);
 			std::copy(buf.ptr, buf.ptr + size, &page[offset]);
 
 			if (size == buf.len) {
@@ -304,7 +304,7 @@ std::span<uint8_t> Machine::writable_memview(address_t src, size_t len)
 	const size_t offset = src & PageMask();
 	const size_t size = std::min(vMemory::PageSize() - offset, len);
 	auto* page = memory.get_writable_page(src & ~PageMask(),
-		memory.expectedUsermodeFlags(), false);
+		memory.expectedUsermodeFlags(), false, true);
 
 	std::span<uint8_t> view {(uint8_t*) &page[offset], size};
 	src += size;
@@ -315,7 +315,7 @@ std::span<uint8_t> Machine::writable_memview(address_t src, size_t len)
 		const size_t offset = src & PageMask();
 		const size_t size = std::min(vMemory::PageSize() - offset, len);
 		auto *page = memory.get_writable_page(src & ~PageMask(),
-			memory.expectedUsermodeFlags(), false);
+			memory.expectedUsermodeFlags(), false, true);
 
 		auto *ptr = (uint8_t *)&page[offset];
 		if (ptr == view.data() + view.size()) {

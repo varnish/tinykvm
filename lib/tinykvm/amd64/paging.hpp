@@ -16,7 +16,15 @@ extern void foreach_page(const vMemory&, foreach_page_t callback, bool skip_oob_
 extern void foreach_page_makecow(vMemory&, uint64_t kernel_end, uint64_t shared_memory_boundary);
 
 extern void page_at(vMemory&, uint64_t addr, foreach_page_t, bool ignore_missing = false);
-extern char * writable_page_at(vMemory&, uint64_t addr, uint64_t flags, bool zeroes = false);
+struct WritablePage {
+	char *page;
+	uint64_t& entry;
+
+	void set_dirty() {
+		entry |= (1UL << 6);
+	}
+};
+extern WritablePage writable_page_at(vMemory&, uint64_t addr, uint64_t flags, bool zeroes = false);
 extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags);
 
 static inline bool page_is_zeroed(const uint64_t* page) {

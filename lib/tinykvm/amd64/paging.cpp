@@ -618,7 +618,7 @@ static void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& d
 	data = page.pmem;
 }
 
-char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, bool write_zeroes)
+WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, bool write_zeroes)
 {
 	CLPRINT("Creating a writable page for 0x%lX\n", addr);
 	auto* pml4 = memory.page_at(memory.page_tables);
@@ -727,9 +727,12 @@ char * writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, b
 
 						/* Return 4k page offset to new duplicated page. */
 						const uint64_t e = index_from_pt_entry(addr);
-						if (pt[e] & PDE64_USER)
+						if (pd[k] & PDE64_USER)
 							memory.record_cow_leaf_user_page(addr);
-						return (char *)page.pmem + e * PAGE_SIZE;
+						return WritablePage {
+							.page = (char *)page.pmem + e * PAGE_SIZE,
+							.entry = pd[k],
+						};
 					}
 
 					clone_and_update_entry(memory, pd[k], pt, PDE64_RW | PDE64_PRESENT);
@@ -744,7 +747,11 @@ entry_is_no_longer_copy_on_write:
 
 					const uint64_t e = index_from_pt_entry(addr);
 					auto* data = memory.page_at(pt_mem);
-					return (char *)data + e * PAGE_SIZE;
+					WritablePage result {
+						.page = (char *)data + e * PAGE_SIZE,
+						.entry = pd[k],
+					};
+					return result;
 				}
 
 				const uint64_t e = index_from_pt_entry(addr);
@@ -779,7 +786,10 @@ entry_is_no_longer_copy_on_write:
 					}
 					if ((pt[e] & verify_flags) == verify_flags) {
 						CLPRINT("-> Returning data: %p\n", data);
-						return (char *)data;
+						return WritablePage {
+							.page = (char *)data,
+							.entry = pt[e],
+						};
 					} else {
 						memory_exception("page_at: pt entry not user writable", addr, pt[e]);
 					}
