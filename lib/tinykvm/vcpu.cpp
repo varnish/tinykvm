@@ -444,8 +444,8 @@ void Machine::setup_cow_mode(const Machine* other)
 	// stackless interrupts, to be honest. Something to think about?
 	// XXX: In theory we can avoid initializing one of these pages
 	// until the guest asks for a certain level of concurrency.
-	memory.get_writable_page(memory.physbase + IST_ADDR, PDE64_RW | PDE64_NX, true);
-	//memory.get_writable_page(memory.physbase + IST2_ADDR, PDE64_RW | PDE64_NX, true);
+	memory.get_writable_page(memory.physbase + IST_ADDR, PDE64_RW | PDE64_NX, true, false);
+	//memory.get_writable_page(memory.physbase + IST2_ADDR, PDE64_RW | PDE64_NX, true, false);
 
 	struct kvm_sregs sregs = other->get_special_registers();
 
