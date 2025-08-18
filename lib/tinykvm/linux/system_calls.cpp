@@ -729,24 +729,24 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				{
 					std::array<g_iovec, 64> vecs;
 					cpu.machine().copy_from_guest(vecs.data(), regs.rsi, count * sizeof(g_iovec));
-					ssize_t written = 0;
 					std::vector<tinykvm::Machine::Buffer> buffers;
 
 					for (size_t i = 0; i < count; i++)
 					{
-						const size_t n = cpu.machine().gather_buffers_from_range(
-								buffers, vecs[i].iov_base, vecs[i].iov_len);
-
-						ssize_t result = writev(fd,
-							(const struct iovec *)buffers.data(), n);
-						if (result < 0)
-						{
-							written = -errno;
-							break;
-						}
-						written += result;
+						SYSPRINT("writev: vec i=%zu, base=0x%lX, len=%zu\n",
+								 i, vecs[i].iov_base, vecs[i].iov_len);
+						cpu.machine().gather_buffers_from_range(
+								buffers,
+								vecs[i].iov_base, vecs[i].iov_len);
 					}
-					regs.rax = written;
+
+					const ssize_t result = writev(fd,
+						(const struct iovec *)buffers.data(), buffers.size());
+					if (result < 0) {
+						regs.rax = -errno;
+					} else {
+						regs.rax = result;
+					}
 				}
 				else
 				{
