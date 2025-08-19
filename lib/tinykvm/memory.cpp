@@ -42,6 +42,20 @@ vMemory::~vMemory()
 {
 	if (this->owned) {
 		munmap(this->ptr, this->size);
+
+		for (auto& mmap_files : this->mmap_ranges) {
+			if (mmap_files.ptr != nullptr) {
+				munmap(mmap_files.ptr, mmap_files.size);
+			}
+		}
+	}
+}
+void vMemory::install_mmap_ranges(const Machine &other)
+{
+	this->mmap_ranges = other.main_memory().mmap_ranges;
+	for (size_t i = 0; i < this->mmap_ranges.size(); ++i)
+	{
+		machine.install_memory(banks.allocate_region_idx(), this->mmap_ranges[i], false);
 	}
 }
 

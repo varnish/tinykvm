@@ -58,6 +58,9 @@ struct MemoryBanks {
 	void reset(const MachineOptions&);
 	void set_max_pages(size_t new_max, size_t new_hugepages);
 	size_t max_pages() const noexcept { return m_max_pages; }
+	int allocate_region_idx() {
+		return m_idx++;
+	}
 
 	bool using_hugepages() const noexcept { return m_hugepage_banks > 0; }
 	size_t banks_with_hugepages() const noexcept { return m_hugepage_banks; }
@@ -75,7 +78,6 @@ private:
 	Machine& m_machine;
 	const uint64_t m_arena_begin;
 	uint64_t m_arena_next;
-	const uint16_t m_idx_begin;
 	uint16_t m_idx;
 	/* Number of initial banks that will allocate backing memory using hugepages */
 	uint32_t m_hugepage_banks = 0;

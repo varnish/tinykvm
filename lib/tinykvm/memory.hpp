@@ -93,6 +93,7 @@ struct vMemory {
 
 	/* Create new identity-mapped memory regions */
 	vMemory(Machine&, const MachineOptions&, uint64_t, uint64_t, char*, size_t, bool = true);
+	void install_mmap_ranges(const Machine& other);
 	/* Loan memory from another machine */
 	vMemory(Machine&, const MachineOptions&, const vMemory& other);
 	~vMemory();

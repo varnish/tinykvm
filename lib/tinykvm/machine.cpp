@@ -103,6 +103,9 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 		this->install_memory(1, remote().memory.vmem(), false);
 	}
 
+	/* Install mmap ranges from the master machine */
+	memory.install_mmap_ranges(other);
+
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(0, *this, options);
 	this->setup_cow_mode(&other);

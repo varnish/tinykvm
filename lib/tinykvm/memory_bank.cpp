@@ -16,8 +16,7 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	: m_machine { machine },
 	  m_arena_begin { ARENA_BASE_ADDRESS },
 	  m_arena_next { m_arena_begin },
-	  m_idx_begin { FIRST_BANK_IDX },
-	  m_idx { m_idx_begin }
+	  m_idx { FIRST_BANK_IDX }
 {
 	this->set_max_pages(options.max_cow_mem / vMemory::PageSize(),
 		options.hugepages_arena_size / vMemory::PageSize());

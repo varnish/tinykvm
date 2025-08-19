@@ -3,6 +3,7 @@
 #include <cstring>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 #include "amd64/paging.hpp"
 static constexpr bool VERBOSE_FILE_BACKED_MMAP = false;
 
@@ -247,13 +248,15 @@ void* Machine::mmap_backed_area(
 
 	static constexpr address_t MMAP_PHYS_BASE = 0x4000000000;
 	static address_t mmap_phys_base = MMAP_PHYS_BASE;
-	static int guest_region = 5;
+	// XXX: This isn't so important because you can only create these
+	// in master VMs, which don't use memory banks.
+	const int region_idx = memory.banks.allocate_region_idx();
 	if constexpr (VERBOSE_FILE_BACKED_MMAP) {
-		printf("mmap: allocating %zu kB at 0x%lX -> 0x%lX, phys 0x%lX\n",
-			size_memory / 1024, virt_base, virt_base + size_memory, mmap_phys_base);
+		printf("mmap: allocating %zu kB at 0x%lX -> 0x%lX, phys 0x%lX region %d\n",
+			size_memory / 1024, virt_base, virt_base + size_memory, mmap_phys_base, region_idx);
 	}
 	// Now we need to install this memory region as guest physical memory
-	this->install_memory(guest_region, VirtualMem(mmap_phys_base, (char*)real_addr, size_memory), false);
+	this->install_memory(region_idx, VirtualMem(mmap_phys_base, (char*)real_addr, size_memory), false);
 	this->memory.mmap_ranges.emplace_back(mmap_phys_base, (char*)real_addr, virt_base, size_memory);
 	// With the new physical memory, we now need to create pagetable entries
 	// we'll do it the slow way by allocating the same range and for each page redirect it to the new phys
@@ -308,7 +311,6 @@ void* Machine::mmap_backed_area(
 	mmap_phys_base += size_memory;
 	// Force-align mmap_phys_base to 2MB
 	mmap_phys_base = (mmap_phys_base + 0x1FFFFFLL) & ~0x1FFFFFLL;
-	guest_region += 1;
 	return real_addr;
 }
 
