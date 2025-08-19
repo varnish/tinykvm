@@ -19,6 +19,7 @@ extern void page_at(vMemory&, uint64_t addr, foreach_page_t, bool ignore_missing
 struct WritablePage {
 	char *page;
 	uint64_t& entry;
+	size_t size;
 
 	void set_dirty() {
 		entry |= (1UL << 6);

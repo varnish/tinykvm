@@ -732,6 +732,7 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 						return WritablePage {
 							.page = (char *)page.pmem + e * PAGE_SIZE,
 							.entry = pd[k],
+							.size = PDE64_PT_SIZE,
 						};
 					}
 
@@ -747,9 +748,10 @@ entry_is_no_longer_copy_on_write:
 
 					const uint64_t e = index_from_pt_entry(addr);
 					auto* data = memory.page_at(pt_mem);
-					WritablePage result {
+					WritablePage result{
 						.page = (char *)data + e * PAGE_SIZE,
 						.entry = pd[k],
+						.size = PDE64_PT_SIZE,
 					};
 					return result;
 				}
@@ -789,6 +791,7 @@ entry_is_no_longer_copy_on_write:
 						return WritablePage {
 							.page = (char *)data,
 							.entry = pt[e],
+							.size = PAGE_SIZE,
 						};
 					} else {
 						memory_exception("page_at: pt entry not user writable", addr, pt[e]);

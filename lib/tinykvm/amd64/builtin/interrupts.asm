@@ -40,6 +40,8 @@ ALIGN 0x10
 	je .vm64_prctl
 	cmp ax, 228 ;; CLOCK_GETTIME
 	je .vm64_clock_gettime
+	cmp eax, 9  ;; MMAP
+	je .vm64_mmap
 	cmp eax, 0x1F777 ;; ENTRY SYSCALL
 	je .vm64_entrycall
 	cmp eax, 0x1F707 ;; REENTRY SYSCALL
@@ -197,6 +199,21 @@ ALIGN 0x10
 	clac
 	mov ax, 228 ;; CLOCK_GETTIME
 	out 0, ax
+	o64 sysret
+
+.vm64_mmap:
+	out 0, ax   ;; MMAP syscall
+	;; If the fd is -1, we are done
+	cmp r8, -1
+	je .vm64_mmap_done
+	;; Otherwise, reload page tables
+	stac
+	push rax
+	mov rax, cr3
+	mov cr3, rax
+	pop rax
+	clac
+.vm64_mmap_done:
 	o64 sysret
 
 .vm64_gettimeofday:

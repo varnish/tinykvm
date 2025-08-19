@@ -1,7 +1,10 @@
 #include "machine.hpp"
 
 #include <cstring>
+#include <sys/mman.h>
+#include <sys/syscall.h>
 #include "amd64/paging.hpp"
+static constexpr bool VERBOSE_FILE_BACKED_MMAP = false;
 
 namespace tinykvm {
 
@@ -159,9 +162,23 @@ size_t Machine::writable_buffers_from_range(
 	WrBuffer* last = nullptr;
 	while (len != 0)
 	{
-		const size_t offset = addr & PageMask();
-		const size_t size = std::min(vMemory::PageSize() - offset, len);
-		auto *page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), false, true);
+		auto wpage = writable_page_at(memory, addr & ~PageMask(), memory.expectedUsermodeFlags(), false);
+		if (wpage.page == nullptr) {
+			throw MemoryException("Failed to allocate writable page for range", addr, vMemory::PageSize());
+		}
+		wpage.set_dirty();
+		size_t offset = 0;
+		size_t size = 0;
+		char* page = wpage.page;
+		if constexpr (true) {
+			// Find the pages real size and realign the 4k-offset page pointer
+			offset = addr & (wpage.size - 1);
+			size = std::min(wpage.size - offset, len);
+			page = (char *)((uintptr_t)wpage.page & ~(wpage.size - 1));
+		} else {
+			offset = addr & PageMask();
+			size = std::min(vMemory::PageSize() - offset, len);
+		}
 
 		auto* ptr = (char*) &page[offset];
 		if (last && ptr == last->ptr + last->len) {
@@ -176,6 +193,123 @@ size_t Machine::writable_buffers_from_range(
 		len -= size;
 	}
 	return buffers.size();
+}
+
+void* Machine::mmap_backed_area(
+	int fd, int off, int prot, address_t virt_base, size_t size)
+{
+	(void)prot;
+	address_t size_memory = size & ~0x1FFFFFLL; // Align *DOWN* to 2MB
+	if constexpr (VERBOSE_FILE_BACKED_MMAP) {
+		printf("mmap: allocating %zu bytes at 0x%lX -> 0x%lX\n",
+			   size_t(size_memory), virt_base, virt_base + size_memory);
+	}
+
+	// Check if the mmap area overlaps with existing memory ranges
+	for (const auto& range : memory.mmap_ranges) {
+		if (range.overlaps(virt_base, size_memory)) {
+			if constexpr (VERBOSE_FILE_BACKED_MMAP) {
+				printf("mmap: overlapping range at 0x%lX -> 0x%lX, size %zu\n",
+					range.virtbase, range.virtbase + range.size, range.size);
+			}
+			// Figure out if it extends past the end of the existing range
+			if (virt_base + size_memory <= range.virtbase + range.size) {
+				if constexpr (VERBOSE_FILE_BACKED_MMAP) {
+					// The range is already allocated, so we can return it
+					printf("mmap: already allocated at 0x%lX -> 0x%lX, size %zu\n",
+						range.virtbase, range.virtbase + range.size, range.size);
+				}
+				// We can return the existing memory
+				return range.ptr;
+			}
+			// Find the remaining size, then shift the virt_base
+			const address_t virt_end = virt_base + size_memory;
+			const auto remaining_size = virt_end - (range.virtbase + range.size);
+			if (remaining_size > 0) {
+				virt_base += remaining_size;
+				size_memory -= remaining_size;
+				break;
+			}
+			return nullptr; // Already allocated
+		}
+	}
+
+	static constexpr bool MANUAL_PREADV = false;
+	void* real_addr;
+	if constexpr (!MANUAL_PREADV) {
+		real_addr = mmap(nullptr, size_memory, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_NORESERVE, fd, off);
+	} else {
+		real_addr = mmap(nullptr, size_memory, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	}
+	if (real_addr == MAP_FAILED) {
+		return nullptr;
+	}
+
+	static constexpr address_t MMAP_PHYS_BASE = 0x4000000000;
+	static address_t mmap_phys_base = MMAP_PHYS_BASE;
+	static int guest_region = 5;
+	if constexpr (VERBOSE_FILE_BACKED_MMAP) {
+		printf("mmap: allocating %zu kB at 0x%lX -> 0x%lX, phys 0x%lX\n",
+			size_memory / 1024, virt_base, virt_base + size_memory, mmap_phys_base);
+	}
+	// Now we need to install this memory region as guest physical memory
+	this->install_memory(guest_region, VirtualMem(mmap_phys_base, (char*)real_addr, size_memory), false);
+	this->memory.mmap_ranges.emplace_back(mmap_phys_base, (char*)real_addr, virt_base, size_memory);
+	// With the new physical memory, we now need to create pagetable entries
+	// we'll do it the slow way by allocating the same range and for each page redirect it to the new phys
+	for (address_t i = 0; i < size_memory; )
+	{
+		const address_t phys = mmap_phys_base + i;
+		const address_t virt = virt_base + i;
+		auto writable_page = writable_page_at(memory, virt, 1, false);
+		if (writable_page.page == nullptr) {
+			throw MemoryException("Failed to allocate writable page for mmap", virt, vMemory::PageSize());
+		}
+
+		static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
+		if (writable_page.size != vMemory::PageSize()) {
+			const address_t pv = writable_page.entry & PDE64_ADDR_MASK;
+			// Check if the page is unaligned
+			if ((pv & (writable_page.size - 1)) != 0) {
+				throw MemoryException("Unaligned page for mmap (cannot use)", virt, writable_page.size);
+			}
+		}
+
+		writable_page.entry &= ~PDE64_ADDR_MASK; // Clear the address bits
+		writable_page.entry |= (phys & PDE64_ADDR_MASK); // Set the new physical
+		if constexpr (VERBOSE_FILE_BACKED_MMAP) {
+			printf("mmap: allocating page at 0x%lX -> 0x%lX, phys 0x%lX size %zu entry 0x%lX\n",
+				virt, virt + vMemory::PageSize(), phys, writable_page.size, writable_page.entry);
+		}
+		i += writable_page.size;
+	}
+
+	if constexpr (MANUAL_PREADV) {
+		std::vector<tinykvm::Machine::WrBuffer> buffers;
+		const size_t cnt =
+			this->writable_buffers_from_range(buffers, virt_base, size);
+		syscall(SYS_preadv, fd, (const iovec*)buffers.data(), cnt, off);
+	} else if (size > size_memory) {
+		// If the size is larger than the mmap area, we need to read the rest
+		// from the file descriptor
+		const size_t remaining = size - size_memory;
+		if (remaining > 0) {
+			std::vector<tinykvm::Machine::WrBuffer> buffers;
+			const size_t cnt =
+				this->writable_buffers_from_range(buffers, virt_base + size_memory, remaining);
+			syscall(SYS_preadv, fd, (const iovec*)buffers.data(), cnt, off + size_memory);
+		}
+	}
+
+	if constexpr (VERBOSE_FILE_BACKED_MMAP) {
+		printf("mmap: allocated %zu bytes at 0x%lX, phys 0x%lX\n",
+			size_memory, virt_base, mmap_phys_base);
+	}
+	mmap_phys_base += size_memory;
+	// Force-align mmap_phys_base to 2MB
+	mmap_phys_base = (mmap_phys_base + 0x1FFFFFLL) & ~0x1FFFFFLL;
+	guest_region += 1;
+	return real_addr;
 }
 
 void Machine::copy_from_machine(address_t addr, Machine& src, address_t sa, size_t len)

@@ -154,13 +154,17 @@ void MMapCache::remove_used(uint64_t addr, uint64_t size)
 	remove(addr, size, m_used_ranges);
 }
 
-Machine::address_t Machine::mmap_allocate(size_t bytes, int prot)
+Machine::address_t Machine::mmap_allocate(size_t bytes, int prot, bool huge)
 {
 	(void)prot;
-	bytes = (bytes + PageMask) & ~PageMask;
+	/* Bytes rounded up to nearest PAGE_SIZE. */
+	if (huge)
+		bytes = (bytes + 0x1FFFFFLL) & ~0x1FFFFFLL; // Round up to 2MB
+	else
+		bytes = (bytes + PageMask) & ~PageMask;
 
 	auto range = mmap_cache().find(bytes);
-	if (!range.empty())
+	if (!range.empty() && !huge)
 	{
 		if (UNLIKELY(range.addr < this->mmap_start())) {
 			throw MemoryException("MMapCache: Invalid range (below mmap_start)", range.addr, range.size);
@@ -180,8 +184,10 @@ Machine::address_t Machine::mmap_allocate(size_t bytes, int prot)
 		return range.addr;
 	}
 
+	if (huge) {
+		this->mmap_cache().current() = (this->mmap_cache().current() + bytes + 0x1FFFFFLL) & ~0x1FFFFFLL;
+	}
 	const address_t result = this->mmap_cache().current();
-	/* Bytes rounded up to nearest PAGE_SIZE. */
 	this->mmap_cache().current() += bytes;
 
 	if (this->mmap_cache().track_used_ranges())

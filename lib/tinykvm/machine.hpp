@@ -70,6 +70,8 @@ struct Machine
 	/* Same as above, but all buffers have pre-allocated writable pages. */
 	struct WrBuffer { char* ptr; size_t len; };
 	size_t writable_buffers_from_range(std::vector<WrBuffer>&, address_t addr, size_t len);
+	/* Lazily create CoW mmap-backed area from an open file descriptor, return the mmap pointer */
+	void* mmap_backed_area(int fd, int off, int prot, address_t dst, size_t size);
 	/* Build std::string from zero-terminated memory. */
 	std::string copy_from_cstring(address_t src, size_t maxlen = 65535u) const;
 	/* Build std::string from buffer, length in memory. */
@@ -169,7 +171,7 @@ struct Machine
 	void set_brk_address(address_t addr) { this->m_brk_address = addr; }
 	address_t mmap_start() const noexcept { return this->m_heap_address; }
 	address_t mmap_current() const noexcept;
-	address_t mmap_allocate(size_t bytes, int prot = 0x3);
+	address_t mmap_allocate(size_t bytes, int prot = 0x3, bool huge = false);
 	address_t mmap_fixed_allocate(uint64_t addr, size_t bytes, bool is_fixed, int prot = 0x3);
 	bool      mmap_unmap(uint64_t addr, size_t size);
 	bool relocate_fixed_mmap() const noexcept { return m_relocate_fixed_mmap; }

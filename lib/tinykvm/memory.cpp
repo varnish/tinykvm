@@ -26,6 +26,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	  main_memory_writes(options.master_direct_memory_writes),
 	  split_hugepages(options.split_hugepages),
 	  executable_heap(options.executable_heap),
+	  mmap_backed_files(options.mmap_backed_files),
 	  banks(m, options)
 {
 	// Main memory is not always starting at 0x0
@@ -155,6 +156,12 @@ uint64_t* vMemory::page_at(uint64_t addr) const
 	for (const auto& bank : banks) {
 		if (bank.within(addr, PAGE_SIZE))
 			return (uint64_t *)bank.at(addr);
+	}
+	/* mmap ranges */
+	for (const auto& vmem : mmap_ranges) {
+		if (addr >= vmem.physbase && addr < vmem.physbase + vmem.size) {
+			return (uint64_t *)(vmem.ptr + (addr - vmem.physbase));
+		}
 	}
 	/* Remote machine always last resort */
 	if (machine.is_remote_connected())

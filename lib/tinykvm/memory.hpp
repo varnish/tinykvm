@@ -37,8 +37,12 @@ struct vMemory {
 	bool   split_hugepages = true;
 	/* Executable heap */
 	bool   executable_heap = false;
+	/* Enable file-backed memory mappings for large files */
+	bool   mmap_backed_files = true;
 	/* Dynamic page memory */
 	MemoryBanks banks; // fault-in memory banks
+	/* mmap-ranges */
+	std::vector<VirtualMem> mmap_ranges;
 	/* SMP mutex */
 	std::mutex mtx_smp;
 	bool smp_guards_enabled = false;

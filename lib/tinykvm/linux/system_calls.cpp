@@ -338,6 +338,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				const int vfd = int(regs.r8);
 				const int64_t voff = regs.r9;
 				const int real_fd = cpu.machine().fds().translate(vfd);
+				const bool mmap_backed_files = cpu.machine().memory.mmap_backed_files;
 
 				uint64_t dst = 0x0;
 				if (address != 0x0 && (address + length) > cpu.machine().mmap_start()) {
@@ -352,25 +353,47 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					}
 				}
 				else {
-					dst = cpu.machine().mmap_allocate(length);
+					const bool use_hugepages = mmap_backed_files;
+					dst = cpu.machine().mmap_allocate(length, prot, use_hugepages);
 				}
 				// Readv into the area
 				const uint64_t read_length = regs.rsi; // Don't align the read length
-				std::vector<tinykvm::Machine::WrBuffer> buffers;
-				const size_t cnt =
-					cpu.machine().writable_buffers_from_range(buffers, dst, read_length);
-				// Seek to the given offset in the file and read the contents into guest memory
-				if (preadv64(real_fd, (const iovec *)&buffers[0], cnt, voff) < 0) {
-					PRINTMMAP("preadv64 failed: %s for %zu buffers at offset %ld\n",
-						strerror(errno), cnt, voff);
-					for (size_t i = 0; i < cnt; i++)
-					{
-						PRINTMMAP("  %zu: iov_base=%p, iov_len=%zu\n",
-							i, buffers[i].ptr, buffers[i].len);
+				regs.rax = ~0ULL;
+
+				const bool is_2mb_aligned = (dst & 0x1FFFFF) == 0;
+				const bool is_somewhat_large = (read_length >= 0x200000);
+				if (cpu.machine().memory.mmap_backed_files && dst >= cpu.machine().mmap_start() && is_somewhat_large && is_2mb_aligned && !cpu.machine().is_forked())
+				{
+					// Use mmap area for large reads
+					if (cpu.machine().mmap_backed_area(real_fd, voff, prot, dst, read_length) != nullptr) {
+						regs.rax = dst;
+						PRINTMMAP("mmap_backed_area succeeded 0x%lX for %zu bytes at offset %ld\n",
+							dst, read_length, voff);
+					} else {
+						PRINTMMAP("mmap_backed_area failed: %s for %zu bytes at offset %ld\n",
+							strerror(errno), read_length, voff);
+						regs.rax = ~0ULL; /* MAP_FAILED */
 					}
-					regs.rax = ~0LL; /* MAP_FAILED */
-				} else {
-					regs.rax = dst;
+				}
+
+				if (regs.rax == ~0ULL)
+				{
+					std::vector<tinykvm::Machine::WrBuffer> buffers;
+					const size_t cnt =
+						cpu.machine().writable_buffers_from_range(buffers, dst, read_length);
+					// Seek to the given offset in the file and read the contents into guest memory
+					if (preadv64(real_fd, (const iovec *)&buffers[0], cnt, voff) < 0) {
+						PRINTMMAP("preadv64 failed: %s for %zu buffers at offset %ld\n",
+							strerror(errno), cnt, voff);
+						for (size_t i = 0; i < cnt; i++)
+						{
+							PRINTMMAP("  %zu: iov_base=%p, iov_len=%zu\n",
+								i, buffers[i].ptr, buffers[i].len);
+						}
+						regs.rax = ~0LL; /* MAP_FAILED */
+					} else {
+						regs.rax = dst;
+					}
 				}
 				// Zero the remaining area
 				const size_t zero_length = length - read_length;
