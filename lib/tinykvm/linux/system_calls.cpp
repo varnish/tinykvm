@@ -1666,7 +1666,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				}
 				else if (cmd == F_GETFL)
 				{
-					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
+					const int writable_fd = cpu.machine().fds().translate(vfd);
 					const int allowed_flags = O_NONBLOCK;
 					const int flags = fcntl(writable_fd, cmd);
 					if (flags < 0)
@@ -1676,7 +1676,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				}
 				else if (cmd == F_SETFL)
 				{
-					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
+					const int writable_fd = cpu.machine().fds().translate(vfd);
 					const int allowed_flags = O_NONBLOCK;
 					const int flags = regs.rdx & allowed_flags;
 					if (fcntl(writable_fd, F_SETFL, flags) < 0)
