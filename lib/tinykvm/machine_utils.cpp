@@ -281,6 +281,7 @@ void* Machine::mmap_backed_area(
 		writable_page.entry &= ~PDE64_ADDR_MASK; // Clear the address bits
 		writable_page.entry |= (phys & PDE64_ADDR_MASK); // Set the new physical
 		writable_page.set_protections(prot);
+		writable_page.set_dirty(); // Mark the page as dirty
 		if constexpr (VERBOSE_FILE_BACKED_MMAP) {
 			printf("mmap: allocating page at 0x%lX -> 0x%lX, phys 0x%lX size %zu entry 0x%lX prot 0x%X\n",
 				virt, virt + vMemory::PageSize(), phys, writable_page.size, writable_page.entry, prot);
