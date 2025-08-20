@@ -199,7 +199,6 @@ size_t Machine::writable_buffers_from_range(
 void* Machine::mmap_backed_area(
 	int fd, int off, int prot, address_t virt_base, size_t size)
 {
-	(void)prot;
 	address_t size_memory = size & ~0x1FFFFFLL; // Align *DOWN* to 2MB
 	if constexpr (VERBOSE_FILE_BACKED_MMAP) {
 		printf("mmap: allocating %zu bytes at 0x%lX -> 0x%lX\n",
@@ -262,9 +261,10 @@ void* Machine::mmap_backed_area(
 	// we'll do it the slow way by allocating the same range and for each page redirect it to the new phys
 	for (address_t i = 0; i < size_memory; )
 	{
+		static constexpr address_t PDE64_USER = (1UL << 2);
 		const address_t phys = mmap_phys_base + i;
 		const address_t virt = virt_base + i;
-		auto writable_page = writable_page_at(memory, virt, 1, false);
+		WritablePage writable_page = writable_page_at(memory, virt, PDE64_USER | 1, false);
 		if (writable_page.page == nullptr) {
 			throw MemoryException("Failed to allocate writable page for mmap", virt, vMemory::PageSize());
 		}
@@ -280,9 +280,10 @@ void* Machine::mmap_backed_area(
 
 		writable_page.entry &= ~PDE64_ADDR_MASK; // Clear the address bits
 		writable_page.entry |= (phys & PDE64_ADDR_MASK); // Set the new physical
+		writable_page.set_protections(prot);
 		if constexpr (VERBOSE_FILE_BACKED_MMAP) {
-			printf("mmap: allocating page at 0x%lX -> 0x%lX, phys 0x%lX size %zu entry 0x%lX\n",
-				virt, virt + vMemory::PageSize(), phys, writable_page.size, writable_page.entry);
+			printf("mmap: allocating page at 0x%lX -> 0x%lX, phys 0x%lX size %zu entry 0x%lX prot 0x%X\n",
+				virt, virt + vMemory::PageSize(), phys, writable_page.size, writable_page.entry, prot);
 		}
 		i += writable_page.size;
 	}

@@ -852,4 +852,31 @@ void memory_exception(const char* msg, uint64_t addr, uint64_t sz)
 	throw MemoryException(msg, addr, sz);
 }
 
+void WritablePage::set_dirty()
+{
+	entry |= PDE64_DIRTY;
+}
+void WritablePage::set_protections(int prot)
+{
+	return;
+	if (prot & 1) { // PROT_READ
+		entry |= PDE64_PRESENT; // Readable
+	}
+	else {
+		entry &= ~PDE64_PRESENT; // Clear readable
+	}
+	if (prot & 2) { // PROT_WRITE
+		entry |= PDE64_RW; // Writable
+	}
+	else {
+		entry &= ~PDE64_RW; // Clear writable
+	}
+	if (prot & 4) {
+		entry &= ~PDE64_NX; // Clear NX
+	}
+	else {
+		entry |= PDE64_NX; // Set NX
+	}
+}
+
 } // tinykvm
