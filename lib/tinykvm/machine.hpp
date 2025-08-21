@@ -71,7 +71,8 @@ struct Machine
 	struct WrBuffer { char* ptr; size_t len; };
 	size_t writable_buffers_from_range(std::vector<WrBuffer>&, address_t addr, size_t len);
 	/* Lazily create CoW mmap-backed area from an open file descriptor, return the mmap pointer */
-	void* mmap_backed_area(int fd, int off, int prot, address_t dst, size_t size);
+	bool mmap_backed_area(int fd, int off, int prot, address_t dst, size_t size);
+	bool has_mmap_backed_area(int fd, int off, address_t addr, size_t size) const;
 	/* Build std::string from zero-terminated memory. */
 	std::string copy_from_cstring(address_t src, size_t maxlen = 65535u) const;
 	/* Build std::string from buffer, length in memory. */

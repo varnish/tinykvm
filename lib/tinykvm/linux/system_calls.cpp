@@ -360,15 +360,14 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				const uint64_t read_length = regs.rsi; // Don't align the read length
 				regs.rax = ~0ULL;
 
-				const bool is_2mb_aligned = (dst & 0x1FFFFF) == 0;
-				const bool is_somewhat_large = (read_length >= 0x200000);
-				if (cpu.machine().memory.mmap_backed_files && dst >= cpu.machine().mmap_start() && is_somewhat_large && is_2mb_aligned && !cpu.machine().is_forked())
+				const bool is_somewhat_large = (read_length >= 0x400000);
+				if (cpu.machine().memory.mmap_backed_files && dst >= cpu.machine().mmap_start() && is_somewhat_large && !cpu.machine().is_forked())
 				{
 					// Use mmap area for large reads
-					if (cpu.machine().mmap_backed_area(real_fd, voff, prot, dst, read_length) != nullptr) {
+					if (cpu.machine().mmap_backed_area(real_fd, voff, prot, dst, read_length)) {
 						regs.rax = dst;
-						PRINTMMAP("mmap_backed_area succeeded 0x%lX for %zu bytes at offset %ld\n",
-							dst, read_length, voff);
+						PRINTMMAP("mmap_backed_area succeeded 0x%lX -> 0x%lX for %zu bytes at offset %ld -> %ld\n",
+							dst, dst + length, read_length, voff, voff + read_length);
 					} else {
 						PRINTMMAP("mmap_backed_area failed: %s for %zu bytes at offset %ld\n",
 							strerror(errno), read_length, voff);
@@ -383,8 +382,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						cpu.machine().writable_buffers_from_range(buffers, dst, read_length);
 					// Seek to the given offset in the file and read the contents into guest memory
 					if (preadv64(real_fd, (const iovec *)&buffers[0], cnt, voff) < 0) {
-						PRINTMMAP("preadv64 failed: %s for %zu buffers at offset %ld\n",
-							strerror(errno), cnt, voff);
+						PRINTMMAP("preadv64 failed: %s for %zu buffers, vfd %d fd %d at offset %ld\n",
+							strerror(errno), cnt, vfd, real_fd, voff);
 						for (size_t i = 0; i < cnt; i++)
 						{
 							PRINTMMAP("  %zu: iov_base=%p, iov_len=%zu\n",
@@ -394,12 +393,6 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					} else {
 						regs.rax = dst;
 					}
-				}
-				// Zero the remaining area
-				const size_t zero_length = length - read_length;
-				if (zero_length > 0)
-				{
-					cpu.machine().memzero(dst + read_length, zero_length);
 				}
 				cpu.set_registers(regs);
 				cpu.machine().do_mmap_callback(cpu,
