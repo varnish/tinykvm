@@ -237,7 +237,7 @@ void* Machine::mmap_backed_area(
 	static constexpr bool MANUAL_PREADV = false;
 	void* real_addr;
 	if constexpr (!MANUAL_PREADV) {
-		real_addr = mmap(nullptr, size_memory, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_NORESERVE, fd, off);
+		real_addr = mmap(nullptr, size_memory, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, off);
 	} else {
 		real_addr = mmap(nullptr, size_memory, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	}

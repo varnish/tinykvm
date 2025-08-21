@@ -95,7 +95,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->fd = create_kvm_vm();
 
 	/* Reuse pre-CoWed pagetable from the master machine */
-	this->install_memory(0, memory.vmem(), true);
+	this->install_memory(0, memory.vmem(), false);
 
 	/* Install remote VM memory too, if enabled. (read-write) */
 	if (other.is_remote_connected()) {
@@ -262,7 +262,7 @@ void Machine::install_memory(uint32_t idx, const VirtualMem& mem,
 {
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
-		.flags = 0u, //(ro) ? (uint32_t)KVM_MEM_READONLY : 0u,
+		.flags = readonly ? (uint32_t)KVM_MEM_READONLY : 0u,
 		.guest_phys_addr = mem.physbase,
 		.memory_size = mem.size,
 		.userspace_addr = (uintptr_t) mem.ptr,

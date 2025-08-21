@@ -106,9 +106,16 @@ long vCPU::run_once()
 			Machine::timeout_exception("Timeout Exception", this->timer_ticks);
 		} else if (errno == EINTR) {
 			Machine::timeout_exception("Interrupted (signal)", 0);
-		}
-		else {
-			Machine::machine_exception("KVM_RUN failed");
+		} else if (errno == EFAULT) {
+			if (kvm_run->exit_reason == KVM_EXIT_MEMORY_FAULT) {
+				// This is a memory fault, we can throw a MemoryException
+				throw MemoryException("KVM_RUN failed (KVM_EXIT_MEMORY_FAULT)", kvm_run->memory_fault.gpa, kvm_run->memory_fault.size);
+			} else if (kvm_run->exit_reason != 0) {
+				Machine::machine_exception("KVM_RUN failed (EFAULT, unknown exit_reason)", kvm_run->exit_reason);
+			}
+			Machine::machine_exception("KVM_RUN failed with EFAULT, but exit_reason is unknown\n", kvm_run->exit_reason);
+		} else {
+			Machine::machine_exception("KVM_RUN failed (errno)", errno);
 		}
 	} else if (this->timer_ticks) {
 		// Occasionally we miss timer interruptions, and we must catch it via TLS.
@@ -142,7 +149,7 @@ long vCPU::run_once()
 	// Handle the KVM guest exit reason
 	switch (kvm_run->exit_reason) {
 	case KVM_EXIT_HLT:
-		Machine::machine_exception("Halt from kernel space", 5);
+		Machine::machine_exception("Halt from kernel space", KVM_EXIT_HLT);
 
 	case KVM_EXIT_DEBUG:
 		return KVM_EXIT_DEBUG;
@@ -151,7 +158,7 @@ long vCPU::run_once()
 		Machine::machine_exception("Failed to start guest! Misconfigured?", KVM_EXIT_FAIL_ENTRY);
 
 	case KVM_EXIT_SHUTDOWN:
-		Machine::machine_exception("Shutdown! Triple fault?", 32);
+		Machine::machine_exception("Shutdown! Triple fault?", KVM_EXIT_SHUTDOWN);
 
 	case KVM_EXIT_IO:
 		if (kvm_run->io.direction == KVM_EXIT_IO_OUT) {
