@@ -107,12 +107,14 @@ long vCPU::run_once()
 		} else if (errno == EINTR) {
 			Machine::timeout_exception("Interrupted (signal)", 0);
 		} else if (errno == EFAULT) {
+#ifdef KVM_EXIT_MEMORY_FAULT
 			if (kvm_run->exit_reason == KVM_EXIT_MEMORY_FAULT) {
 				// This is a memory fault, we can throw a MemoryException
 				throw MemoryException("KVM_RUN failed (KVM_EXIT_MEMORY_FAULT)", kvm_run->memory_fault.gpa, kvm_run->memory_fault.size);
 			} else if (kvm_run->exit_reason != 0) {
 				Machine::machine_exception("KVM_RUN failed (EFAULT, unknown exit_reason)", kvm_run->exit_reason);
 			}
+#endif
 			Machine::machine_exception("KVM_RUN failed with EFAULT, but exit_reason is unknown\n", kvm_run->exit_reason);
 		} else {
 			Machine::machine_exception("KVM_RUN failed (errno)", errno);
