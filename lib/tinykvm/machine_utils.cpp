@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include "amd64/paging.hpp"
@@ -197,8 +198,19 @@ size_t Machine::writable_buffers_from_range(
 }
 
 bool Machine::mmap_backed_area(
-	int fd, int off, int prot, address_t virt_base, const size_t size_bytes)
+	int fd, int off, int prot, address_t virt_base, size_t size_bytes)
 {
+	// Find the actual length of the file
+	struct stat st;
+	if (fstat(fd, &st) < 0) {
+		return false;
+	}
+	const size_t file_size = st.st_size;
+	if (off < 0 || off >= file_size) {
+		return false;
+	}
+	size_bytes = std::min(size_bytes, file_size - off);
+
 	address_t size = size_bytes;
 	if (virt_base & 0x1FFFFF) {
 		// Manual preadv until 2MB aligned
