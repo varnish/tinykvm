@@ -21,8 +21,11 @@ struct WritablePage {
 	uint64_t& entry;
 	size_t size;
 
-	void set_dirty(); // paging.cpp
-	void set_protections(int prot); // paging.cpp
+	// paging.cpp
+	void set_dirty();
+	void set_protections(int prot);
+	void set_address(uint64_t addr);
+	void set_flags(uint64_t flags);
 };
 extern WritablePage writable_page_at(vMemory&, uint64_t addr, uint64_t flags, bool zeroes = false);
 extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags);
