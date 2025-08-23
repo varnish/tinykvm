@@ -852,13 +852,20 @@ void memory_exception(const char* msg, uint64_t addr, uint64_t sz)
 	throw MemoryException(msg, addr, sz);
 }
 
+void WritablePage::set_address(uint64_t addr)
+{
+	entry = (entry & ~PDE64_ADDR_MASK) | (addr & PDE64_ADDR_MASK);
+}
+void WritablePage::set_flags(uint64_t flags)
+{
+	entry = (entry & PDE64_ADDR_MASK) | (flags & ~PDE64_ADDR_MASK);
+}
 void WritablePage::set_dirty()
 {
 	entry |= PDE64_DIRTY;
 }
 void WritablePage::set_protections(int prot)
 {
-	return;
 	if (prot & 1) { // PROT_READ
 		entry |= PDE64_PRESENT; // Readable
 	}
