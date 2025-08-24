@@ -200,6 +200,9 @@ size_t Machine::writable_buffers_from_range(
 bool Machine::mmap_backed_area(
 	int fd, int off, int prot, address_t virt_base, size_t size_bytes)
 {
+	static constexpr bool MANUAL_PREADV = false;
+	address_t& mmap_phys_base = memory.mmap_physical;
+
 	// Find the actual length of the file
 	struct stat st;
 	if (fstat(fd, &st) < 0) {
@@ -261,10 +264,6 @@ bool Machine::mmap_backed_area(
 		printf("mmap: allocating %zu bytes at 0x%lX -> 0x%lX (0x%lX) offset %d\n",
 			   size_t(size_memory), virt_base, virt_base + size_memory, virt_base + size, off);
 	}
-
-	static constexpr bool MANUAL_PREADV = false;
-	static constexpr address_t MMAP_PHYS_BASE = 0x4000000000;
-	static address_t mmap_phys_base = MMAP_PHYS_BASE;
 
 	if (size_memory > 0) {
 		void* real_addr = nullptr;

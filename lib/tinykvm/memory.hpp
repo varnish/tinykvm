@@ -11,6 +11,7 @@ struct Machine;
 struct MemoryBanks;
 
 struct vMemory {
+	static constexpr uint64_t MMAP_PHYS_BASE = 0x4000000000;
 	static constexpr uint64_t PageSize() {
 		return 4096u;
 	}
@@ -43,6 +44,7 @@ struct vMemory {
 	MemoryBanks banks; // fault-in memory banks
 	/* mmap-ranges */
 	std::vector<VirtualMem> mmap_ranges;
+	uint64_t mmap_physical = MMAP_PHYS_BASE;
 	/* SMP mutex */
 	std::mutex mtx_smp;
 	bool smp_guards_enabled = false;
