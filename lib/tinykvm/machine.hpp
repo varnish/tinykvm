@@ -271,6 +271,7 @@ struct Machine
 	static void setup_linux_system_calls(bool unsafe_syscalls = false);
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
 	Machine(std::string_view binary, const MachineOptions&);
+	Machine(std::span<const uint8_t> binary, const MachineOptions&);
 	Machine(const Machine& other, const MachineOptions&);
 	~Machine();
 

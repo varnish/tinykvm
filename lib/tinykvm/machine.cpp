@@ -69,6 +69,8 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 }
 Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 	: Machine(std::string_view{(const char*)&bin[0], bin.size()}, opts) {}
+Machine::Machine(std::span<const uint8_t> bin, const MachineOptions& opts)
+	: Machine(std::string_view{(const char*)bin.data(), bin.size()}, opts) {}
 
 Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_prepped {false},
