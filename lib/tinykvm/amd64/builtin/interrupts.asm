@@ -9,12 +9,12 @@ global vm64_exception
 ;; 5. code     rsp+0
 %macro CPU_EXCEPT 1
 ALIGN 0x8
-	out 128 + %1, ax
+	out 128 + %1, eax
 	iretq
 %endmacro
 %macro CPU_EXCEPT_CODE 1
 ALIGN 0x8
-	out 128 + %1, ax
+	out 128 + %1, eax
 	jmp .vm64_pop_code
 %endmacro
 %macro CPU_EXCEPT_PF 1
@@ -83,7 +83,7 @@ ALIGN 0x10
 
 .vm64_prctl_trap:
 	;; PRCTL fallback to host syscall trap
-	out 0, ax
+	out 0, eax
 	jmp .vm64_prctl_end
 
 .read_system_time:
@@ -197,12 +197,12 @@ ALIGN 0x10
 	pop rcx
 	pop rbx
 	clac
-	mov ax, 228 ;; CLOCK_GETTIME
-	out 0, ax
+	mov eax, 228 ;; CLOCK_GETTIME
+	out 0, eax
 	o64 sysret
 
 .vm64_mmap:
-	out 0, ax   ;; MMAP syscall
+	out 0, eax   ;; MMAP syscall
 	;; If the fd is -1, we are done
 	cmp r8, -1
 	je .vm64_mmap_done
@@ -218,7 +218,7 @@ ALIGN 0x10
 
 .vm64_gettimeofday:
 	mov eax, 96 ;; gettimeofday
-	out 0, ax
+	out 0, eax
 	ret
 
 .vm64_dso:
@@ -237,7 +237,7 @@ ALIGN 0x10
 .vm64_page_fault:
 	push rdi
 	mov rdi, cr2
-	out 128 + 14, ax
+	out 128 + 14, eax
 	invlpg [rdi]
 	pop rdi
 
@@ -246,7 +246,7 @@ ALIGN 0x10
 	iretq
 
 .vm64_timeout:
-	out 128 + 33, ax
+	out 128 + 33, eax
 	iretq
 
 ALIGN 0x8
