@@ -1180,11 +1180,9 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const int flags = regs.r10;
 			struct sockaddr_storage addr {};
 			socklen_t addrlen = sizeof(addr);
-			if (!cpu.machine().fds().accepting_connections()) {
-				SYSPRINT("accept4: fd %d (%d) is not accepting connections\n", vfd, fd);
-				regs.rax = -EAGAIN;
-				cpu.set_registers(regs);
-				return;
+			if (const auto& callback = cpu.machine().fds().accept_callback; callback) {
+				if (!callback(vfd, fd, flags))
+					return;
 			}
 			const int result = accept4(fd, (struct sockaddr *)&addr, &addrlen, flags);
 			if (UNLIKELY(result < 0))

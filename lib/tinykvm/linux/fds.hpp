@@ -34,6 +34,7 @@ namespace tinykvm
 		using accept_socket_t = std::function<int(int, int, int, struct sockaddr_storage&, socklen_t&)>;
 		using resolve_symlink_t = std::function<bool(std::string&)>;
 		using find_readonly_master_vm_fd_t = std::function<std::optional<const Entry*>(int)>;
+		using accept_t = std::function<bool(int, int, int)>;
 		using epoll_wait_t = std::function<bool(int, int, int)>;
 		using poll_t = std::function<bool(struct pollfd*, unsigned, int)>;
 		using free_fd_t = std::function<bool(int, Entry&)>;
@@ -265,15 +266,6 @@ namespace tinykvm
 			return m_preempt_epoll_wait;
 		}
 
-		/// @brief Enable or disable accepting connections. This is used to
-		/// pre-emptively decide if accept4() should be called or not.
-		void set_accepting_connections(bool accepting) noexcept {
-			m_acceping_connections = accepting;
-		}
-		bool accepting_connections() const noexcept {
-			return m_acceping_connections;
-		}
-
 		struct EpollEntry
 		{
 			std::unordered_map<int, struct epoll_event> epoll_fds;
@@ -325,6 +317,7 @@ namespace tinykvm
 		bind_socket_t      bind_socket_callback;
 		accept_socket_t    accept_socket_callback;
 		listening_socket_t listening_socket_callback;
+		accept_t           accept_callback;
 		epoll_wait_t       epoll_wait_callback;
 		poll_t             poll_callback;
 		free_fd_t          free_fd_callback;
