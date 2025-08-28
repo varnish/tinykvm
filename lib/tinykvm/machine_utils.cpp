@@ -172,7 +172,7 @@ size_t Machine::writable_buffers_from_range(
 		size_t offset = 0;
 		size_t size = 0;
 		char* page = wpage.page;
-		if constexpr (true) {
+		if constexpr (false) {
 			// Find the pages real size and realign the 4k-offset page pointer
 			offset = addr & (wpage.size - 1);
 			size = std::min(wpage.size - offset, len);
