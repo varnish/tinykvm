@@ -120,8 +120,12 @@ void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 		int eax, ebx = 0, ecx = 0, edx = 0;
 		__cpuid(0, eax, ebx, ecx, edx);
 		__cpuid_count(7, 0, eax, ebx, ecx, edx);
+		bool has_fsgsbase = (ebx & (1 <<  0)) != 0; // EBX bit 0
 		bool has_smep = (ebx & (1 <<  7)) != 0; // EBX bit 7
 		bool has_smap = (ebx & (1 << 20)) != 0; // EBX bit 20
+		if (!has_fsgsbase) {
+			throw MachineException("CPU does not support FS/GS base (too old?)");
+		}
 
 		master_sregs.cr3 = physbase + PT_ADDR;
 		master_sregs.cr4 =
