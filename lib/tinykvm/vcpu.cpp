@@ -3,6 +3,7 @@
 #define _GNU_SOURCE 1
 #include <cassert>
 #include <cstring>
+#include <cpuid.h>
 #include <linux/kvm.h>
 #include <signal.h>
 #include <sys/ioctl.h>
@@ -114,10 +115,24 @@ void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 		struct kvm_sregs master_sregs {};
 		const auto physbase = machine.main_memory().physbase;
 
+		// Check for SMEP and SMAP support
+		// https://www.felixcloutier.com/x86/cpuid
+		int eax, ebx = 0, ecx = 0, edx = 0;
+		__cpuid(0, eax, ebx, ecx, edx);
+		__cpuid_count(7, 0, eax, ebx, ecx, edx);
+		bool has_smep = (ebx & (1 <<  7)) != 0; // EBX bit 7
+		bool has_smap = (ebx & (1 << 20)) != 0; // EBX bit 20
+
 		master_sregs.cr3 = physbase + PT_ADDR;
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
-			CR4_FSGSBASE | CR4_SMEP; // | CR4_SMAP;
+			CR4_FSGSBASE;
+		if (has_smep) {
+			master_sregs.cr4 |= CR4_SMEP;
+		}
+		if (has_smap) {
+			master_sregs.cr4 |= CR4_SMAP;
+		}
 		master_sregs.cr0 =
 			CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_AM | CR0_PG | CR0_WP;
 		master_sregs.efer =
