@@ -9,7 +9,10 @@
 #include <sys/ioctl.h>
 #include <sys/inotify.h>
 #include <sys/mman.h>
+#if __has_include(<linux/openat2.h>)
 #include <linux/openat2.h>
+#define OPENAT2_SUPPORTED
+#endif
 #include <sys/poll.h>
 #include <sys/prctl.h>
 #include <sys/random.h>
@@ -22,6 +25,9 @@
 #include <sys/uio.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#ifndef SYS_faccessat2
+#define SYS_faccessat2  439
+#endif
 // #define VERBOSE_GUEST_EXITS
 #define SYSPRINT(fmt, ...) \
 	if (UNLIKELY(cpu.machine().m_verbose_system_calls)) { \
@@ -851,9 +857,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				// We support this by allocating a new area and copying the contents
 				const uint64_t new_addr = cpu.machine().mmap_allocate(new_len);
 				cpu.machine().copy_from_machine(new_addr, cpu.machine(), old_addr, old_len);
+#ifdef MREMAP_DONTUNMAP
 				if ((flags & MREMAP_DONTUNMAP) == 0) {
 					cpu.machine().mmap_unmap(old_addr, old_len);
 				}
+#endif
 				regs.rax = new_addr;
 			}
 			else
@@ -2224,6 +2232,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						return;
 					}
 
+#ifdef OPENAT2_SUPPORTED
 					__u64 resolve = 0;
 					if (vfd == AT_FDCWD && !real_path.empty() && real_path[0] == '/') {
 						resolve |= RESOLVE_NO_MAGICLINKS; // NO_XDEV doesn't work here :(
@@ -2236,6 +2245,9 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						.resolve = resolve,
 					};
 					int fd = syscall(SYS_openat2, pfd, real_path.c_str(), &how, sizeof(how));
+#else
+					int fd = syscall(SYS_openat, pfd, real_path.c_str(), 0);
+#endif
 					if (fd > 0) {
 						regs.rax = cpu.machine().fds().manage(fd, false);
 					} else {
@@ -2268,6 +2280,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						return;
 					}
 
+#ifdef OPENAT2_SUPPORTED
 					__u64 resolve = 0;
 					if (vfd == AT_FDCWD && !real_path.empty() && real_path[0] == '/') {
 						resolve |= RESOLVE_NO_MAGICLINKS; // NO_XDEV doesn't work here :(
@@ -2280,8 +2293,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						.resolve = resolve,
 					};
 					int fd = syscall(SYS_openat2, pfd, real_path.c_str(), &how, sizeof(how));
+#else
+					int fd = syscall(SYS_openat, pfd, real_path.c_str(), 0);
+#endif
 					SYSPRINT("OPENAT where=%lld path=%s (real_path=%s) flags=%X = fd %d\n",
-						regs.rdi, path.c_str(), real_path.c_str(), flags, fd);
+							 regs.rdi, path.c_str(), real_path.c_str(), flags, fd);
 
 					if (fd > 0) {
 						regs.rax = cpu.machine().fds().manage(fd, false, true);
@@ -2536,6 +2552,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			}
 			int result = -1;
 			if (cpu.machine().fds().preempt_epoll_wait()) {
+#ifdef SYS_epoll_pwait2
 				// Only wait for 250us, as we are *not* pre-empting the guest
 				const struct timespec ts {
 					.tv_sec = 0,
@@ -2544,6 +2561,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				// Use syscall wrapper since RHEL9 has new enough kernel but not glibc
 				result = syscall(SYS_epoll_pwait2, epollfd, guest_events.data(),
 					maxevents, &ts, nullptr);
+#else
+				epoll_pwait(epollfd, guest_events.data(),
+					maxevents, 250, nullptr);
+#endif
 			}
 			else
 			{
