@@ -266,6 +266,14 @@ namespace tinykvm
 			return m_preempt_epoll_wait;
 		}
 
+		/// @brief Enable or disable accepting connections. This is used to
+		/// pre-emptively decide if accept4() should be called or not.
+		void set_accepting_connections(bool accepting) noexcept {
+			this->accept_callback = [accepting](int, int, int) {
+				return accepting;
+			};
+		}
+
 		struct EpollEntry
 		{
 			std::unordered_map<int, struct epoll_event> epoll_fds;
@@ -300,7 +308,6 @@ namespace tinykvm
 		int m_current_working_directory_fd = -1;
 		bool m_verbose = false;
 		bool m_preempt_epoll_wait = true;
-		bool m_acceping_connections = true;
 		open_readable_t m_open_readable;
 		open_writable_t m_open_writable;
 		resolve_symlink_t m_resolve_symlink;
