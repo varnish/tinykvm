@@ -172,11 +172,12 @@ size_t Machine::writable_buffers_from_range(
 		size_t offset = 0;
 		size_t size = 0;
 		char* page = wpage.page;
-		if constexpr (false) {
+		if constexpr (true) {
 			// Find the pages real size and realign the 4k-offset page pointer
+			const size_t offset4k = addr & PageMask();
 			offset = addr & (wpage.size - 1);
 			size = std::min(wpage.size - offset, len);
-			page = (char *)((uintptr_t)wpage.page & ~(wpage.size - 1));
+			page = wpage.page + (offset4k - offset);
 		} else {
 			offset = addr & PageMask();
 			size = std::min(vMemory::PageSize() - offset, len);
