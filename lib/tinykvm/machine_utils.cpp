@@ -1,11 +1,13 @@
 #include "machine.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include "amd64/paging.hpp"
+#include "util/scoped_profiler.hpp"
 static constexpr bool VERBOSE_FILE_BACKED_MMAP = false;
 
 namespace tinykvm {
@@ -202,6 +204,7 @@ bool Machine::mmap_backed_area(
 	int fd, int off, int prot, address_t virt_base, size_t size_bytes)
 {
 	static constexpr bool MANUAL_PREADV = false;
+	ScopedProfiler<MachineProfiling::MMapFiles> prof(profiling());
 	address_t& mmap_phys_base = memory.mmap_physical;
 
 	// Find the actual length of the file
@@ -605,6 +608,31 @@ std::string Machine::memcstring(address_t src, size_t maxlen) const
 		src += max_size;
 	}
 	return result;
+}
+
+void MachineProfiling::print() {
+	std::vector<std::string> locnames = {
+		"vCPU Run",
+		"Reset",
+		"Syscall",
+		"Page Fault",
+		"MMap Files",
+	};
+	for (size_t i = 0; i < locnames.size(); i++) {
+		auto& vec = this->times[i];
+		if (vec.empty()) continue;
+		// Sort the times to find min/max and median
+		std::sort(vec.begin(), vec.end());
+		uint64_t total = 0;
+		uint64_t maxv = vec.back();
+		uint64_t minv = vec.front();
+		uint64_t median = vec[vec.size() / 2];
+		for (auto t : vec) {
+			total += t;
+		}
+		printf("  %s: %lu samples, total = %luns, max = %luns, min = %luns, median = %luns\n",
+			locnames[i].c_str(), vec.size(), total, maxv, minv, median);
+	}
 }
 
 } // tinykvm

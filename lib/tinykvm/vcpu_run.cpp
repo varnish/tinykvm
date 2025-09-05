@@ -4,6 +4,7 @@
 #include "amd64/gdt.hpp"
 #include "amd64/idt.hpp"
 #include "amd64/memory_layout.hpp"
+#include "util/scoped_profiler.hpp"
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <time.h>
@@ -96,7 +97,11 @@ void vCPU::disable_timer()
 
 long vCPU::run_once()
 {
-	int result = ioctl(this->fd, KVM_RUN, 0);
+	int result;
+	{
+		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());
+		result = ioctl(this->fd, KVM_RUN, 0);
+	}
 	// Handle potential KVM_RUN failure or execution timeout
 	if (UNLIKELY(result < 0)) {
 		if (this->timer_ticks) {
@@ -168,6 +173,7 @@ long vCPU::run_once()
 			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
 			const uint32_t intr = *(uint32_t *)data;
 			if (intr != 0xFFFF) {
+				ScopedProfiler<MachineProfiling::Syscall> prof(machine().profiling());
 				static constexpr bool VERIFY_SYSCALL_REGS = false;
 				if constexpr (VERIFY_SYSCALL_REGS) {
 					auto regs_copy = this->registers();
@@ -220,6 +226,7 @@ long vCPU::run_once()
 
 			if (intr == 14) // Page fault
 			{
+				ScopedProfiler<MachineProfiling::PageFault> prof(machine().profiling());
 				const auto& regs = registers();
 				const uint64_t addr = regs.rdi & ~(uint64_t) 0x8000000000000FFF;
 #ifdef VERBOSE_PAGE_FAULTS

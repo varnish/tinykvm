@@ -2,6 +2,7 @@
 
 #include "linux/threads.hpp"
 #include "smp.hpp"
+#include "util/scoped_profiler.hpp"
 #include "util/threadpool.h"
 #include <cassert>
 #include <cstring>
@@ -139,6 +140,7 @@ Machine::~Machine()
 
 void Machine::reset_to(std::string_view binary, const MachineOptions& options)
 {
+	ScopedProfiler<MachineProfiling::Reset> prof(this->profiling());
 	if (UNLIKELY(this->is_forked() || this->is_forkable())) {
 		throw MachineException("Machine is forked or forkable, cannot be reset");
 	}
@@ -159,6 +161,7 @@ void Machine::reset_to(std::string_view binary, const MachineOptions& options)
 
 bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 {
+	ScopedProfiler<MachineProfiling::Reset> prof(this->profiling());
 	assert(m_forked && other.m_prepped &&
 		"This machine must be forked, and the source must be prepped");
 

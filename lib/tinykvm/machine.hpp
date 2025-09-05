@@ -245,6 +245,18 @@ struct Machine
 	const Machine& remote() const;
 	Machine& remote();
 
+	/* Profiling */
+	MachineProfiling* profiling() noexcept { return m_profiling.get(); }
+	const MachineProfiling* profiling() const noexcept { return m_profiling.get(); }
+	bool is_profiling() const noexcept { return m_profiling != nullptr; }
+	void set_profiling(bool enable) {
+		if (enable && m_profiling == nullptr) {
+			m_profiling.reset(new MachineProfiling);
+		} else if (!enable) {
+			m_profiling.reset();
+		}
+	}
+
 	/// @brief Enable/disable verbose system calls. When enabled, every system call
 	/// will be printed to the console, in a trace-like format.
 	/// @param verbose True to enable verbose system calls, false to disable it.
@@ -320,6 +332,8 @@ private:
 	mutable std::unique_ptr<FileDescriptors> m_fds = nullptr;
 
 	Machine* m_remote = nullptr;
+
+	std::unique_ptr<MachineProfiling> m_profiling = nullptr;
 
 	/* How to print exceptions, register dumps etc. */
 	printer_func m_printer = m_default_printer;

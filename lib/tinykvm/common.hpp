@@ -13,6 +13,7 @@
 
 #define TINYKVM_COLD()   __attribute__ ((cold))
 
+#include <array>
 #include <cstdint>
 #include <exception>
 #include <string>
@@ -28,6 +29,24 @@ namespace tinykvm
 		bool     writable = false;
 		bool     executable = false;
 		bool     blackout = false; /* Unmapped virtual area */
+	};
+
+	struct MachineProfiling {
+		enum Location {
+			VCpuRun = 0,
+			Reset = 1,
+			Syscall = 2,
+			PageFault = 3,
+			MMapFiles = 4,
+			Count = 5
+		};
+		// Each entry contains a list of times in nanoseconds
+		std::array<std::vector<uint64_t>, Count> times;
+		void print(); /* Print profiling results, sorts vectors */
+		void reset() {
+			for (auto& vec : times)
+				vec.clear();
+		}
 	};
 
 	struct MachineOptions {
