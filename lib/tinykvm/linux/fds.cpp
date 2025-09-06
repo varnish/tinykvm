@@ -34,12 +34,15 @@ namespace tinykvm
 	{
 		// XXX: TODO: Create proper redirects for stdout/stderr by
 		// for example providing a pipe to stdout/stderr.
+		m_fds[0] = Entry{ .real_fd = 0, .is_writable = false }; // stdin
+		m_fds[1] = Entry{ .real_fd = 1, .is_writable = true };  // stdout
+		m_fds[2] = Entry{ .real_fd = 2, .is_writable = true };  // stderr
 	}
 
 	FileDescriptors::~FileDescriptors()
 	{
 		for (auto& [fd, entry] : m_fds) {
-			if (entry.real_fd >= 0 && !entry.is_forked) {
+			if (entry.real_fd > 2 && !entry.is_forked) {
 				close(entry.real_fd);
 			}
 		}
@@ -256,9 +259,6 @@ namespace tinykvm
 
 	int FileDescriptors::translate(int vfd)
 	{
-		if (vfd >= 0 && vfd < 3) {
-			return this->m_stdout_redirects.at(vfd);
-		}
 		auto it = m_fds.find(vfd);
 		if (it != m_fds.end()) {
 			return it->second.real_fd;
@@ -365,9 +365,6 @@ namespace tinykvm
 
 	int FileDescriptors::translate_writable_vfd(int vfd)
 	{
-		if (vfd >= 0 && vfd < 3) {
-			return this->m_stdout_redirects.at(vfd);
-		}
 		auto it = m_fds.find(vfd);
 		if (it != m_fds.end()) {
 			if (!it->second.is_writable) {
@@ -396,9 +393,6 @@ namespace tinykvm
 
 	int FileDescriptors::translate_unless_forked(int vfd)
 	{
-		if (vfd >= 0 && vfd < 3) {
-			return this->m_stdout_redirects.at(vfd);
-		}
 		auto it = m_fds.find(vfd);
 		if (it != m_fds.end()) {
 			if (it->second.is_forked) {
@@ -410,9 +404,6 @@ namespace tinykvm
 	}
 	int FileDescriptors::translate_unless_forked_then(int vfd, std::function<int(const Entry&)> func, bool must_be_writable)
 	{
-		if (vfd >= 0 && vfd < 3) {
-			return this->m_stdout_redirects.at(vfd);
-		}
 		auto it = m_fds.find(vfd);
 		if (it != m_fds.end()) {
 			if (!it->second.is_writable && must_be_writable) {
