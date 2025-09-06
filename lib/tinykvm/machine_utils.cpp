@@ -611,7 +611,7 @@ std::string Machine::memcstring(address_t src, size_t maxlen) const
 }
 
 void MachineProfiling::print() {
-	std::vector<std::string> locnames = {
+	std::array<std::string, 5> locnames = {
 		"vCPU Run",
 		"Reset",
 		"Syscall",
