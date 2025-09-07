@@ -2057,6 +2057,14 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			cpu.set_registers(regs);
 			SYSPRINT("sched_getscheduler(...) = %lld\n", regs.rax);
 		});
+	Machine::install_syscall_handler( // sched_setscheduler
+		SYS_sched_setscheduler, [](vCPU& cpu)
+		{
+			auto& regs = cpu.registers();
+			regs.rax = 0;
+			cpu.set_registers(regs);
+			SYSPRINT("sched_setscheduler(...) = %lld\n", regs.rax);
+		});
 	Machine::install_syscall_handler( // prctl
 		SYS_prctl, [](vCPU& cpu)
 		{
@@ -2879,6 +2887,25 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			cpu.set_registers(regs);
 			SYSPRINT("readlinkat(0x%llX, bufd=0x%llX, size=%llu) = %lld\n",
 					 regs.rdi, regs.rsi, regs.rdx, regs.rax);
+		});
+	Machine::install_syscall_handler(
+		SYS_symlink, [](vCPU& cpu) { // SYMLINK
+			auto& regs = cpu.registers();
+			const uint64_t g_path1 = regs.rdi;
+			const uint64_t g_path2 = regs.rsi;
+			std::string path1;
+			std::string path2;
+			try {
+				path1 = cpu.machine().memcstring(g_path1, PATH_MAX);
+				path2 = cpu.machine().memcstring(g_path2, PATH_MAX);
+				// We don't allow creating symlinks at all
+				regs.rax = -EPERM;
+			} catch (...) {
+				regs.rax = -1;
+			}
+			cpu.set_registers(regs);
+			SYSPRINT("symlink(path1=%s, path2=%s) = %lld\n",
+					 path1.c_str(), path2.c_str(), regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_utimensat, [](vCPU& cpu) { // utimensat
