@@ -610,14 +610,18 @@ std::string Machine::memcstring(address_t src, size_t maxlen) const
 	return result;
 }
 
-void MachineProfiling::print() {
-	std::array<std::string, 5> locnames = {
+void MachineProfiling::print(const char* user_defined) {
+	std::array<std::string, 6> locnames = {
 		"vCPU Run",
 		"Reset",
 		"Syscall",
 		"Page Fault",
 		"MMap Files",
+		"UserDefined"
 	};
+	if (user_defined && *user_defined) {
+		locnames[UserDefined] = user_defined;
+	}
 	for (size_t i = 0; i < locnames.size(); i++) {
 		auto& vec = this->times[i];
 		if (vec.empty()) continue;

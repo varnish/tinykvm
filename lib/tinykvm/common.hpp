@@ -38,15 +38,21 @@ namespace tinykvm
 			Syscall = 2,
 			PageFault = 3,
 			MMapFiles = 4,
-			Count = 5
+			UserDefined = 5,
+			Count = 6
 		};
 		// Each entry contains a list of times in nanoseconds
 		std::array<std::vector<uint64_t>, Count> times;
-		void print(); /* Print profiling results, sorts vectors */
+		// Print profiling results. Side effect: *sorts vectors*
+		// when user_defined is non-empty, it will use that label
+		// instead of "UserDefined"
+		void print(const char* user_defined = "");
+		// Clear all profiling samples
 		void reset() {
 			for (auto& vec : times)
 				vec.clear();
 		}
+		void clear() { reset(); } // Alias
 	};
 
 	struct MachineOptions {
