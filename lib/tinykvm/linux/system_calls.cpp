@@ -1736,7 +1736,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						}
 						// The duplicate inherits writable, socket etc.
 						const bool is_writable = (*opt_entry)->is_writable;
-						const bool is_socket   = cpu.machine().fds().is_socket_vfd(vfd);
+						const bool is_socket   = false; // We don't know if it's a socket
 						const int new_fd = dup(fd);
 						const int new_vfd = cpu.machine().fds().manage_duplicate(vfd, new_fd, is_socket, is_writable);
 						regs.rax = new_vfd;

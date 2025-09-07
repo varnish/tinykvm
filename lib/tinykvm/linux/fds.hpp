@@ -19,7 +19,7 @@ namespace tinykvm
 	{
 		static constexpr unsigned DEFAULT_MAX_FILES = 256;
 		static constexpr unsigned DEFAULT_TOTAL_FILES = 0; // 0 means unlimited
-		static constexpr int SOCKET_BIT = 0x40000000;
+		static constexpr int VFD_START = 0x1000;
 		struct Entry
 		{
 			int real_fd = -1;
@@ -79,13 +79,6 @@ namespace tinykvm
 		/// duplicating an fd from the main VM.
 		int translate_unless_forked(int vfd);
 		int translate_unless_forked_then(int vfd, std::function<int(const Entry&)> func, bool must_be_writable = false);
-
-		static bool is_socket_vfd(int vfd) noexcept {
-			return (vfd & SOCKET_BIT) != 0;
-		}
-		static bool is_file_vfd(int vfd) noexcept {
-			return (vfd & SOCKET_BIT) == 0;
-		}
 
 		/// @brief Set the callback for checking if a path is allowed to be opened
 		/// for reading. This is used to check if a path is allowed to be opened
@@ -301,8 +294,7 @@ namespace tinykvm
 	private:
 		Machine& m_machine;
 		std::map<int, Entry> m_fds;
-		int m_next_file_fd = 0x1000;
-		int m_next_socket_fd = 0x1000 | SOCKET_BIT;
+		int m_next_fd = VFD_START;
 		std::array<int, 3> m_stdout_redirects { 0, 1, 2 };
 		std::string m_current_working_directory;
 		int m_current_working_directory_fd = -1;

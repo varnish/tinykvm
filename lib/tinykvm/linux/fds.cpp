@@ -58,8 +58,7 @@ namespace tinykvm
 		}
 		// Clear the current file descriptors
 		m_fds.clear();
-		m_next_file_fd = other.m_next_file_fd;
-		m_next_socket_fd = other.m_next_socket_fd;
+		m_next_fd = other.m_next_fd;
 		this->m_max_files = other.m_max_files;
 		this->m_total_fds_opened = other.m_total_fds_opened;
 		this->m_max_total_fds_opened = other.m_max_total_fds_opened;
@@ -184,13 +183,8 @@ namespace tinykvm
 		}
 		this->m_total_fds_opened ++;
 
-		if (is_socket) {
-			m_fds[m_next_socket_fd] = {fd, is_writable, false};
-			return m_next_socket_fd++;
-		} else {
-			m_fds[m_next_file_fd] = {fd, is_writable, false};
-			return m_next_file_fd++;
-		}
+		m_fds[m_next_fd] = {fd, is_writable, false};
+		return m_next_fd++;
 	}
 	int FileDescriptors::manage_duplicate(int original_vfd, int fd, bool is_socket, bool is_writable)
 	{
@@ -240,11 +234,7 @@ namespace tinykvm
 		Entry entry{fd, is_writable, false};
 		auto res = m_fds.insert_or_assign(vfd, entry);
 		// Make sure we are not overwriting the vfd
-		if (is_socket_vfd(vfd)) {
-			this->m_next_socket_fd = std::max(this->m_next_socket_fd, vfd + 1);
-		} else {
-			this->m_next_file_fd = std::max(this->m_next_file_fd, vfd + 1);
-		}
+		this->m_next_fd = std::max(this->m_next_fd, vfd + 1);
 		return res.first->second;
 	}
 
