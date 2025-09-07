@@ -995,7 +995,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const int domain = regs.rdi;
 			const int type = regs.rsi;
 			const int protocol = regs.rdx;
-			if (domain != AF_INET && domain != AF_INET6 && domain != AF_UNIX)
+			if (domain != AF_INET && domain != AF_INET6 && domain != AF_UNIX && domain != AF_NETLINK)
 			{
 				regs.rax = -EAFNOSUPPORT;
 				cpu.set_registers(regs);
