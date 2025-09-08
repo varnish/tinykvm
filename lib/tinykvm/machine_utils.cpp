@@ -48,8 +48,17 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 		{
 			const size_t offset = addr & PageMask();
 			const size_t size = std::min(vMemory::PageSize() - offset, len);
-			auto* page = memory.get_writable_page(addr & ~PageMask(), memory.expectedUsermodeFlags(), zeroes, true);
-			std::copy(src, src + size, &page[offset]);
+			const bool full_page = (size == vMemory::PageSize());
+			WritablePageOptions opts;
+			opts.allow_dirty = full_page;
+			opts.zeroes = zeroes;
+			// Get a writable page, possibly allocating a new one
+			WritablePage page = writable_page_at(memory, addr & ~PageMask(), memory.expectedUsermodeFlags(), opts);
+			// Page is always dirty
+			page.set_dirty();
+			// Copy data to the page
+			char* page_data = page.page;
+			std::memcpy(&page_data[offset], src, size);
 
 			addr += size;
 			src += size;
@@ -166,7 +175,7 @@ size_t Machine::writable_buffers_from_range(
 	WrBuffer* last = nullptr;
 	while (len != 0)
 	{
-		auto wpage = writable_page_at(memory, addr & ~PageMask(), memory.expectedUsermodeFlags(), false);
+		auto wpage = writable_page_at(memory, addr & ~PageMask(), memory.expectedUsermodeFlags());
 		if (wpage.page == nullptr) {
 			throw MemoryException("Failed to allocate writable page for range", addr, vMemory::PageSize());
 		}
@@ -298,7 +307,7 @@ bool Machine::mmap_backed_area(
 			static constexpr address_t PDE64_USER = (1UL << 2);
 			const address_t phys = mmap_phys_base + i;
 			const address_t virt = virt_base + i;
-			WritablePage writable_page = writable_page_at(memory, virt, PDE64_USER | 1, false);
+			WritablePage writable_page = writable_page_at(memory, virt, PDE64_USER | 1);
 			if (writable_page.page == nullptr) {
 				throw MemoryException("Failed to allocate writable page for mmap", virt, vMemory::PageSize());
 			}

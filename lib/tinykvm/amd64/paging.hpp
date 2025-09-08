@@ -24,7 +24,11 @@ struct WritablePage {
 	void set_dirty(); // paging.cpp
 	void set_protections(int prot); // paging.cpp
 };
-extern WritablePage writable_page_at(vMemory&, uint64_t addr, uint64_t flags, bool zeroes = false);
+struct WritablePageOptions {
+	bool zeroes = false;
+	bool allow_dirty = false;
+};
+extern WritablePage writable_page_at(vMemory&, uint64_t addr, uint64_t flags, WritablePageOptions = {});
 extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags);
 
 static inline bool page_is_zeroed(const uint64_t* page) {

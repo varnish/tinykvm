@@ -617,8 +617,16 @@ static void zero_and_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& d
 	entry = page.addr | (entry & PDE64_CLONED_MASK) | flags;
 	data = page.pmem;
 }
+static void unsafe_update_entry(vMemory& memory, uint64_t& entry, uint64_t*& data, uint64_t flags) {
+	/* Allocate new page, pass old vaddr to memory banks */
+	auto page = memory.new_page();
+	assert((page.addr & 0x8000000000000FFF) == 0x0);
+	/* Set new entry, copy flags and set as cloned */
+	entry = page.addr | (entry & PDE64_CLONED_MASK) | flags;
+	data = page.pmem;
+}
 
-WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, bool write_zeroes)
+WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags, WritablePageOptions options)
 {
 	CLPRINT("Creating a writable page for 0x%lX\n", addr);
 	auto* pml4 = memory.page_at(memory.page_tables);
@@ -771,7 +779,9 @@ entry_is_no_longer_copy_on_write:
 						if (memory.is_forkable_master() && memory.main_memory_writes) {
 							unlock_identity_mapped_entry(pt[e]);
 							memory.increment_unlocked_pages(1);
-						} else if (write_zeroes || (pt[e] & PDE64_DIRTY) == 0x0) {
+						} else if (UNLIKELY(options.allow_dirty)) {
+							unsafe_update_entry(memory, pt[e], data, PDE64_RW | PDE64_PRESENT);
+						} else if (options.zeroes || (pt[e] & PDE64_DIRTY) == 0x0) {
 							zero_and_update_entry(memory, pt[e], data, PDE64_RW | PDE64_PRESENT);
 						} else if (pt[e] & PDE64_PRESENT) {
 							clone_and_update_entry(memory, pt[e], data, PDE64_RW | PDE64_PRESENT);

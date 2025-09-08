@@ -345,7 +345,9 @@ MemoryBank::Page vMemory::new_hugepage()
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, bool dirty)
 {
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
-	auto writable_page = writable_page_at(*this, addr, flags, zeroes);
+	WritablePageOptions zero_opts;
+	zero_opts.zeroes = zeroes;
+	auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
 	if (dirty) {
 		writable_page.set_dirty();
 	}

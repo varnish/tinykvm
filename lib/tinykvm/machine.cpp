@@ -200,10 +200,6 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 		full_reset = memory.fork_reset(other, options);
 	}
 
-	/* We don't need to reset the pagetables with an expensive
-	   mov cr3 instruction, because we are not resetting the
-	   memory banks (or pagetables). Instead, we gamble that its
-	   cheaper to copy all used pages from the master machine. */
 	this->m_just_reset = full_reset;
 	this->m_mmap_cache = other.m_mmap_cache;
 
