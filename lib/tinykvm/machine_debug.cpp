@@ -36,7 +36,7 @@ void Machine::print_remote_gdb_backtrace(
 			+ "\n"
 			+ opts.command + "\n";
 		if (opts.quit)
-			debugscript += "quit\n";
+			debugscript += "disconnect\nquit\n";
 
 		ssize_t len = write(fd, debugscript.c_str(), debugscript.size());
 		if (len < (ssize_t)debugscript.size())
@@ -46,16 +46,20 @@ void Machine::print_remote_gdb_backtrace(
 		}
 		close(fd);
 
-		const char* argv[]
-			= {opts.gdb_path.c_str(), "-x", scrname, nullptr};
-		// XXX: This is not kosher, but GDB is open-source, safe and let's not
-		// pretend that anyone downloads gdb-multiarch from a website anyway.
+		std::vector<const char*> argv;
+		argv.push_back(opts.gdb_path.c_str());
+		argv.push_back("-x");
+		argv.push_back(scrname);
+		if (opts.quit) {
+			argv.push_back("-batch");
+		}
+		argv.push_back(nullptr);
 		// There is a finite list of things we should pass to GDB to make it
 		// behave well, but I haven't been able to find the right combination.
-		if (-1 == execve(argv[0], (char* const*)argv, environ))
+		if (-1 == execve(argv[0], (char* const*)argv.data(), environ))
 		{
 			throw std::runtime_error(
-				"Unable to start gdb-multiarch for debugging");
+				"Unable to start gdb for debugging");
 		}
 	}
 
