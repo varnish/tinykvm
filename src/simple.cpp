@@ -30,7 +30,8 @@ int main(int argc, char** argv)
 	}
 	std::vector<uint8_t> binary;
 	std::vector<std::string> args;
-	binary = load_file(argv[1]);
+	std::string filename = argv[1];
+	binary = load_file(filename);
 
 	const tinykvm::DynamicElf dyn_elf = tinykvm::is_dynamic_elf(
 		std::string_view{(const char*)binary.data(), binary.size()});
@@ -142,7 +143,7 @@ int main(int argc, char** argv)
 			master_vm.set_registers(regs);
 		}
 
-		tinykvm::RSP server {*vm, 2159};
+		tinykvm::RSP server {filename, *vm, 2159};
 		printf("Waiting for connection localhost:2159...\n");
 		auto client = server.accept();
 		if (client != nullptr) {

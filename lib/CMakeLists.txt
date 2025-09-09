@@ -15,6 +15,7 @@ endif()
 
 set (SOURCES
 	tinykvm/machine.cpp
+	tinykvm/machine_debug.cpp
 	tinykvm/machine_elf.cpp
 	tinykvm/machine_env.cpp
 	tinykvm/machine_utils.cpp

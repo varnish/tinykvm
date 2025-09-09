@@ -1,15 +1,17 @@
 #include "rsp_client.hpp"
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/select.h>
+#include <cstdarg>
+#include <cstring>
+#include <fcntl.h>
 #include <linux/kvm.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <unistd.h>
-#include <cstdarg>
-#include <cstring>
 #include <stdexcept>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "amd64/memory_layout.hpp"
 
 /**
@@ -18,8 +20,8 @@
 
 namespace tinykvm {
 
-RSP::RSP(vCPU& cpu, uint16_t port)
-	: m_cpu{cpu}
+RSP::RSP(const std::string& filename, vCPU& cpu, uint16_t port)
+	: m_cpu{cpu}, m_filename{filename}
 {
 	this->server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
 
@@ -45,8 +47,8 @@ RSP::RSP(vCPU& cpu, uint16_t port)
 	/* We need to make sure the VM can be stepped through */
 	m_cpu.machine().stop(false);
 }
-RSP::RSP(Machine& machine, uint16_t port)
-	: RSP(machine.cpu(), port)
+RSP::RSP(const std::string& filename, Machine& machine, uint16_t port)
+	: RSP(filename, machine.cpu(), port)
 {}
 std::unique_ptr<RSPClient> RSP::accept(int timeout_secs)
 {
@@ -85,14 +87,14 @@ std::unique_ptr<RSPClient> RSP::accept(int timeout_secs)
 		close(sockfd);
 		return nullptr;
 	}
-	return std::make_unique<RSPClient>(m_cpu, sockfd);
+	return std::make_unique<RSPClient>(m_filename, m_cpu, sockfd);
 }
 RSP::~RSP() {
 	close(server_fd);
 }
 
-RSPClient::RSPClient(vCPU& cpu, int fd)
-	: m_cpu{&cpu}, sockfd(fd)  {}
+RSPClient::RSPClient(const std::string& filename, vCPU& cpu, int fd)
+	: m_cpu{&cpu}, sockfd(fd), m_filename{filename} {}
 RSPClient::~RSPClient() {
 	if (!is_closed())
 		close(this->sockfd);
@@ -267,11 +269,11 @@ void RSPClient::handle_query()
 {
 	if (strncmp("qSupported", buffer.data(), strlen("qSupported")) == 0)
 	{
-		sendf("PacketSize=%x;swbreak-;hwbreak+", PACKET_SIZE);
+		sendf("PacketSize=%x;swbreak-;hwbreak+;qXfer:libraries:read+;", PACKET_SIZE);
 	}
 	else if (strncmp("qAttached", buffer.data(), strlen("qC")) == 0)
 	{
-		send("1");
+		send("0");
 	}
 	else if (strncmp("qC", buffer.data(), strlen("qC")) == 0)
 	{
@@ -281,7 +283,14 @@ void RSPClient::handle_query()
 	else if (strncmp("qOffsets", buffer.data(), strlen("qOffsets")) == 0)
 	{
 		// Section relocation offsets
-		send("Text=0;Data=0;Bss=0");
+		uint64_t offset = 0x0;
+		for (const auto& mapping : machine().main_memory().mmap_ranges) {
+			if (mapping.filename == this->m_filename) {
+				offset = mapping.virtbase;
+				break;
+			}
+		}
+		sendf("TextSeg=%lx", offset);
 	}
 	else if (strncmp("qfThreadInfo", buffer.data(), strlen("qfThreadInfo")) == 0)
 	{
@@ -407,7 +416,115 @@ void RSPClient::handle_executing()
 	{
 		send("");
 	}
+	else if (strncmp("vFile:setfs", buffer.data(), strlen("vFile:setfs")) == 0)
+	{
+		send("");
+	}
 	else {
+		// Check for file operations
+		if (strncmp("vFile:open", buffer.data(), strlen("vFile:open")) == 0)
+		{
+			// vFile:open:filename,flags,mode
+			char filename[512];
+			int flags = 0, mode = 0;
+			int ret = sscanf(buffer.c_str(), "vFile:open:%511[^,],%d,%o",
+				filename, &flags, &mode);
+			if (ret == 3) {
+				printf("Opening file: %s (flags=%d, mode=%o)\n",
+					filename, flags, mode);
+				// NOTE: We are not doing any sandboxing here!
+				int fd = open(filename, flags, mode);
+				if (fd < 0) {
+					send("");
+					return;
+				} else {
+					sendf("F%d", fd);
+				}
+			} else {
+				send("F01");
+			}
+			return;
+		}
+		else if (strncmp("vFile:pread", buffer.data(), strlen("vFile:pread")) == 0)
+		{
+			// vFile:pread:fd,buf,bufsize,offset
+			int fd = 0;
+			uint32_t bufsize = 0;
+			uint64_t offset = 0;
+			int ret = sscanf(buffer.c_str(), "vFile:pread:%d,0,%x,%lx",
+				&fd, &bufsize, &offset);
+			if (ret == 3 && bufsize < 4096) {
+				char data[4096];
+				ssize_t rlen = pread(fd, data, bufsize, offset);
+				if (rlen < 0) {
+					sendf("F%02x", -errno);
+					return;
+				}
+				char out[8192 + 1];
+				char* d = out;
+				for (ssize_t i = 0; i < rlen; i++) {
+					uint8_t val = data[i];
+					*d++ = lut[(val >> 4) & 0xF];
+					*d++ = lut[(val >> 0) & 0xF];
+				}
+				*d++ = 0;
+				sendf("F00;%s", out);
+			} else {
+				send("F01");
+			}
+			return;
+		}
+		else if (strncmp("vFile:close", buffer.data(), strlen("vFile:close")) == 0)
+		{
+			// vFile:close:fd
+			int fd = 0;
+			int ret = sscanf(buffer.c_str(), "vFile:close:%d", &fd);
+			if (ret == 1) {
+				int r = close(fd);
+				if (r < 0)
+					r = -errno;
+				sendf("F%02x", r);
+			} else {
+				send("F01");
+			}
+			return;
+		}
+		else if (strncmp("vFile:fstat", buffer.data(), strlen("vFile:fstat")) == 0)
+		{
+			// vFile:fstat:fd
+			int fd = 0;
+			int ret = sscanf(buffer.c_str(), "vFile:fstat:%d", &fd);
+			if (ret == 1) {
+				struct stat st;
+				int r = fstat(fd, &st);
+				if (r < 0) {
+					sendf("F%02x", -errno);
+					return;
+				}
+				sendf("F00;0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo,0%llo",
+					(__u64)st.st_dev,
+					(__u64)st.st_ino,
+					(__u64)st.st_mode,
+					(__u64)st.st_nlink,
+					(__u64)st.st_uid,
+					(__u64)st.st_gid,
+					(__u64)st.st_rdev,
+					(__u64)st.st_size,
+					(__u64)st.st_blksize,
+					(__u64)st.st_blocks,
+					(__u64)st.st_atim.tv_sec,
+					(__u64)st.st_atim.tv_nsec,
+					(__u64)st.st_mtim.tv_sec,
+					(__u64)st.st_mtim.tv_nsec,
+					(__u64)st.st_ctim.tv_sec,
+					(__u64)st.st_ctim.tv_nsec
+				);
+			} else {
+				send("F01");
+			}
+			return;
+		}
+		// Unknown v packet
 		if (UNLIKELY(m_verbose)) {
 			fprintf(stderr, "Unknown executor: %s\n",
 				buffer.data());

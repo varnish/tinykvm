@@ -212,6 +212,7 @@ struct Machine
 	void print_registers() const { vcpu.print_registers(); }
 	void print_pagetables() const;
 	void print_exception_handlers() const;
+	void print_remote_gdb_backtrace(const std::string& filename, const std::string& gdb_path = "/usr/bin/gdb");
 
 	void install_memory(uint32_t idx, const VirtualMem&, bool ro);
 	void delete_memory(uint32_t idx);

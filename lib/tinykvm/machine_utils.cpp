@@ -298,7 +298,23 @@ bool Machine::mmap_backed_area(
 		}
 		// Now we need to install this memory region as guest physical memory
 		this->install_memory(region_idx, VirtualMem(mmap_phys_base, (char*)real_addr, size_memory), false);
-		this->memory.mmap_ranges.emplace_back(mmap_phys_base, (char*)real_addr, virt_base, size_memory);
+		// Discover the filename of the fd
+		char fd_path[64];
+		snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
+		std::string filename(PATH_MAX, '\0');
+		const ssize_t r = readlink(fd_path, filename.data(), filename.size() - 1);
+		if (r > 0) {
+			filename[r] = '\0';
+			filename.resize(r);
+		} else {
+			int len = snprintf(filename.data(), filename.size(), "fd%d", fd);
+			filename.resize(len);
+		}
+		if constexpr (VERBOSE_FILE_BACKED_MMAP) {
+			printf("mmap: fd %d is file '%s'\n", fd, filename.c_str());
+		}
+		// Record the mmap range
+		this->memory.mmap_ranges.emplace_back(mmap_phys_base, (char*)real_addr, virt_base, size_memory, std::move(filename));
 		// XXX: TODO: madvise(MADV_DONTNEED) on the old pages using gather_buffers_from_range
 		// With the new physical memory, we now need to create pagetable entries
 		// we'll do it the slow way by allocating the same range and for each page redirect it to the new phys

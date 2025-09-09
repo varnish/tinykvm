@@ -32,7 +32,8 @@ int main(int argc, char** argv)
 		fprintf(stderr, "Missing argument: 64-bit ELF binary\n");
 		exit(1);
 	}
-	binary = load_file(argv[1]);
+	std::string filename = argv[1];
+	binary = load_file(filename);
 	std::vector<tinykvm::Machine*> vms;
 	vms.reserve(NUM_GUESTS);
 
@@ -75,7 +76,7 @@ int main(int argc, char** argv)
 				master_vm.set_registers(regs);
 			}
 
-			tinykvm::RSP server {*vm, 2159};
+			tinykvm::RSP server {filename, *vm, 2159};
 			printf("Waiting for connection localhost:2159...\n");
 			auto client = server.accept();
 			if (client != nullptr) {

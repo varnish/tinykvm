@@ -10,13 +10,14 @@ struct RSP
 	std::unique_ptr<RSPClient> accept(int timeout_secs = 10);
 	int  fd() const noexcept { return server_fd; }
 
-	RSP(vCPU&, uint16_t);
-	RSP(Machine&, uint16_t);
+	RSP(const std::string& filename, vCPU&, uint16_t port);
+	RSP(const std::string& filename, Machine&, uint16_t port);
 	~RSP();
 
 private:
 	vCPU& m_cpu;
 	int server_fd;
+	std::string m_filename;
 };
 
 struct RSPClient
@@ -40,7 +41,7 @@ struct RSPClient
 	void set_verbose(bool v) { m_verbose = v; }
 	void on_stopped(StopFunc f) { m_on_stopped = f; }
 
-	RSPClient(vCPU& cpu, int fd);
+	RSPClient(const std::string& filename, vCPU& cpu, int fd);
 	~RSPClient();
 
 private:
@@ -74,6 +75,7 @@ private:
 	std::array<uint64_t, 4> m_bp = {0};
 	size_t bp_iterator = 0;
 	StopFunc m_on_stopped = nullptr;
+	const std::string& m_filename;
 };
 
 }

@@ -8,12 +8,13 @@ struct VirtualMem {
 	char *   ptr;
 	uint64_t virtbase = 0;
 	uint64_t size;
+	std::string filename; // Optional, for file-backed mappings
 
 	VirtualMem(uint64_t phys, char* p, uint64_t s)
 		: physbase(phys), ptr(p), size(s) {}
 
-	VirtualMem(uint64_t phys, char* p, uint64_t v, uint64_t s)
-		: physbase(phys), ptr(p), virtbase(v), size(s) {}
+	VirtualMem(uint64_t phys, char* p, uint64_t v, uint64_t s, std::string f = "")
+		: physbase(phys), ptr(p), virtbase(v), size(s), filename(std::move(f)) {}
 
 	static VirtualMem New(uint64_t physical, char* ptr, uint64_t size) {
 		return VirtualMem { physical, ptr, size };
