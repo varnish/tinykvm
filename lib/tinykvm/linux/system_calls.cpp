@@ -102,7 +102,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				if (UNLIKELY(bytes > 1024*64)) {
 					regs.rax = -1;
 					cpu.set_registers(regs);
-					SYSPRINT("write(fd=%d (%d), data=0x%llX, size=%zu) = %lld\n",
+					SYSPRINT("write(fd=%d (%d), data=0x%llX, size=%zu) = %lld (overflow)\n",
 						vfd, vfd, regs.rsi, bytes, regs.rax);
 					return;
 				}
@@ -138,6 +138,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						cpu.machine().print(buffer.begin(), buffer.size());
 					});
 				regs.rax = bytes;
+				SYSPRINT("write(fd=%d (%d), data=0x%llX, size=%zu) = %lld (stdio)\n",
+					vfd, vfd, regs.rsi, bytes, regs.rax);
 			}
 			cpu.set_registers(regs);
 		});
@@ -2516,7 +2518,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const int fd = cpu.machine().fds().translate(vfd);
 			const uint64_t g_event = regs.r10;
 			struct epoll_event event {};
-			if (epollfd > 0 && fd >= 0)
+			if (epollfd > 0 && fd >= 0 && epollfd != fd)
 			{
 				if (g_event != 0x0) {
 					cpu.machine().copy_from_guest(&event, g_event, sizeof(event));
@@ -2534,8 +2536,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					}
 					regs.rax = 0;
 				}
+			} else if (epollfd < 0 || fd < 0) {
+				regs.rax = -EBADF;
 			} else {
-				regs.rax = -ENOENT;
+				regs.rax = -EINVAL;
 			}
 			cpu.set_registers(regs);
 			if (UNLIKELY(cpu.machine().m_verbose_system_calls))

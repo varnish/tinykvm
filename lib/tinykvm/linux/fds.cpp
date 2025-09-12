@@ -32,11 +32,16 @@ namespace tinykvm
 		: m_machine(machine),
 		  m_current_working_directory_fd(AT_FDCWD)
 	{
-		// XXX: TODO: Create proper redirects for stdout/stderr by
-		// for example providing a pipe to stdout/stderr.
-		m_fds[0] = Entry{ .real_fd = 0, .is_writable = false }; // stdin
-		m_fds[1] = Entry{ .real_fd = 1, .is_writable = true };  // stdout
-		m_fds[2] = Entry{ .real_fd = 2, .is_writable = true };  // stderr
+		// Create proper redirects for stdin/stdout/stderr
+		const int stdin_fd = dup(0);
+		const int stdout_fd = dup(1);
+		const int stderr_fd = dup(2);
+		if (stdin_fd < 0 || stdout_fd < 0 || stderr_fd < 0) {
+			throw std::runtime_error("TinyKVM: Failed to duplicate stdin/stdout/stderr");
+		}
+		m_fds[0] = Entry{ .real_fd = stdin_fd, .is_writable = false }; // stdin
+		m_fds[1] = Entry{ .real_fd = stdout_fd, .is_writable = true };  // stdout
+		m_fds[2] = Entry{ .real_fd = stderr_fd, .is_writable = true };  // stderr
 	}
 
 	FileDescriptors::~FileDescriptors()
@@ -166,7 +171,8 @@ namespace tinykvm
 
 	int FileDescriptors::manage(int fd, bool is_socket, bool is_writable)
 	{
-		if (fd < 0) {
+		(void)is_socket; // Unused
+		if (fd <= 2) {
 			throw std::runtime_error("TinyKVM: Invalid file descriptor in FileDescriptors::add()");
 		}
 		if (this->m_max_total_fds_opened != 0 && this->m_total_fds_opened >= this->m_max_total_fds_opened) {
@@ -213,7 +219,7 @@ namespace tinykvm
 	FileDescriptors::Entry& FileDescriptors::manage_as(int vfd, int fd, bool is_socket, bool is_writable)
 	{
 		(void)is_socket; // Unused
-		if (fd < 0) {
+		if (fd <= 2) {
 			throw std::runtime_error("TinyKVM: Invalid fd in FileDescriptors::manage_as()");
 		}
 		if (this->m_max_total_fds_opened != 0 &&

@@ -183,7 +183,7 @@ namespace tinykvm
 		/// @brief Get the number of sockets that are currently open.
 		/// @return The number of sockets that are currently open.
 		uint16_t get_current_sockets_opened() const noexcept {
-			return m_fds.size() - m_stdout_redirects.size();
+			return m_fds.size();
 		}
 
 		/// @brief Set a callback for connecting a socket. This is used to check if a
@@ -295,7 +295,6 @@ namespace tinykvm
 		Machine& m_machine;
 		std::map<int, Entry> m_fds;
 		int m_next_fd = VFD_START;
-		std::array<int, 3> m_stdout_redirects { 0, 1, 2 };
 		std::string m_current_working_directory;
 		int m_current_working_directory_fd = -1;
 		bool m_verbose = false;
