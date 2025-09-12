@@ -3,6 +3,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <sched.h>
 #include <signal.h>
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
@@ -2126,9 +2127,16 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 		SYS_sched_getaffinity, [](vCPU& cpu) { // sched_getaffinity
 			/* SYS sched_getaffinity */
 			auto& regs = cpu.registers();
+			cpu_set_t* cpuset = CPU_ALLOC(1);
+			const size_t size = CPU_ALLOC_SIZE(1);
+			CPU_ZERO_S(size, cpuset);
+			CPU_SET_S(0, size, cpuset);
+			cpu.machine().copy_to_guest(regs.rdx, cpuset, size);
+			CPU_FREE(cpuset);
 			regs.rax = 0;
 			cpu.set_registers(regs);
-			SYSPRINT("sched_getaffinity() = %lld\n", regs.rax);
+			SYSPRINT("sched_getaffinity(pid=%lld, cpusetsize=%lld, mask=0x%llX) = %lld\n",
+					 regs.rdi, regs.rsi, regs.rdx, regs.rax);
 		});
 	Machine::install_syscall_handler(
 		SYS_getdents64, [](vCPU& cpu) { // GETDENTS64
