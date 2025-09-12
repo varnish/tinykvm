@@ -1492,7 +1492,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 							buffers, g_base, g_len);
 					bufcount += this_bufcount;
 				}
-				struct sockaddr addr {};
+				struct sockaddr_storage addr {};
 				struct msghdr msg_recv {};
 				msg_recv.msg_name = &addr;
 				msg_recv.msg_namelen = sizeof(addr);
@@ -1516,6 +1516,18 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				if (UNLIKELY(result < 0)) {
 					regs.rax = -errno;
 				} else {
+					if (msg.msg_name != nullptr && msg.msg_namelen > 0) {
+						// Write back the address if there is space
+						socklen_t& guest_addrlen = *cpu.machine().writable_memarray<socklen_t>(
+							g_msg + offsetof(struct msghdr, msg_namelen));
+						const address_t g_addr = (uintptr_t)msg.msg_name;
+						// Set/truncate the address length
+						guest_addrlen = std::min(guest_addrlen, msg_recv.msg_namelen);
+						if (g_addr != 0x0 && guest_addrlen > 0)	{
+							// Write back the address
+							cpu.machine().copy_to_guest(g_addr, &addr, guest_addrlen);
+						}
+					}
 					regs.rax = result;
 				}
 			} catch (const std::exception& e) {
