@@ -1419,7 +1419,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						cpu.machine().writable_buffers_from_range(buffers, g_buf, bytes);
 					// We can't use recvfrom here, but there is recvmsg()
 					// All the guest data is in the buffers, which is compatible with iovec
-					struct sockaddr addr {};
+					struct sockaddr_storage addr {};
 					struct msghdr msg {};
 					msg.msg_name = &addr;
 					msg.msg_namelen = sizeof(addr);
@@ -1436,9 +1436,15 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					else
 					{
 						if (g_addrlen != 0x0) {
-							socklen_t addrlen = msg.msg_namelen;
-							cpu.machine().copy_to_guest(g_addrlen, &addrlen, sizeof(addrlen));
-							cpu.machine().copy_to_guest(g_addr, &addr, addrlen);
+							const socklen_t addrlen = msg.msg_namelen;
+							// Get a writable reference to the guest addrlen
+							socklen_t& guest_addrlen =
+								*cpu.machine().writable_memarray<socklen_t>(g_addrlen);
+							guest_addrlen = std::min(guest_addrlen, addrlen);
+							// Write back the address if there is space
+							if (g_addr != 0x0 && guest_addrlen > 0) {
+								cpu.machine().copy_to_guest(g_addr, &addr, guest_addrlen);
+							}
 						}
 						regs.rax = result;
 					}
