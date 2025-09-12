@@ -188,7 +188,7 @@ size_t Machine::writable_buffers_from_range(
 			const size_t offset4k = addr & PageMask();
 			offset = addr & (wpage.size - 1);
 			size = std::min(wpage.size - offset, len);
-			page = wpage.page + (offset4k - offset);
+			page = wpage.page - offset + offset4k;
 		} else {
 			offset = addr & PageMask();
 			size = std::min(vMemory::PageSize() - offset, len);
