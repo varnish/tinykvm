@@ -1,5 +1,6 @@
 [BITS 64]
 global vm64_exception
+%define INTR_ASM_BASE 0x2000
 
 ;; CPU exception frame:
 ;; 1. stack    rsp+32
@@ -27,12 +28,20 @@ dw .vm64_gettimeofday
 dw .vm64_exception
 dw .vm64_except1 - .vm64_exception
 dw .vm64_dso
+.vm64_remote_return_addr:
+	dw 0x0   ;; Return address after remote call
+dd 0x0       ;; Reserved/Padding
+.vm64_remote_base:
+	dq 0x0   ;; Gigapage base address of the remote VM
 
 ALIGN 0x10
 .kvm_wallclock:   ;; 0x2010
 	resb 0x10     ;; 16b for KVM Wall-clock
 .kvm_system_time: ;; 0x2020
 	resb 0x20     ;; 32b for KVM System-time
+;; Save state for remote function calls
+.remote_state:
+	resb 0x100    ;; 256b for remote state saving
 
 ALIGN 0x10
 .vm64_syscall:
@@ -44,6 +53,8 @@ ALIGN 0x10
 	je .vm64_mmap
 	cmp eax, 0x1F777 ;; ENTRY SYSCALL
 	je .vm64_entrycall
+	cmp eax, 0x1F778 ;; REMOTE DISCONNECT SYSCALL
+	je .vm64_remote_disconnect
 	cmp eax, 0x1F707 ;; REENTRY SYSCALL
 	je .vm64_reentrycall
 	out 0, eax
@@ -225,6 +236,9 @@ ALIGN 0x10
 	mov eax, .vm64_gettimeofday
 	ret
 
+.vm64_remote_disconnect:
+	out 0, eax
+
 .vm64_entrycall:
 	;; Reset pagetables
 	mov rax, cr3
@@ -235,14 +249,45 @@ ALIGN 0x10
 	o64 sysret
 
 .vm64_page_fault:
+	push rax
 	push rdi
-	mov rdi, cr2
+	mov rdi, cr2 ;; Faulting address
 	out 128 + 14, eax
 	invlpg [rdi]
 	pop rdi
-
+	test eax, eax
+	jnz .vm64_remote_page_fault
+	pop rax
 .vm64_pop_code:
 	add rsp, 8
+	iretq
+
+.vm64_remote_page_fault:
+	;; 1. We need to save current usermode state
+	;; 2. Switch to the remote VMs FSBASE
+	;; 4. Set up a usermode stack/function call
+	;; with the faulting address as the function address
+	;; 5. Exit kernel mode to usermode in a way that 
+	;; returns to the remote VM, performing the function call
+	;; 6. When the remote VM is done, it should somehow enter
+	;; kernel mode again, and we should restore our state
+	;; 7. Return from the page fault
+
+	;; Make the next function call return to a custom system call location
+	push rbx
+	;; Get remote-disconnect syscall address
+	mov rax, [INTR_ASM_BASE + .vm64_remote_return_addr]
+	;; Get original stack pointer
+	mov rbx, [rsp + 16 + 32] ;; Original RSP
+	;; Overwrite the return address
+	stac
+	mov [rbx], rax ;; Return address
+	clac
+
+	pop rbx
+	pop rax
+	add rsp, 8 ;; Skip error code
+
 	iretq
 
 .vm64_timeout:

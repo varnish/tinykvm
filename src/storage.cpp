@@ -6,8 +6,8 @@
 #include "timing.hpp"
 
 #include <tinykvm/rsp_client.hpp>
-#define GUEST_MEMORY   0x40000000  /* 1024MB memory */
-#define GUEST_WORK_MEM 256UL * 1024*1024 /* MB working mem */
+#define GUEST_MEMORY   1024UL * 1024 * 1024  /* 1024MB main memory */
+#define GUEST_WORK_MEM 256UL * 1024 * 1024 /* 256MB working memory */
 
 static double timed_action(std::function<void()> action)
 {
@@ -81,20 +81,25 @@ int main(int argc, char** argv)
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 	storage_vm.run(5.0f);
 
-	master_vm.remote_connect(storage_vm);
+	master_vm.remote_connect(storage_vm, false);
 
 	auto tdiff = timed_action([&] {
 		try {
 			master_vm.run();
-		} catch (const tinykvm::MachineException& e) {
-			fprintf(stderr, "Exception: %s with data 0x%lX\n",
-				e.what(), e.data());
+			return;
 		} catch (const tinykvm::MemoryException& e) {
 			fprintf(stderr, "Exception: %s at 0x%lX (size=%lu)\n",
 				e.what(), e.data(), e.size());
+			master_vm.print_registers();
+		} catch (const tinykvm::MachineException& e) {
+			fprintf(stderr, "Exception: %s with data 0x%lX\n",
+				e.what(), e.data());
+			master_vm.print_registers();
 		}
+		fprintf(stderr, "Error: Failed to initialize main VM, exiting\n");
+		exit(1);
 	});
-	printf("Call time: %fms Return value: %ld\n", tdiff*1e3, master_vm.return_value());
+	printf("Call time: %.2fus Return value: %ld\n", tdiff*1e6, master_vm.return_value());
 
 	/* Allow forking the master VM */
 	master_vm.prepare_copy_on_write(GUEST_WORK_MEM, 1ULL << 30);
@@ -105,8 +110,9 @@ int main(int argc, char** argv)
 
 	/* Call 'do_calculation' with 21 as argument */
 	const auto call_addr = vm.address_of("do_calculation");
+	vm.timed_vmcall(call_addr, 5.0f, 21);
 	auto fork_tdiff = timed_action([&] {
 		vm.timed_vmcall(call_addr, 5.0f, 21);
 	});
-	printf("Fork call time: %fms Return value: %ld\n", fork_tdiff*1e3, vm.return_value());
+	printf("Fork call time: %.2fus Return value: %ld\n", fork_tdiff*1e6, vm.return_value());
 }

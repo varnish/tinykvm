@@ -9,7 +9,7 @@
 #include <sys/ioctl.h>
 #include <time.h>
 #include <signal.h>
-
+static constexpr bool VERBOSE_REMOTE = false;
 #define PRINTER(printer, buffer, fmt, ...) \
 	printer(buffer, \
 		snprintf(buffer, sizeof(buffer), \
@@ -172,7 +172,7 @@ long vCPU::run_once()
 		if (kvm_run->io.port == 0x0) {
 			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
 			const uint32_t intr = *(uint32_t *)data;
-			if (intr != 0xFFFF) {
+			if (intr != 0xFFFF && intr != 0x1F778) {
 				ScopedProfiler<MachineProfiling::Syscall> prof(machine().profiling());
 				static constexpr bool VERIFY_SYSCALL_REGS = false;
 				if constexpr (VERIFY_SYSCALL_REGS) {
@@ -216,9 +216,23 @@ long vCPU::run_once()
 					Machine::timeout_exception("Timeout Exception", this->timer_ticks);
 				}
 				return KVM_EXIT_IO;
-			} else {
+			} else if (intr == 0xFFFF) {
 				this->stopped = true;
 				return 0;
+			} else if (intr == 0x1F778) {
+				// Remote VM disconnect syscall
+				if constexpr (VERBOSE_REMOTE) {
+					printf("Remote VM disconnect syscall, return=0x%lX\n",
+						this->remote_return_address);
+				}
+				machine().remote_disconnect();
+				// Overwrite return address to return to the remote VM handler
+				machine().copy_to_guest(this->registers().rsp + 24,
+					&this->remote_return_address, 8);
+				this->remote_return_address = 0;
+				return KVM_EXIT_IO;
+			} else {
+				Machine::machine_exception("Invalid syscall number", intr);
 			}
 		}
 		else if (kvm_run->io.port >= 0x80 && kvm_run->io.port < 0x100) {
@@ -228,7 +242,7 @@ long vCPU::run_once()
 			if (intr == 14) // Page fault
 			{
 				ScopedProfiler<MachineProfiling::PageFault> prof(machine().profiling());
-				const auto& regs = registers();
+				auto& regs = registers();
 				const uint64_t addr = regs.rdi & ~(uint64_t) 0x8000000000000FFF;
 #ifdef VERBOSE_PAGE_FAULTS
 				char buffer[256];
@@ -256,7 +270,22 @@ long vCPU::run_once()
 					/* Kernel space page fault */
 					this->handle_exception(intr);
 					Machine::machine_exception("Kernel or zero page fault", intr);
+				} else if (addr >= machine().remote_base_address()) {
+					/* Remote VM page fault */
+					uint64_t retstack; machine().unsafe_copy_from_guest(&retstack, regs.rsp + 16 + 32, 8);
+					uint64_t retaddr; machine().unsafe_copy_from_guest(&retaddr, retstack, 8);
+					if constexpr (VERBOSE_REMOTE) {
+						printf("Page fault in remote VM at 0x%lX return=0x%lX, connecting...\n", addr, retaddr);
+					}
+					this->remote_return_address = retaddr;
+					machine().remote_activate_now();
+					regs.rax = 1; /* Indicate that it was remote */
+					this->set_registers(regs);
+					return KVM_EXIT_IO;
+				} else {
+					regs.rax = 0; /* Indicate that it was local */
 				}
+				this->set_registers(regs);
 
 				machine().memory.get_writable_page(addr, PDE64_USER | PDE64_RW, false, false);
 				return KVM_EXIT_IO;
