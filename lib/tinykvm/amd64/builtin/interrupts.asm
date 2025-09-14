@@ -238,6 +238,22 @@ ALIGN 0x10
 
 .vm64_remote_disconnect:
 	out 0, eax
+	;; RAX contains the original FSBASE of this VM
+	stac
+	;; Write to FSBASE MSR
+	push rcx
+	push rdx
+	mov ecx, 0xC0000100  ;; FSBASE
+	mov rdx, rax
+	shr rdx, 32
+	wrmsr
+	pop rdx
+	pop rcx
+	clac
+	;; Reset pagetables
+	mov rax, cr3
+	mov cr3, rax
+	o64 sysret
 
 .vm64_entrycall:
 	;; Reset pagetables
@@ -263,15 +279,16 @@ ALIGN 0x10
 	iretq
 
 .vm64_remote_page_fault:
-	;; 1. We need to save current usermode state
-	;; 2. Switch to the remote VMs FSBASE
-	;; 4. Set up a usermode stack/function call
-	;; with the faulting address as the function address
-	;; 5. Exit kernel mode to usermode in a way that 
-	;; returns to the remote VM, performing the function call
-	;; 6. When the remote VM is done, it should somehow enter
-	;; kernel mode again, and we should restore our state
-	;; 7. Return from the page fault
+	;; RAX: Remote FSBASE
+	;; Write to FSBASE MSR
+	push rcx
+	push rdx
+	mov ecx, 0xC0000100  ;; FSBASE
+	mov rdx, rax
+	shr rdx, 32
+	wrmsr
+	pop rdx
+	pop rcx
 
 	;; Make the next function call return to a custom system call location
 	push rbx

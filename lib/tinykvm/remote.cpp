@@ -62,18 +62,21 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 	this->m_remote = &remote;
 }
 
-void Machine::remote_activate_now()
+Machine::address_t Machine::remote_activate_now()
 {
 	this->remote_connect(*this->m_remote, true);
 
 	// Set current FSBASE to remote FSBASE
 	vcpu.remote_original_tls_base = get_fsgs().first;
-	this->set_tls_base(this->m_remote->get_fsgs().first);
+
+	// Return FSBASE of remote, which can be set more efficiently
+	// in the mini-kernel assembly
+	return this->m_remote->get_fsgs().first;
 }
-void Machine::remote_disconnect()
+Machine::address_t Machine::remote_disconnect()
 {
 	if (this->m_remote == nullptr)
-		return;
+		return 0;
 
 	// Unpresent gigabyte entries from remote VM in this VM
 	const auto remote_vmem = this->m_remote->main_memory().vmem();
@@ -91,8 +94,9 @@ void Machine::remote_disconnect()
 	}
 
 	// Restore original FSBASE
-	this->set_tls_base(vcpu.remote_original_tls_base);
+	auto result = vcpu.remote_original_tls_base;
 	vcpu.remote_original_tls_base = 0;
+	return result;
 }
 
 

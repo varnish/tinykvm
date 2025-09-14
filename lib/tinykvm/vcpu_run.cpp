@@ -225,11 +225,13 @@ long vCPU::run_once()
 					printf("Remote VM disconnect syscall, return=0x%lX\n",
 						this->remote_return_address);
 				}
-				machine().remote_disconnect();
+				const auto result = machine().remote_disconnect();
 				// Overwrite return address to return to the remote VM handler
 				machine().copy_to_guest(this->registers().rsp + 24,
 					&this->remote_return_address, 8);
 				this->remote_return_address = 0;
+				this->registers().rax = result;
+				this->set_registers(this->registers());
 				return KVM_EXIT_IO;
 			} else {
 				Machine::machine_exception("Invalid syscall number", intr);
@@ -278,8 +280,7 @@ long vCPU::run_once()
 						printf("Page fault in remote VM at 0x%lX return=0x%lX, connecting...\n", addr, retaddr);
 					}
 					this->remote_return_address = retaddr;
-					machine().remote_activate_now();
-					regs.rax = 1; /* Indicate that it was remote */
+					regs.rax = machine().remote_activate_now();
 					this->set_registers(regs);
 					return KVM_EXIT_IO;
 				} else {
