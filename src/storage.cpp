@@ -58,9 +58,7 @@ int main(int argc, char** argv)
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_WORK_MEM,
-		.reset_free_work_mem = 0,
-		.verbose_loader = false,
-		.hugepages = (getenv("HUGE") != nullptr),
+		.verbose_loader = false
 	};
 	tinykvm::Machine master_vm {guest_binary, options};
 	master_vm.setup_linux(
@@ -71,9 +69,9 @@ int main(int argc, char** argv)
 	/* Create storage VM */
 	const tinykvm::MachineOptions storage_options {
 		.max_mem = 256ULL << 20, // MB
+		.dylink_address_hint = 0x44000000, // 1GB + 64MB
 		.vmem_base_address = 1ULL << 30, // 1GB
 		.verbose_loader = false,
-		.hugepages = (getenv("HUGE") != nullptr),
 	};
 	tinykvm::Machine storage_vm{storage_binary, storage_options};
 	storage_vm.setup_linux(
