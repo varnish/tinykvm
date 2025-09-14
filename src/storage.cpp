@@ -99,7 +99,7 @@ int main(int argc, char** argv)
 		fprintf(stderr, "Error: Failed to initialize main VM, exiting\n");
 		exit(1);
 	});
-	printf("Call time: %.2fus Return value: %ld\n", tdiff*1e6, master_vm.return_value());
+	printf("Boot time: %.2fus Return value: %ld\n", tdiff*1e6, master_vm.return_value());
 
 	/* Allow forking the master VM */
 	master_vm.prepare_copy_on_write(GUEST_WORK_MEM, 1ULL << 30);
@@ -110,7 +110,12 @@ int main(int argc, char** argv)
 
 	/* Call 'do_calculation' with 21 as argument */
 	const auto call_addr = vm.address_of("do_calculation");
-	vm.timed_vmcall(call_addr, 5.0f, 21);
+	if (call_addr == 0) {
+		fprintf(stderr, "Error: no do_calculation() in guest\n");
+		exit(1);
+	}
+	for (int i = 0; i < 100; i++)
+		vm.timed_vmcall(call_addr, 5.0f, 21);
 	auto fork_tdiff = timed_action([&] {
 		vm.timed_vmcall(call_addr, 5.0f, 21);
 	});

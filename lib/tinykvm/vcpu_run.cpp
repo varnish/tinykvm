@@ -4,6 +4,7 @@
 #include "amd64/gdt.hpp"
 #include "amd64/idt.hpp"
 #include "amd64/memory_layout.hpp"
+#include "amd64/paging.hpp"
 #include "util/scoped_profiler.hpp"
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
@@ -246,18 +247,19 @@ long vCPU::run_once()
 				ScopedProfiler<MachineProfiling::PageFault> prof(machine().profiling());
 				auto& regs = registers();
 				const uint64_t addr = regs.rdi & ~(uint64_t) 0x8000000000000FFF;
+//#define VERBOSE_PAGE_FAULTS
 #ifdef VERBOSE_PAGE_FAULTS
 				char buffer[256];
 				#define PV(val, off) \
 					{ uint64_t value; machine().unsafe_copy_from_guest(&value, regs.rsp + off, 8); \
 					PRINTER(machine().m_printer, buffer, "Value %s: 0x%lX\n", val, value); }
 				try {
-					PV("Origin SS",  48);
-					PV("Origin RSP", 40);
-					PV("Origin RFLAGS", 32);
-					PV("Origin CS",  24);
-					PV("Origin RIP", 16);
-					PV("Error code", 8);
+					PV("Origin SS",  56);
+					PV("Origin RSP", 48);
+					PV("Origin RFLAGS", 40);
+					PV("Origin CS",  32);
+					PV("Origin RIP", 24);
+					PV("Error code", 16);
 				} catch (...) {}
 				PRINTER(machine().m_printer, buffer,
 					"*** %s on address 0x%lX (0x%llX)\n",
@@ -273,12 +275,18 @@ long vCPU::run_once()
 					this->handle_exception(intr);
 					Machine::machine_exception("Kernel or zero page fault", intr);
 				} else if (addr >= machine().remote_base_address()) {
+					if (this->remote_original_tls_base != 0) {
+						// Already connected, so this is a page fault in the remote VM
+						this->handle_exception(intr);
+						Machine::machine_exception("Remote VM page fault while already connected", intr);
+					}
 					/* Remote VM page fault */
 					uint64_t retstack; machine().unsafe_copy_from_guest(&retstack, regs.rsp + 16 + 32, 8);
 					uint64_t retaddr; machine().unsafe_copy_from_guest(&retaddr, retstack, 8);
 					if constexpr (VERBOSE_REMOTE) {
 						printf("Page fault in remote VM at 0x%lX return=0x%lX, connecting...\n", addr, retaddr);
 					}
+
 					this->remote_return_address = retaddr;
 					regs.rax = machine().remote_activate_now();
 					this->set_registers(regs);
