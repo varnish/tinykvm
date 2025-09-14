@@ -2,3 +2,4 @@ target/
 Cargo.lock
 storage
 storage.syms
+symbol_offset

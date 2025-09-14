@@ -1,0 +1,16 @@
+[package]
+name = "demo"
+version = "0.1.0"
+authors = ["gonzo"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+png = "0.15.3"
+libc = "0.2"
+
+[profile.release]
+lto=true
+opt-level=2
+#debug=true
