@@ -64,6 +64,9 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 
 Machine::address_t Machine::remote_activate_now()
 {
+	if (this->m_remote == nullptr)
+		throw MachineException("Remote not enabled");
+
 	this->remote_connect(*this->m_remote, true);
 
 	// Set current FSBASE to remote FSBASE
@@ -104,7 +107,7 @@ Machine::address_t Machine::remote_base_address() const noexcept
 {
 	if (this->is_remote_connected())
 		return this->m_remote->main_memory().physbase;
-	return 0;
+	return ~0ULL;
 }
 
 } // tinykvm
