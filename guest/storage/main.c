@@ -10,7 +10,11 @@ int main()
 {
 	printf("Jumping to %p\n", &remote_function);
 	fflush(stdout);
-	return remote_function(double_int, 21);
+	for (int i = 0; i < 10; i++) {
+		const int val = remote_function(double_int, 21);
+		printf("Returned value: %d\n", val);
+	}
+	return 0;
 }
 
 int do_calculation(int value)

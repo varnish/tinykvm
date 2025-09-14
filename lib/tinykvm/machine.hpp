@@ -247,8 +247,11 @@ struct Machine
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
 
 	/* Remote VM through address space merging */
-	void remote_connect(Machine& other);
+	void remote_connect(Machine& other, bool connect_now = true);
+	void remote_activate_now();
+	void remote_disconnect();
 	bool is_remote_connected() const noexcept { return m_remote != nullptr; };
+	address_t remote_base_address() const noexcept;
 	const Machine& remote() const;
 	Machine& remote();
 

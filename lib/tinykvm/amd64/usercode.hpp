@@ -8,7 +8,7 @@ struct user_asm_header {
 	uint16_t vm64_entry;
 	uint16_t vm64_rexit;
 	uint16_t vm64_preserving_entry;
-	uint16_t vm64_unused;
+	uint16_t vm64_remote_disconnect;
 	uint32_t vm64_cpuid;
 
 	uint64_t translated_vm_entry(const vMemory& memory) const noexcept {
@@ -19,6 +19,9 @@ struct user_asm_header {
 	}
 	uint64_t translated_vm_preserving_entry(const vMemory& memory) const noexcept {
 		return memory.physbase + USER_ASM_ADDR + vm64_preserving_entry;
+	}
+	uint64_t translated_vm_remote_disconnect(const vMemory& memory) const noexcept {
+		return memory.physbase + USER_ASM_ADDR + vm64_remote_disconnect;
 	}
 	uint64_t translated_vm_cpuid(const vMemory& memory) const noexcept {
 		return memory.physbase + USER_ASM_ADDR + vm64_cpuid;

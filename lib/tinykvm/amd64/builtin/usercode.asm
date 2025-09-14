@@ -3,7 +3,7 @@
 dw .vm64_entry
 dw .vm64_rexit
 dw .vm64_preserving_entry
-dw 0
+dw .vm64_remote_disconnect
 dd .vm64_cpuid
 
 ALIGN 0x10
@@ -41,7 +41,18 @@ ALIGN 0x10
 	;; With the registers restored, we can now
 	;; return to the guest program.
 	ret
-
+.vm64_remote_disconnect:
+	push rax
+	push rax
+	push r11
+	push rcx
+	;; Execute a system call that disconnects the remote VM.
+	mov rax, 0x1F778
+	syscall
+	pop rcx
+	pop r11
+	pop rax
+	ret  ;; RAX replaced with return value
 
 %macro  vcputable 1 
 	dd %1
