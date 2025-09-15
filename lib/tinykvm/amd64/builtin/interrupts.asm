@@ -287,21 +287,19 @@ ALIGN 0x10
 	mov rdx, rax
 	shr rdx, 32
 	wrmsr
-	pop rdx
-	pop rcx
 
 	;; Make the next function call return to a custom system call location
-	push rbx
 	;; Get remote-disconnect syscall address
 	mov rax, [INTR_ASM_BASE + .vm64_remote_return_addr]
 	;; Get original stack pointer
-	mov rbx, [rsp + 16 + 32] ;; Original RSP
+	mov rcx, [rsp + 24 + 32] ;; Original RSP
 	;; Overwrite the return address
 	stac
-	mov [rbx], rax ;; Return address
+	mov [rcx], rax ;; Return address
 	clac
 
-	pop rbx
+	pop rdx
+	pop rcx
 	pop rax
 	add rsp, 8 ;; Skip error code
 
