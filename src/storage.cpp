@@ -170,7 +170,7 @@ int main(int argc, char** argv)
 	tinykvm::Machine vm{master_vm, options};
 	assert(vm.is_remote_connected());
 
-	/* Call 'do_calculation' with 21 as argument */
+	/* Measure call overhead */
 	auto do_it = callback_address.find("do_nothing");
 	if (do_it == callback_address.end()) {
 		fprintf(stderr, "Error: no do_nothing() in guest\n");
@@ -187,6 +187,7 @@ int main(int argc, char** argv)
 	}) / 100.0;
 	printf("Call overhead: %.2fus\n", call_overhead * 1e6);
 
+	/* Call 'do_calculation' with 21 as argument */
 	printf("Calling do_calculation() @ 0x%lX\n", calc_it->second);
 	for (int i = 0; i < 10; i++)
 		vm.timed_vmcall(calc_it->second, 5.0f, 21);
