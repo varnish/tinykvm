@@ -178,7 +178,7 @@ uint64_t* vMemory::page_at(uint64_t addr) const
 		}
 	}
 	/* Remote machine always last resort */
-	if (machine.is_remote_connected())
+	if (machine.has_remote())
 	{
 		return machine.remote().main_memory().page_at(addr);
 	}
@@ -196,7 +196,7 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 	if (safely_within(addr, asize))
 		return &ptr[addr - physbase];
 	/* Remote machine always last resort */
-	if (machine.is_remote_connected())
+	if (machine.has_remote())
 	{
 		return machine.remote().main_memory().safely_at(addr, asize);
 	}
@@ -223,7 +223,7 @@ const char* vMemory::safely_at(uint64_t addr, size_t asize) const
 		}
 	}
 	/* Remote machine always last resort */
-	if (machine.is_remote_connected())
+	if (machine.has_remote())
 	{
 		return machine.remote().main_memory().safely_at(addr, asize);
 	}
@@ -249,7 +249,7 @@ std::string_view vMemory::view(uint64_t addr, size_t asize) const {
 		}
 	}
 	/* Remote machine always last resort */
-	if (machine.is_remote_connected())
+	if (machine.has_remote())
 	{
 		return machine.remote().main_memory().view(addr, asize);
 	}

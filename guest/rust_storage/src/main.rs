@@ -1,16 +1,16 @@
 use std::arch::asm;
-extern "C" { fn remote_function(arg: extern "C" fn(i32) -> i32, value: i32) -> i32; }
+extern "C" { fn remote_function(arg: fn(i32) -> i32, value: i32) -> i32; }
 use std::process::ExitCode;
+
+fn double_int(input: i32) -> i32 {
+    return input * 2;
+}
 
 extern "C" fn do_calculation(input: i32) -> i32 {
     return unsafe { remote_function(double_int, input) };
 }
 extern "C" fn do_nothing(_input: i32) -> i32 {
 	return 42;
-}
-
-extern "C" fn double_int(input: i32) -> i32 {
-    return input * 2;
 }
 
 // Don't exactly know how else to call a named function

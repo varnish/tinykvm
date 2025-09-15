@@ -23,10 +23,12 @@ TEST_CASE("Print from remote VM", "[Remote]")
 	const auto storage_binary = build_and_load(R"M(
 extern long write(int, const void*, unsigned long);
 int main() {
+	return 1234;
 }
 extern void remote_hello_world() {
 	write(1, "Hello Remote World!", 19);
-})M", "-Wl,-Ttext-segment=0x40400000");
+}
+)M", "-Wl,-Ttext-segment=0x40400000");
 
 	// Extract storage remote symbols
 	const std::string command = "objcopy -w --extract-symbol --strip-symbol=!remote* --strip-symbol=* " + storage_binary.first + " storage.syms";
@@ -40,6 +42,7 @@ extern void remote_hello_world() {
 extern void remote_hello_world();
 int main() {
 	remote_hello_world();
+	return 2345;
 }
 )M", "-Wl,--just-symbols=storage.syms");
 
@@ -49,17 +52,25 @@ int main() {
 	} };
 	storage.setup_linux({"storage"}, env);
 	storage.run(4.0f);
+	REQUIRE(storage.return_value() == 1234);
 
-	tinykvm::Machine machine { main_binary.second, { .max_mem = MAX_MEMORY } };
+	tinykvm::Machine machine { main_binary.second, {
+		.max_mem = MAX_MEMORY
+	} };
 	machine.setup_linux({"main"}, env);
 	machine.remote_connect(storage);
+	REQUIRE(machine.has_remote());
 
 	bool output_is_hello_world = false;
 	machine.set_printer([&] (const char* data, size_t size) {
-		std::string text{data, data + size};
+		std::string_view text{data, size};
 		output_is_hello_world = (text == "Hello Remote World!");
+		REQUIRE(machine.is_remote_connected());
 	});
 
 	machine.run(4.0f);
+	REQUIRE(machine.return_value() == 2345);
 	REQUIRE(output_is_hello_world);
+	REQUIRE(!machine.is_remote_connected());
+	REQUIRE(machine.remote_connection_count() == 1);
 }

@@ -125,7 +125,7 @@ int main(int argc, char** argv)
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 	storage_vm.run(5.0f);
 
-	master_vm.remote_connect(storage_vm, false);
+	master_vm.remote_connect(storage_vm);
 
 	static std::map<std::string, uint64_t> callback_address;
 	master_vm.install_unhandled_syscall_handler(
@@ -202,5 +202,6 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 	fork_tdiff -= call_overhead;
-	printf("Remote call time: %.2fus Return value: %ld\n", fork_tdiff * 1e6, vm.return_value());
+	printf("* Remote call time: %.2fus Return value: %ld\n", fork_tdiff * 1e6, vm.return_value());
+	printf("* Remote connections: %u\n", vm.remote_connection_count());
 }
