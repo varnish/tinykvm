@@ -8,4 +8,5 @@ objcopy -w --extract-symbol --strip-symbol=!remote* --strip-symbol=* $storage_bi
 gcc-12 -static -O2 symbol_offset.c -o symbol_offset
 ./symbol_offset storage.syms 0x44000000
 
-RUSTFLAGS="-Ctarget-feature=+crt-static -Zexport-executable-symbols -C link_arg=-Wl,--just-symbols=storage.syms" cargo build --target x86_64-unknown-linux-gnu --release
+rm -rf target/
+RUSTFLAGS="-Zexport-executable-symbols -C link_arg=-Wl,--undefined=do_calculation,--just-symbols=$PWD/storage.syms" cargo build --release

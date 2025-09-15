@@ -273,6 +273,9 @@ long vCPU::run_once()
 				} else if (UNLIKELY(addr < 0x2000)) {
 					/* Kernel space page fault */
 					this->handle_exception(intr);
+					if (machine().is_remote_connected()) {
+						machine().remote_disconnect();
+					}
 					Machine::machine_exception("Kernel or zero page fault", intr);
 				} else if (addr >= machine().remote_base_address()) {
 					if (this->remote_original_tls_base != 0) {
@@ -432,7 +435,7 @@ void vCPU::handle_exception(uint8_t intr)
 			"*** %s on address 0x%llX\n",
 			amd64_exception_name(intr), sregs.cr2);
 		uint64_t code;
-		machine().unsafe_copy_from_guest(&code, regs.rsp+8,  8);
+		machine().unsafe_copy_from_guest(&code, regs.rsp+16,  8);
 		PRINTER(printer, buffer,
 			"Error code: 0x%lX (%s)\n", code,
 			(code & 0x02) ? "memory write" : "memory read");
@@ -471,7 +474,7 @@ void vCPU::handle_exception(uint8_t intr)
 
 	try {
 		uint64_t off = (has_code) ? (regs.rsp+8) : (regs.rsp+0);
-		if (intr == 14) off += 8;
+		if (intr == 14) off += 16;
 		uint64_t rip, rfl, cs = 0x0, rsp, ss;
 		try {
 			machine().unsafe_copy_from_guest(&rip, off+0,  8);

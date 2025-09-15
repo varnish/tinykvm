@@ -164,7 +164,9 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	   stack being above the image base. */
 	const uint32_t STACK_SIZE = (options.stack_size + PageMask()) & ~PageMask();
 	this->m_stack_address = this->m_heap_address + STACK_SIZE;
-	this->m_heap_address = this->m_stack_address;
+	this->m_brk_address   = this->m_stack_address;
+	this->m_brk_end_address = this->m_stack_address + BRK_MAX;
+	this->m_heap_address = this->m_brk_end_address;
 
 	/* Make sure mmap starts at a sane offset */
 	this->mmap_cache().current() = this->m_heap_address;
@@ -268,10 +270,17 @@ static const Elf64_Sym* resolve_symbol(std::string_view binary, const char* name
 	return nullptr;
 }
 
-uint64_t Machine::address_of(const char* name) const
+uint64_t Machine::address_of(std::string_view name, std::string_view binary) const
 {
-	const auto* sym = resolve_symbol(m_binary, name);
+	if (binary.empty())
+		binary = this->m_binary;
+	const auto* sym = resolve_symbol(binary, name.data());
 	return (sym) ? this->m_image_base + sym->st_value : 0x0;
+}
+uint64_t Machine::address_of(std::string_view name, const std::vector<uint8_t>& binary) const
+{
+	return this->address_of(name, std::string_view{
+		reinterpret_cast<const char*>(binary.data()), binary.size()});
 }
 std::string Machine::resolve(uint64_t rip, std::string_view binary) const
 {

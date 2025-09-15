@@ -180,7 +180,8 @@ struct Machine
 	void do_mmap_callback(vCPU&, address_t, size_t, int, int, int, address_t);
 	void set_mmap_callback(mmap_func_t f) { m_mmap_func = std::move(f); }
 
-	uint64_t address_of(const char*) const;
+	uint64_t address_of(std::string_view symbol, const std::vector<uint8_t>&) const;
+	uint64_t address_of(std::string_view symbol, std::string_view binary = {}) const;
 	std::string resolve(uint64_t rip, std::string_view binary = {}) const;
 
 	bool smp_active() const noexcept;

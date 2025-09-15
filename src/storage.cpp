@@ -1,6 +1,7 @@
 #include <tinykvm/machine.hpp>
 #include <cstring>
 #include <cstdio>
+#include <unistd.h>
 #include "assert.hpp"
 #include "load_file.hpp"
 #include "timing.hpp"
@@ -8,6 +9,7 @@
 #include <tinykvm/rsp_client.hpp>
 #define GUEST_MEMORY   1024UL * 1024 * 1024  /* 1024MB main memory */
 #define GUEST_WORK_MEM 256UL * 1024 * 1024 /* 256MB working memory */
+static const std::string ld_linux_so = "/lib64/ld-linux-x86-64.so.2";
 
 static double timed_action(std::function<void()> action)
 {
@@ -30,9 +32,17 @@ int main(int argc, char** argv)
 		fprintf(stderr, "%s  [guest ELF] [storage ELF]\n", argv[0]);
 		exit(1);
 	}
-	const auto guest_binary   = load_file(argv[1]);
-	const auto storage_binary = load_file(argv[2]);
-	printf(">>> Guest: %s  >>> Storage: %s\n", argv[1], argv[2]);
+	const std::string guest_binary_path = argv[1];
+	auto original_guest_binary = load_file(guest_binary_path);
+	const std::string storage_binary_path = argv[2];
+	const auto storage_binary = load_file(storage_binary_path);
+	printf(">>> Guest: %s  >>> Storage: %s\n", guest_binary_path.c_str(), storage_binary_path.c_str());
+	std::string cwd;
+	{
+		char buf[PATH_MAX];
+		if (getcwd(buf, sizeof(buf)) != nullptr)
+			cwd = buf;
+	}
 
 	tinykvm::Machine::init();
 
@@ -54,17 +64,43 @@ int main(int argc, char** argv)
 		}
 	});
 
+	std::vector<std::string> guest_args;
+	std::vector<uint8_t> guest_binary;
+	const tinykvm::DynamicElf guest_dyn_elf = tinykvm::is_dynamic_elf(
+		std::string_view{(const char*)original_guest_binary.data(), original_guest_binary.size()});
+	if (guest_dyn_elf.is_dynamic) {
+		// Add ld-linux.so.2 as first argument
+		guest_binary = load_file(ld_linux_so);
+		guest_args.push_back(ld_linux_so);
+	} else {
+		guest_binary = original_guest_binary;
+	}
+	guest_args.push_back(guest_binary_path);
+	guest_args.push_back("Hello Main World!");
+
 	/* Setup */
 	const tinykvm::MachineOptions options {
 		.max_mem = GUEST_MEMORY,
 		.max_cow_mem = GUEST_WORK_MEM,
-		.verbose_loader = false
+		.dylink_address_hint = 0x400000, // 4MB
+		.verbose_loader = false,
+		.executable_heap = guest_dyn_elf.is_dynamic,
+		.mmap_backed_files = true,
 	};
 	tinykvm::Machine master_vm {guest_binary, options};
 	master_vm.setup_linux(
-		{"main", "Hello Main World!"},
+		guest_args,
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 	//master_vm.print_pagetables();
+	master_vm.fds().set_open_readable_callback(
+		[] (std::string&) -> bool {
+		return true;
+	});
+	master_vm.set_verbose_system_calls(getenv("VERBOSE") != nullptr);
+
+	std::vector<std::string> storage_args;
+	storage_args.push_back(storage_binary_path);
+	storage_args.push_back("Hello Storage World!");
 
 	/* Create storage VM */
 	const tinykvm::MachineOptions storage_options {
@@ -72,14 +108,38 @@ int main(int argc, char** argv)
 		.dylink_address_hint = 0x44000000, // 1GB + 64MB
 		.vmem_base_address = 1ULL << 30, // 1GB
 		.verbose_loader = false,
+		.mmap_backed_files = true,
 	};
 	tinykvm::Machine storage_vm{storage_binary, storage_options};
+	storage_vm.set_verbose_system_calls(getenv("VERBOSE") != nullptr);
+	storage_vm.set_verbose_mmap_syscalls(getenv("VERBOSE") != nullptr);
+	storage_vm.set_verbose_thread_syscalls(getenv("VERBOSE") != nullptr);
+	storage_vm.fds().set_open_readable_callback(
+		[] (std::string&) -> bool {
+		return true;
+	});
+	storage_vm.fds().set_current_working_directory(cwd.c_str());
 	storage_vm.setup_linux(
-		{"storage", "Hello Storage World!"},
+		storage_args,
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 	storage_vm.run(5.0f);
 
 	master_vm.remote_connect(storage_vm, false);
+
+	static uint64_t callback_address = 0x0;
+	master_vm.install_unhandled_syscall_handler(
+	[] (tinykvm::vCPU& cpu, unsigned sysnum) {
+		auto& regs = cpu.registers();
+		switch (sysnum) {
+			case 0x10001: // Set callback address
+				callback_address = regs.rdi;
+				return;
+			default:
+				printf("Unhandled master VM syscall: %u\n", sysnum);
+				regs.rax = -ENOSYS;
+				cpu.set_registers(regs);
+		}
+	});
 
 	auto tdiff = timed_action([&] {
 		try {
@@ -107,15 +167,15 @@ int main(int argc, char** argv)
 	assert(vm.is_remote_connected());
 
 	/* Call 'do_calculation' with 21 as argument */
-	const auto call_addr = vm.address_of("do_calculation");
-	if (call_addr == 0) {
+	if (callback_address == 0) {
 		fprintf(stderr, "Error: no do_calculation() in guest\n");
 		exit(1);
 	}
+	printf("Calling do_calculation() @ 0x%lX\n", callback_address);
 	for (int i = 0; i < 100; i++)
-		vm.timed_vmcall(call_addr, 5.0f, 21);
+		vm.timed_vmcall(callback_address, 5.0f, 21);
 	auto fork_tdiff = timed_action([&] {
-		vm.timed_vmcall(call_addr, 5.0f, 21);
+		vm.timed_vmcall(callback_address, 5.0f, 21);
 	});
 	printf("Fork call time: %.2fus Return value: %ld\n", fork_tdiff*1e6, vm.return_value());
 }
