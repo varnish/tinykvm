@@ -126,14 +126,18 @@ int main(int argc, char** argv)
 
 	master_vm.remote_connect(storage_vm, false);
 
-	static uint64_t callback_address = 0x0;
+	static std::map<std::string, uint64_t> callback_address;
 	master_vm.install_unhandled_syscall_handler(
 	[] (tinykvm::vCPU& cpu, unsigned sysnum) {
 		auto& regs = cpu.registers();
 		switch (sysnum) {
-			case 0x10001: // Set callback address
-				callback_address = regs.rdi;
-				return;
+			case 0x10001: { // Set callback address
+					auto view = cpu.machine().string_or_view(regs.rsi, regs.rdx);
+					const std::string name = view.to_string();
+					callback_address[name] = regs.rdi;
+					printf("Set callback '%s' to 0x%llX\n", name.c_str(), regs.rdi);
+					return;
+				}
 			default:
 				printf("Unhandled master VM syscall: %u\n", sysnum);
 				regs.rax = -ENOSYS;
@@ -167,15 +171,29 @@ int main(int argc, char** argv)
 	assert(vm.is_remote_connected());
 
 	/* Call 'do_calculation' with 21 as argument */
-	if (callback_address == 0) {
+	auto do_it = callback_address.find("do_nothing");
+	if (do_it == callback_address.end()) {
+		fprintf(stderr, "Error: no do_nothing() in guest\n");
+		exit(1);
+	}
+	auto calc_it = callback_address.find("do_calculation");
+	if (calc_it == callback_address.end()) {
 		fprintf(stderr, "Error: no do_calculation() in guest\n");
 		exit(1);
 	}
-	printf("Calling do_calculation() @ 0x%lX\n", callback_address);
-	for (int i = 0; i < 100; i++)
-		vm.timed_vmcall(callback_address, 5.0f, 21);
+	auto call_overhead = timed_action([&] {
+		for (int i = 0; i < 100; i++)
+			vm.timed_vmcall(do_it->second, 5.0f, 21);
+	}) / 100.0;
+	printf("Call overhead: %.2fus\n", call_overhead * 1e6);
+
+	printf("Calling do_calculation() @ 0x%lX\n", calc_it->second);
+	for (int i = 0; i < 10; i++)
+		vm.timed_vmcall(calc_it->second, 5.0f, 21);
 	auto fork_tdiff = timed_action([&] {
-		vm.timed_vmcall(callback_address, 5.0f, 21);
-	});
-	printf("Fork call time: %.2fus Return value: %ld\n", fork_tdiff*1e6, vm.return_value());
+		for (int i = 0; i < 100; i++)
+			vm.timed_vmcall(calc_it->second, 5.0f, 21);
+	}) / 100.0;
+	fork_tdiff -= call_overhead;
+	printf("Remote call time: %.2fus Return value: %ld\n", fork_tdiff * 1e6, vm.return_value());
 }

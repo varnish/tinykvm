@@ -95,6 +95,7 @@ struct Machine
 		const char* end() const noexcept { return sv.end(); }
 		const char* c_str() const noexcept { return sv.begin(); }
 		size_t size() const noexcept { return sv.size(); }
+		std::string to_string() const { return std::string{sv}; }
 
 		bool is_sequential() const noexcept { return str.empty(); }
 
