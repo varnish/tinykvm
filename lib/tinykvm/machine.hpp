@@ -252,8 +252,10 @@ struct Machine
 	void remote_connect(Machine& other, bool connect_now = true);
 	address_t remote_activate_now();
 	address_t remote_disconnect();
-	bool is_remote_connected() const noexcept { return m_remote != nullptr; };
+	bool has_remote() const noexcept { return m_remote != nullptr; }
+	bool is_remote_connected() const noexcept;
 	address_t remote_base_address() const noexcept;
+	uint32_t remote_connection_count() const noexcept { return m_remote_connections; }
 	const Machine& remote() const;
 	Machine& remote();
 
@@ -344,6 +346,7 @@ private:
 	mutable std::unique_ptr<FileDescriptors> m_fds = nullptr;
 
 	Machine* m_remote = nullptr;
+	uint32_t m_remote_connections = 0;
 
 	std::unique_ptr<MachineProfiling> m_profiling = nullptr;
 

@@ -273,12 +273,10 @@ long vCPU::run_once()
 				} else if (UNLIKELY(addr < 0x2000)) {
 					/* Kernel space page fault */
 					this->handle_exception(intr);
-					if (machine().is_remote_connected()) {
-						machine().remote_disconnect();
-					}
+					machine().remote_disconnect();
 					Machine::machine_exception("Kernel or zero page fault", intr);
 				} else if (addr >= machine().remote_base_address()) {
-					if (this->remote_original_tls_base != 0) {
+					if (machine().is_remote_connected()) {
 						// Already connected, so this is a page fault in the remote VM
 						this->handle_exception(intr);
 						Machine::machine_exception("Remote VM page fault while already connected", intr);

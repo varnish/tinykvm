@@ -6,13 +6,13 @@ namespace tinykvm {
 
 Machine& Machine::remote()
 {
-	if (this->is_remote_connected())
+	if (this->has_remote())
 		return *m_remote;
 	throw MachineException("Remote not enabled");
 }
 const Machine& Machine::remote() const
 {
-	if (this->is_remote_connected())
+	if (this->has_remote())
 		return *m_remote;
 	throw MachineException("Remote not enabled");
 }
@@ -27,20 +27,22 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 		throw MachineException("Remote already connected to another VM");
 	}
 
-	// Copy gigabyte pages covered by remote memory into these page tables
-	static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
-	auto* main_pml4 = this->main_memory().page_at(this->main_memory().page_tables);
-	auto* main_pdpt = this->main_memory().page_at(main_pml4[0] & PDE64_ADDR_MASK);
-
-	auto* remote_pml4 = remote.main_memory().page_at(remote.main_memory().page_tables);
-	auto* remote_pdpt = remote.main_memory().page_at(remote_pml4[0] & PDE64_ADDR_MASK);
-
-	// Gigabyte starting index and end index (rounded up)
-	const auto begin = remote_vmem.physbase >> 30;
-	const auto end   = (remote_vmem.physbase + remote_vmem.size + 0x3FFFFFFF) >> 30;
-
 	if (connect_now)
 	{
+		// Copy gigabyte entries covered by remote memory into these page tables
+		static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
+		auto* main_pml4 = this->main_memory().page_at(this->main_memory().page_tables);
+		auto* main_pdpt = this->main_memory().page_at(main_pml4[0] & PDE64_ADDR_MASK);
+
+		auto* remote_pml4 = remote.main_memory().page_at(remote.main_memory().page_tables);
+		auto* remote_pdpt = remote.main_memory().page_at(remote_pml4[0] & PDE64_ADDR_MASK);
+
+		// Gigabyte starting index and end index (rounded up)
+		const auto begin = remote_vmem.physbase >> 30;
+		const auto end   = (remote_vmem.physbase + remote_vmem.size + 0x3FFFFFFF) >> 30;
+		if (UNLIKELY(begin >= 512 || end > 512 || begin >= end))
+			throw MachineException("Remote memory produced invalid indexes (>512GB?)");
+
 		// Install gigabyte entries from remote VM into this VM
 		// The VM and page tables technically support 2MB region alignments.
 		for (size_t i = begin; i < end; i++)
@@ -68,6 +70,7 @@ Machine::address_t Machine::remote_activate_now()
 		throw MachineException("Remote not enabled");
 
 	this->remote_connect(*this->m_remote, true);
+	this->m_remote_connections++;
 
 	// Set current FSBASE to remote FSBASE
 	vcpu.remote_original_tls_base = get_fsgs().first;
@@ -78,7 +81,7 @@ Machine::address_t Machine::remote_activate_now()
 }
 Machine::address_t Machine::remote_disconnect()
 {
-	if (this->m_remote == nullptr)
+	if (!this->is_remote_connected())
 		return 0;
 
 	// Unpresent gigabyte entries from remote VM in this VM
@@ -97,15 +100,18 @@ Machine::address_t Machine::remote_disconnect()
 	}
 
 	// Restore original FSBASE
-	auto result = vcpu.remote_original_tls_base;
-	vcpu.remote_original_tls_base = 0;
-	return result;
+	auto tls_base = this->vcpu.remote_original_tls_base;
+	this->vcpu.remote_original_tls_base = 0;
+	return tls_base;
 }
-
+bool Machine::is_remote_connected() const noexcept
+{
+	return this->m_remote != nullptr && this->vcpu.remote_original_tls_base != 0;
+}
 
 Machine::address_t Machine::remote_base_address() const noexcept
 {
-	if (this->is_remote_connected())
+	if (this->has_remote())
 		return this->m_remote->main_memory().physbase;
 	return ~0ULL;
 }

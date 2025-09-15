@@ -168,7 +168,7 @@ int main(int argc, char** argv)
 
 	/* Fork the master VM, and install remote memory */
 	tinykvm::Machine vm{master_vm, options};
-	assert(vm.is_remote_connected());
+	assert(vm.has_remote());
 
 	/* Measure call overhead */
 	auto do_it = callback_address.find("do_nothing");
@@ -189,12 +189,17 @@ int main(int argc, char** argv)
 
 	/* Call 'do_calculation' with 21 as argument */
 	printf("Calling do_calculation() @ 0x%lX\n", calc_it->second);
-	for (int i = 0; i < 10; i++)
-		vm.timed_vmcall(calc_it->second, 5.0f, 21);
+	for (int i = 0; i < 50; i++)
+		vm.vmcall(calc_it->second, 21);
 	auto fork_tdiff = timed_action([&] {
-		for (int i = 0; i < 100; i++)
-			vm.timed_vmcall(calc_it->second, 5.0f, 21);
-	}) / 100.0;
+		for (int i = 0; i < 500; i++)
+			vm.vmcall(calc_it->second, 21);
+	}) / 500.0;
+	if (vm.remote_connection_count() < 500) {
+		fprintf(stderr, "Error: only %u remote connections were made, expected 500\n",
+			vm.remote_connection_count());
+		exit(1);
+	}
 	fork_tdiff -= call_overhead;
 	printf("Remote call time: %.2fus Return value: %ld\n", fork_tdiff * 1e6, vm.return_value());
 }

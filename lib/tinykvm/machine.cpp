@@ -101,7 +101,7 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->install_memory(0, memory.vmem(), false);
 
 	/* Install remote VM memory too, if enabled. (read-write) */
-	if (other.is_remote_connected()) {
+	if (other.has_remote()) {
 		this->m_remote = other.m_remote;
 		this->install_memory(1, remote().memory.vmem(), false);
 	}
@@ -191,7 +191,7 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 		this->delete_memory(0);
 		this->install_memory(0, memory.vmem(), true);
 		/* Swap remote memory, when enabled. */
-		if (this->is_remote_connected()) {
+		if (this->has_remote()) {
 			this->delete_memory(1);
 			this->install_memory(1, remote().memory.vmem(), true);
 		}
