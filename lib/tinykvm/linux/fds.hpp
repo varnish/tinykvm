@@ -43,6 +43,15 @@ namespace tinykvm
 		~FileDescriptors();
 		void reset_to(const FileDescriptors& other);
 
+		/// @brief Set a new starting virtual file descriptor. This is useful
+		/// when there exists a remote VM with its own set of virtual file
+		/// descriptors, and we want to avoid "collisions". FDs can't be
+		/// shared between remote VMs, but it's useful to distinguish them.
+		/// @param vfd_start The new starting virtual file descriptor.
+		void set_vfd_start(int vfd_start) noexcept {
+			m_next_fd = vfd_start;
+		}
+
 		/// @brief Add a file descriptor to the list of managed FDs.
 		/// @param fd The real file descriptor.
 		/// @param is_socket True if the file descriptor is a socket.

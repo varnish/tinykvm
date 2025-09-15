@@ -114,6 +114,7 @@ int main(int argc, char** argv)
 	storage_vm.set_verbose_system_calls(getenv("VERBOSE") != nullptr);
 	storage_vm.set_verbose_mmap_syscalls(getenv("VERBOSE") != nullptr);
 	storage_vm.set_verbose_thread_syscalls(getenv("VERBOSE") != nullptr);
+	storage_vm.fds().set_vfd_start(65536); // Avoid "collisions" with master VM
 	storage_vm.fds().set_open_readable_callback(
 		[] (std::string&) -> bool {
 		return true;
@@ -183,7 +184,7 @@ int main(int argc, char** argv)
 	}
 	auto call_overhead = timed_action([&] {
 		for (int i = 0; i < 100; i++)
-			vm.timed_vmcall(do_it->second, 5.0f, 21);
+			vm.vmcall(do_it->second, 5.0f, 21);
 	}) / 100.0;
 	printf("Call overhead: %.2fus\n", call_overhead * 1e6);
 
