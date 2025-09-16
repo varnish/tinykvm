@@ -1,5 +1,5 @@
 set -v
-gcc-12 -static -O2 -Wl,-Ttext-segment=0x44000000 storage.c -o storage
+clang++-20 -static -O2 -std=c++20 -Wl,-Ttext-segment=0x44000000 storage.cpp -o storage
 
 objcopy -w --extract-symbol --strip-symbol=!remote* --strip-symbol=* storage storage.syms
-gcc-12 -static -O2 -Wl,--just-symbols=storage.syms main.c -o main
+clang++-20 -static -O2 -std=c++20 -Wl,--just-symbols=storage.syms main.cpp -o main

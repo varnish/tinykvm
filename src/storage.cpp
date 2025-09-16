@@ -215,35 +215,46 @@ int main(int argc, char** argv)
 	assert(vm.has_remote());
 
 	/* Measure call overhead */
+	uint64_t do_nothing_addr = 0x0;
+	uint64_t do_calculation_addr = 0x0;
 	auto do_it = callback_address.find("do_nothing");
 	if (do_it == callback_address.end()) {
-		fprintf(stderr, "Error: no do_nothing() in guest\n");
-		exit(1);
+		do_nothing_addr = master_vm.address_of("do_nothing");
+		if (do_nothing_addr == 0x0) {
+			fprintf(stderr, "Error: no do_nothing() in guest\n");
+			exit(1);
+		}
+	} else {
+		do_nothing_addr = do_it->second;
 	}
 	auto calc_it = callback_address.find("do_calculation");
 	if (calc_it == callback_address.end()) {
-		fprintf(stderr, "Error: no do_calculation() in guest\n");
-		exit(1);
+		do_calculation_addr = master_vm.address_of("do_calculation");
+		if (do_calculation_addr == 0x0) {
+			fprintf(stderr, "Error: no do_calculation() in guest\n");
+			exit(1);
+		}
+	} else {
+		do_calculation_addr = calc_it->second;
 	}
-	auto call_overhead = timed_action([&] {
-		for (int i = 0; i < 100; i++)
-			vm.vmcall(do_it->second, 5.0f, 21);
-	}) / 100.0;
-	printf("Call overhead: %.2fus\n", call_overhead * 1e6);
+	TimedResult call_overhead = timed_action(1000, [&] {
+		vm.vmcall(do_nothing_addr, 5.0f, 21);
+	});
+	printf("Call overhead: %.2fus\n", call_overhead.median * 1e6);
 
 	/* Call 'do_calculation' with 21 as argument */
-	printf("Calling do_calculation() @ 0x%lX\n", calc_it->second);
+	printf("Calling do_calculation() @ 0x%lX\n", do_calculation_addr);
 	for (int i = 0; i < 50; i++)
-		vm.vmcall(calc_it->second, 21);
+		vm.vmcall(do_calculation_addr, 21);
 	TimedResult fork_tdiff = timed_action(15000, [&] {
-		vm.vmcall(calc_it->second, 21);
+		vm.vmcall(do_calculation_addr, 21);
 	});
 	if (vm.remote_connection_count() < 15000) {
 		fprintf(stderr, "Error: only %u remote connections were made, expected 500\n",
 			vm.remote_connection_count());
 		exit(1);
 	}
-	fork_tdiff -= call_overhead;
+	fork_tdiff -= call_overhead.median;
 	printf("* Remote call time: avg %.2fus  med %.2fus  p50 %.2fus  p90 %.2fus  p99 %.2fus  min %.2fus  max %.2fus\n",
 		fork_tdiff.average * 1e6, fork_tdiff.median * 1e6,
 		fork_tdiff.p50 * 1e6, fork_tdiff.p90 * 1e6,
