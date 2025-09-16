@@ -239,17 +239,8 @@ ALIGN 0x10
 .vm64_remote_disconnect:
 	out 0, eax
 	;; RAX contains the original FSBASE of this VM
-	stac
 	;; Write to FSBASE MSR
-	push rcx
-	push rdx
-	mov ecx, 0xC0000100  ;; FSBASE
-	mov rdx, rax
-	shr rdx, 32
-	wrmsr
-	pop rdx
-	pop rcx
-	clac
+	wrfsbase rax
 	;; Reset pagetables
 	mov rax, cr3
 	mov cr3, rax
@@ -268,6 +259,7 @@ ALIGN 0x10
 	push rax
 	push rdi
 	mov rdi, cr2 ;; Faulting address
+	mov eax, [rsp + 16] ;; Error code
 	out 128 + 14, eax
 	invlpg [rdi]
 	pop rdi
@@ -281,24 +273,19 @@ ALIGN 0x10
 .vm64_remote_page_fault:
 	;; RAX: Remote FSBASE
 	;; Write to FSBASE MSR
+	wrfsbase rax
 	push rcx
-	push rdx
-	mov ecx, 0xC0000100  ;; FSBASE
-	mov rdx, rax
-	shr rdx, 32
-	wrmsr
 
 	;; Make the next function call return to a custom system call location
 	;; Get remote-disconnect syscall address
 	mov rax, [INTR_ASM_BASE + .vm64_remote_return_addr]
 	;; Get original stack pointer
-	mov rcx, [rsp + 24 + 32] ;; Original RSP
+	mov rcx, [rsp + 16 + 32] ;; Original RSP
 	;; Overwrite the return address
 	stac
 	mov [rcx], rax ;; Return address
 	clac
 
-	pop rdx
 	pop rcx
 	pop rax
 	add rsp, 8 ;; Skip error code

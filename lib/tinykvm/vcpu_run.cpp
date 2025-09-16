@@ -281,6 +281,13 @@ long vCPU::run_once()
 						this->handle_exception(intr);
 						Machine::machine_exception("Remote VM page fault while already connected", intr);
 					}
+					/* Check that the error code is instruction fetch failed */
+					const uint32_t errcode = regs.rax;
+					if ((errcode & 0x10) == 0) {
+						// Not an instruction fetch, something is fishy
+						this->handle_exception(intr);
+						Machine::machine_exception("Remote VM page fault", intr);
+					}
 					/* Remote VM page fault */
 					uint64_t retstack; machine().unsafe_copy_from_guest(&retstack, regs.rsp + 16 + 32, 8);
 					uint64_t retaddr; machine().unsafe_copy_from_guest(&retaddr, retstack, 8);
