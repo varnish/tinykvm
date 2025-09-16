@@ -23,4 +23,6 @@ else
 	exit 1
 fi
 
+# Verbose shell
+set -x
 ./build/storagekvm $MAIN $SECONDARY
