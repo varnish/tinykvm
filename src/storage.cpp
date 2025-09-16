@@ -1,4 +1,5 @@
 #include <tinykvm/machine.hpp>
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 #include <unistd.h>
@@ -24,6 +25,48 @@ static double timed_action(std::function<void()> action)
 	asm("" ::: "memory");
 
 	return nanodiff(t0, t1) / 1e9;
+}
+struct TimedResult {
+	double average = 0;
+	double median = 0;
+	double p50 = 0;
+	double p90 = 0;
+	double p99 = 0;
+	double min = 0;
+	double max = 0;
+
+	TimedResult& operator -=(double v) {
+		average -= v;
+		median -= v;
+		p50 -= v;
+		p90 -= v;
+		p99 -= v;
+		min -= v;
+		max -= v;
+		return *this;
+	}
+};
+static TimedResult timed_action(int times, std::function<void()> action)
+{
+	if (times == 0) return {};
+	std::vector<double> diffs;
+	double total = 0;
+	for (int i = 0; i < times; i++) {
+		double value = timed_action(action);
+		diffs.push_back(value);
+		total += value;
+	}
+	std::sort(diffs.begin(), diffs.end());
+
+	TimedResult result;
+	result.average = total / diffs.size();
+	result.median = diffs[diffs.size() / 2];
+	result.p50 = diffs[diffs.size() / 2];
+	result.p90 = diffs[static_cast<size_t>(diffs.size() * 0.9)];
+	result.p99 = diffs[static_cast<size_t>(diffs.size() * 0.99)];
+	result.min = diffs.front();
+	result.max = diffs.back();
+	return result;
 }
 
 int main(int argc, char** argv)
@@ -192,16 +235,19 @@ int main(int argc, char** argv)
 	printf("Calling do_calculation() @ 0x%lX\n", calc_it->second);
 	for (int i = 0; i < 50; i++)
 		vm.vmcall(calc_it->second, 21);
-	auto fork_tdiff = timed_action([&] {
-		for (int i = 0; i < 500; i++)
-			vm.vmcall(calc_it->second, 21);
-	}) / 500.0;
-	if (vm.remote_connection_count() < 500) {
+	TimedResult fork_tdiff = timed_action(15000, [&] {
+		vm.vmcall(calc_it->second, 21);
+	});
+	if (vm.remote_connection_count() < 15000) {
 		fprintf(stderr, "Error: only %u remote connections were made, expected 500\n",
 			vm.remote_connection_count());
 		exit(1);
 	}
 	fork_tdiff -= call_overhead;
-	printf("* Remote call time: %.2fus Return value: %ld\n", fork_tdiff * 1e6, vm.return_value());
+	printf("* Remote call time: avg %.2fus  med %.2fus  p50 %.2fus  p90 %.2fus  p99 %.2fus  min %.2fus  max %.2fus\n",
+		fork_tdiff.average * 1e6, fork_tdiff.median * 1e6,
+		fork_tdiff.p50 * 1e6, fork_tdiff.p90 * 1e6,
+		fork_tdiff.p99 * 1e6, fork_tdiff.min * 1e6,
+		fork_tdiff.max * 1e6);
 	printf("* Remote connections: %u\n", vm.remote_connection_count());
 }
