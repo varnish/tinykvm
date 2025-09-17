@@ -1,6 +1,7 @@
 #pragma once
 #include "common.hpp"
 #include "forward.hpp"
+#include <mutex>
 
 namespace tinykvm
 {
@@ -49,6 +50,7 @@ namespace tinykvm
         void* timer_id = nullptr;
 		uint64_t remote_return_address = 0;
 		uint64_t remote_original_tls_base = 0;
+		std::mutex* remote_serializer = nullptr;
 
     private:
         struct kvm_run* kvm_run = nullptr;

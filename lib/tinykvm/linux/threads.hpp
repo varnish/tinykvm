@@ -36,6 +36,8 @@ struct MultiThreading {
 	void wakeup_next();
 
 	void reset_to(const MultiThreading& other);
+	size_t size() const { return m_threads.size(); }
+	const std::map<int, Thread>& threads() const { return m_threads; }
 
 	MultiThreading(Machine&);
 	Machine& machine;

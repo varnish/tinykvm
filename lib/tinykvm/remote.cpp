@@ -1,6 +1,8 @@
 #include "machine.hpp"
 #include "amd64/idt.hpp"
 #include "amd64/usercode.hpp"
+#include "linux/threads.hpp"
+#include <thread>
 
 namespace tinykvm {
 static constexpr bool VERBOSE_REMOTE = false;
@@ -77,20 +79,58 @@ Machine::address_t Machine::remote_activate_now()
 	this->remote_connect(*this->m_remote, true);
 	this->m_remote_connections++;
 
-	// Set current FSBASE to remote FSBASE
+	// Set current FSBASE to remote original FSBASE
 	vcpu.remote_original_tls_base = get_fsgs().first;
 
+	auto& remote = *this->m_remote;
+	if (remote.cpu().remote_serializer != nullptr)
+	{
+		// Use the remote serializer for this vCPU
+		remote.cpu().remote_serializer->lock();
+		if constexpr (VERBOSE_REMOTE) {
+			fprintf(stderr, "Remote has serialized access: this VM %p remote VM %p\n",
+				this, this->m_remote);
+		}
+	}
+	else if constexpr (false)
+	{
+		const int this_cpuid = this->vcpu.cpu_id;
+		if (remote.has_threads() && this_cpuid > 0 && remote.threads().size() > 1) {
+			// So, the idea here is to just pick a thread if there are enough
+			// threads to cover all possible vCPU IDs. This is a bit hacky, and
+			// ideally we'd like to have a list of self-assigned threads dedicated
+			// for the purpose of acting as "thread local" for each callee during
+			// a remote call. For now, counter-based selection should "work".
+			auto& threads = remote.threads().threads();
+			auto it = threads.begin();
+			for (int i = 0; i < this_cpuid && i < (int)threads.size(); i++, ++it);
+			if constexpr (VERBOSE_REMOTE) {
+				fprintf(stderr, "Remote activated on thread %d for vCPU %d\n", it->first, this_cpuid);
+			}
+			return it->second.fsbase;
+		}
+	}
 	// Return FSBASE of remote, which can be set more efficiently
 	// in the mini-kernel assembly
-	return this->m_remote->get_fsgs().first;
+	return remote.get_fsgs().first;
 }
 Machine::address_t Machine::remote_disconnect()
 {
 	if (!this->is_remote_connected())
 		return 0;
 
+	auto& remote = *this->m_remote;
+	if (remote.cpu().remote_serializer != nullptr)
+	{
+		// Unlock the remote serializer
+		remote.cpu().remote_serializer->unlock();
+		if constexpr (VERBOSE_REMOTE) {
+			fprintf(stderr, "Remote serializer unlocked: this VM %p remote VM %p\n", this, this->m_remote);
+		}
+	}
+
 	// Unpresent gigabyte entries from remote VM in this VM
-	const auto remote_vmem = this->m_remote->main_memory().vmem();
+	const auto remote_vmem = remote.main_memory().vmem();
 	static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
 	auto* main_pml4 = this->main_memory().page_at(this->main_memory().page_tables);
 	auto* main_pdpt = this->main_memory().page_at(main_pml4[0] & PDE64_ADDR_MASK);
