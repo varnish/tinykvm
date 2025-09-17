@@ -144,6 +144,9 @@ void Machine::reset_to(std::string_view binary, const MachineOptions& options)
 	if (UNLIKELY(this->is_forked() || this->is_forkable())) {
 		throw MachineException("Machine is forked or forkable, cannot be reset");
 	}
+	/* Disconnect from the remote, if it's still connected */
+	this->remote_disconnect();
+
 	this->m_mmap_cache = {};
 	this->m_mt.reset(nullptr);
 	this->m_signals.reset(nullptr);
@@ -164,6 +167,9 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 	ScopedProfiler<MachineProfiling::Reset> prof(this->profiling());
 	assert(m_forked && other.m_prepped &&
 		"This machine must be forked, and the source must be prepped");
+
+	/* Disconnect from the remote, if it's still connected */
+	this->remote_disconnect();
 
 	bool full_reset = false;
 	if (UNLIKELY(this->m_binary.begin() != other.m_binary.begin() ||

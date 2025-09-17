@@ -3,6 +3,7 @@
 #include "amd64/usercode.hpp"
 
 namespace tinykvm {
+static constexpr bool VERBOSE_REMOTE = false;
 
 Machine& Machine::remote()
 {
@@ -62,6 +63,10 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 
 	// Finalize
 	this->m_remote = &remote;
+	if constexpr (VERBOSE_REMOTE) {
+		fprintf(stderr, "Remote connected: this VM %p remote VM %p (%s)\n",
+			this, &remote, connect_now ? "just-in-time" : "setup");
+	}
 }
 
 Machine::address_t Machine::remote_activate_now()
@@ -102,6 +107,9 @@ Machine::address_t Machine::remote_disconnect()
 	// Restore original FSBASE
 	auto tls_base = this->vcpu.remote_original_tls_base;
 	this->vcpu.remote_original_tls_base = 0;
+	if constexpr (VERBOSE_REMOTE) {
+		fprintf(stderr, "Remote disconnected: this VM %p remote VM %p\n", this, this->m_remote);
+	}
 	return tls_base;
 }
 bool Machine::is_remote_connected() const noexcept
