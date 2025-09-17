@@ -278,17 +278,20 @@ long vCPU::run_once()
 					machine().remote_disconnect();
 					Machine::machine_exception("Kernel or zero page fault", intr);
 				} else if (machine().is_foreign_address(addr)) {
-					if (machine().is_remote_connected()) {
-						// Already connected, so this is a page fault in the remote VM
-						this->handle_exception(intr);
-						Machine::machine_exception("Remote VM page fault while already connected", intr);
-					}
 					/* Check that the error code is instruction fetch failed */
 					const uint32_t errcode = regs.rax;
 					if ((errcode & 0x10) == 0) {
-						// Not an instruction fetch, something is fishy
-						this->handle_exception(intr);
-						Machine::machine_exception("Remote VM page fault", intr);
+						if (machine().remote().is_remote_connected()) {
+							// Not an instruction fetch, but a memory read or write
+							// Since it's foreign memory, we try to handle it in the remote VM
+							machine().remote().memory.get_writable_page(addr, PDE64_USER | PDE64_RW, false, false);
+							return KVM_EXIT_IO;
+						} else {
+							// Not connected, so we can't handle it
+							this->handle_exception(intr);
+							Machine::machine_exception(
+								"Remote VM page fault while not connected", intr);
+						}
 					}
 					/* Remote VM page fault */
 					uint64_t retstack; machine().unsafe_copy_from_guest(&retstack, regs.rsp + 16 + 32, 8);
