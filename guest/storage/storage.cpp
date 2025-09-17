@@ -23,8 +23,8 @@ extern void remote_json(JsonDocument& j)
 	auto& alloc = j.GetAllocator();
 	// Create JSON object
 	j.SetObject();
-	j.AddMember(Value().SetString("key", alloc), Value().SetString("value", alloc), alloc);
-	j.AddMember(Value().SetString("number", alloc), 42, alloc);
+	j.AddMember(Value("key", alloc), Value("value", alloc), alloc);
+	j.AddMember(Value("number", alloc), Value(42), alloc);
 	// Add JSON from document string
 	JsonDocument d;
 	d.Parse(R"({"array": [1, 2, 3], "boolean": true})");
