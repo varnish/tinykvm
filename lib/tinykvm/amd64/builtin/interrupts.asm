@@ -281,7 +281,7 @@ ALIGN 0x10
 	mov rax, [INTR_ASM_BASE + .vm64_remote_return_addr]
 	;; Get original stack pointer
 	mov rcx, [rsp + 16 + 32] ;; Original RSP
-	;; Overwrite the return address
+	;; Overwrite the guests return address
 	stac
 	mov [rcx], rax ;; Return address
 	clac

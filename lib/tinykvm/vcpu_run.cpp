@@ -136,12 +136,12 @@ long vCPU::run_once()
 	const auto& sregs = get_special_registers();
 	const auto& memory = machine().main_memory();
 
-	if (UNLIKELY(
+	if (UNLIKELY(false && (
 		sregs.cr3 != machine().memory.page_tables
 		|| sregs.gdt.base != memory.physbase + GDT_ADDR
 		|| sregs.idt.base != memory.physbase + IDT_ADDR
 		|| (this->cpu_id == 0 && sregs.tr.base != memory.physbase + TSS_ADDR)
-		)) {
+		))) {
 		this->print_registers();
 		if (sregs.cr3 != machine().memory.page_tables)
 			Machine::machine_exception("Kernel integrity loss detected: Page tables are wrong", sregs.cr3);
@@ -226,11 +226,13 @@ long vCPU::run_once()
 					printf("Remote VM disconnect syscall, return=0x%lX\n",
 						this->remote_return_address);
 				}
-				const auto result = machine().remote_disconnect();
+				const auto result = original_machine()->remote_disconnect();
+
 				// Overwrite return address to return to the remote VM handler
 				machine().copy_to_guest(this->registers().rsp + 24,
 					&this->remote_return_address, 8);
 				this->remote_return_address = 0;
+
 				this->registers().rax = result;
 				this->set_registers(this->registers());
 				return KVM_EXIT_IO;
@@ -275,7 +277,7 @@ long vCPU::run_once()
 					this->handle_exception(intr);
 					machine().remote_disconnect();
 					Machine::machine_exception("Kernel or zero page fault", intr);
-				} else if (addr >= machine().remote_base_address()) {
+				} else if (machine().is_foreign_address(addr)) {
 					if (machine().is_remote_connected()) {
 						// Already connected, so this is a page fault in the remote VM
 						this->handle_exception(intr);

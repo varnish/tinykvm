@@ -62,7 +62,7 @@ int main() {
 	REQUIRE(machine.has_remote());
 
 	bool output_is_hello_world = false;
-	machine.set_printer([&] (const char* data, size_t size) {
+	storage.set_printer([&] (const char* data, size_t size) {
 		std::string_view text{data, size};
 		output_is_hello_world = (text == "Hello Remote World!");
 		REQUIRE(machine.is_remote_connected());

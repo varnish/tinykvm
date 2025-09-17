@@ -38,6 +38,11 @@ namespace tinykvm
 
         auto& machine() { return *m_machine; }
         const auto& machine() const { return *m_machine; }
+		void set_machine(Machine* m) { m_machine = m; }
+		void set_original_machine(Machine* m) {
+			this->m_original_machine = m;
+		}
+		Machine* original_machine() const { return this->m_original_machine; }
 
 		void set_vcpu_table_at(unsigned index, int value);
 		bool timed_out() const;
@@ -55,6 +60,7 @@ namespace tinykvm
     private:
         struct kvm_run* kvm_run = nullptr;
         Machine* m_machine = nullptr;
+		Machine* m_original_machine = nullptr;
 
 		uint64_t vcpu_table_addr() const noexcept;
     };

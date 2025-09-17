@@ -345,6 +345,11 @@ MemoryBank::Page vMemory::new_hugepage()
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, bool dirty)
 {
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
+	if (machine.has_remote() && machine.is_foreign_address(addr)) {
+		// When connected to a remote VM, we can access the remote kernel memory
+		return machine.remote().main_memory().get_writable_page(addr, flags, zeroes, dirty);
+	}
+
 	WritablePageOptions zero_opts;
 	zero_opts.zeroes = zeroes;
 	auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
@@ -356,6 +361,10 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, boo
 
 char* vMemory::get_kernelpage_at(uint64_t addr) const
 {
+	if (machine.has_remote() && machine.is_foreign_address(addr)) {
+		// When connected to a remote VM, we can access the remote kernel memory
+		return machine.remote().main_memory().get_kernelpage_at(addr);
+	}
 #ifdef TINYKVM_ARCH_AMD64
 	constexpr uint64_t flags = PDE64_PRESENT;
 	return readable_page_at(*this, addr, flags);
@@ -366,6 +375,10 @@ char* vMemory::get_kernelpage_at(uint64_t addr) const
 
 char* vMemory::get_userpage_at(uint64_t addr) const
 {
+	if (machine.has_remote() && machine.is_foreign_address(addr)) {
+		// When connected to a remote VM, we can access the remote kernel memory
+		return machine.remote().main_memory().get_userpage_at(addr);
+	}
 #ifdef TINYKVM_ARCH_AMD64
 	constexpr uint64_t flags = PDE64_PRESENT | PDE64_USER;
 	return readable_page_at(*this, addr, flags);

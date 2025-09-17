@@ -70,6 +70,13 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 			this, &remote, connect_now ? "just-in-time" : "setup");
 	}
 }
+void Machine::remote_connect_halfway(Machine& other)
+{
+	if (&other == this)
+		this->m_remote = nullptr;
+	else
+		this->m_remote = &other;
+}
 
 Machine::address_t Machine::remote_activate_now()
 {
@@ -110,6 +117,10 @@ Machine::address_t Machine::remote_activate_now()
 			return it->second.fsbase;
 		}
 	}
+	remote.remote_connect_halfway(*this);
+	// Set the vCPU machine to the remote machine
+	this->vcpu.set_original_machine(this);
+	this->vcpu.set_machine(&remote);
 	// Return FSBASE of remote, which can be set more efficiently
 	// in the mini-kernel assembly
 	return remote.get_fsgs().first;
@@ -128,6 +139,10 @@ Machine::address_t Machine::remote_disconnect()
 			fprintf(stderr, "Remote serializer unlocked: this VM %p remote VM %p\n", this, this->m_remote);
 		}
 	}
+
+	// Restore the vCPU machine to the original machine
+	this->vcpu.set_machine(this->vcpu.original_machine());
+	remote.remote_connect_halfway(remote); // Clear halfway state
 
 	// Unpresent gigabyte entries from remote VM in this VM
 	const auto remote_vmem = remote.main_memory().vmem();
@@ -148,7 +163,8 @@ Machine::address_t Machine::remote_disconnect()
 	auto tls_base = this->vcpu.remote_original_tls_base;
 	this->vcpu.remote_original_tls_base = 0;
 	if constexpr (VERBOSE_REMOTE) {
-		fprintf(stderr, "Remote disconnected: this VM %p remote VM %p\n", this, this->m_remote);
+		fprintf(stderr, "Remote disconnected, TLS base restored to 0x%lX: this VM %p remote VM %p\n",
+			tls_base, this, this->m_remote);
 	}
 	return tls_base;
 }
@@ -159,9 +175,19 @@ bool Machine::is_remote_connected() const noexcept
 
 Machine::address_t Machine::remote_base_address() const noexcept
 {
-	if (this->has_remote())
-		return this->m_remote->main_memory().physbase;
+	if (this->has_remote()) {
+		const uint64_t base_addr = this->m_remote->main_memory().physbase;
+		return base_addr < this->main_memory().physbase ? 0 : base_addr;
+	}
 	return ~0ULL;
+}
+bool Machine::is_foreign_address(address_t addr) const noexcept
+{
+	if (this->has_remote()) {
+		const auto& rmem = this->m_remote->main_memory();
+		return addr >= rmem.physbase && addr < rmem.physbase + rmem.size;
+	}
+	return false;
 }
 
 } // tinykvm

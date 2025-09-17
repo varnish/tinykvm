@@ -250,10 +250,12 @@ struct Machine
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);
+	void remote_connect_halfway(Machine& other);
 	address_t remote_activate_now();
 	address_t remote_disconnect();
 	bool has_remote() const noexcept { return m_remote != nullptr; }
 	bool is_remote_connected() const noexcept;
+	bool is_foreign_address(address_t addr) const noexcept;
 	address_t remote_base_address() const noexcept;
 	uint32_t remote_connection_count() const noexcept { return m_remote_connections; }
 	const Machine& remote() const;
