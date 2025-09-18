@@ -261,7 +261,7 @@ ALIGN 0x10
 	out 128 + 14, eax
 	invlpg [rdi]
 	pop rdi
-	test eax, eax
+	test rax, rax
 	jnz .vm64_remote_page_fault
 	pop rax
 .vm64_pop_code:
@@ -276,7 +276,7 @@ ALIGN 0x10
 
 	;; Make the next function call return to a custom system call location
 	;; Get remote-disconnect syscall address
-	mov rax, [INTR_ASM_BASE + .vm64_remote_return_addr]
+	movzx rax, WORD [INTR_ASM_BASE + .vm64_remote_return_addr]
 	;; Get original stack pointer
 	mov rcx, [rsp + 16 + 32] ;; Original RSP
 	;; Overwrite the guests return address

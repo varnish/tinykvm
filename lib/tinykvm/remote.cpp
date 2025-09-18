@@ -176,7 +176,14 @@ bool Machine::is_foreign_address(address_t addr) const noexcept
 {
 	if (this->has_remote()) {
 		const auto& rmem = this->m_remote->main_memory();
-		return addr >= rmem.physbase && addr < rmem.physbase + rmem.size;
+		bool test = addr >= rmem.physbase && addr < rmem.physbase + rmem.size;
+		if constexpr (VERBOSE_REMOTE) {
+			if (test) {
+				printf("Foreign address 0x%lX is in remote memory 0x%lX-0x%lX\n",
+					addr, rmem.physbase, rmem.physbase + rmem.size);
+			}
+		}
+		return test;
 	}
 	return false;
 }

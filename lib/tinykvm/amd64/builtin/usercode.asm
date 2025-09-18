@@ -47,7 +47,7 @@ ALIGN 0x10
 	push r11
 	push rcx
 	;; Execute a system call that disconnects the remote VM.
-	mov rax, 0x1F778
+	mov eax, 0x1F778
 	syscall
 	pop rcx
 	pop r11
