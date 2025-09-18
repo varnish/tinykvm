@@ -110,10 +110,10 @@ ALIGN 0x10
 	;;         time >>= -tsc_shift;
 	;; time = (time * tsc_to_system_mul) >> 32
 	;; time = time + system_time
-	sub rax, QWORD [0x2028] ;; current_tsc - tsc_timestamp
+	sub rax, QWORD [rel .kvm_system_time + 8] ;; current_tsc - tsc_timestamp
 	;; Check if tsc_shift is negative
 	;; Load 8-bit signed value from system-time
-	mov cl, [0x2020 + 28] ;; tsc_shift
+	mov cl, [rel .kvm_system_time + 28] ;; tsc_shift
 	;; Left shift (assumes tsc_shift >= 0)
 	test cl, cl
 	js .system_time_neg_tsc_shift
@@ -126,34 +126,36 @@ ALIGN 0x10
 	shr rax, cl            ;; rax = rax >> -tsc_shift
 .system_time_tsc_shift_done:
 	;; Multiply by tsc_to_system_mul
-	mov ecx, [0x2020 + 24] ;; tsc_to_system_mul
+	mov ecx, [rel .kvm_system_time + 24] ;; tsc_to_system_mul
 	mul rcx                ;; into RAX:RDX
 	;; Right shift by 32 bits
 	shr rax, 32
 	shl rdx, 32
 	or rax, rdx          ;; RAX now contains the system time in nanoseconds
 	;; Add the system time base
-	add rax, [0x2020 + 16] ;; system_time_base
+	add rax, [rel .kvm_system_time + 16] ;; system_time_base
 
 	;; Test version is even
-	;;mov ebx, [0x2020]    ;; version
+	;;mov ebx, [rel .kvm_system_time + 0] ;; version
 	;;and ebx, 1
 	;;jnp .system_time_already_set ;; read again
 	ret
 
 .read_wall_clock:
-	mov ecx, DWORD [0x2014] ;; sec
+	mov ecx, DWORD [rel .kvm_wallclock + 4] ;; sec
 	test ecx, ecx
 	jnz .read_wall_clock_already_set
 	;; Read the wall clock from KVM
 	mov ecx, 0x4b564d00
-	mov eax, 0x2010 ;; data
-	mov edx, 0
+	lea rax, [rel .kvm_wallclock]
+	mov rdx, rax
+	shr rdx, 32  ;; high dword of pointer
+	mov eax, eax ;; low dword of pointer
 	wrmsr
 .read_wall_clock_already_set:
 	;; Read the wall clock
-	mov ecx, DWORD [0x2014] ;; sec
-	mov edx, DWORD [0x2018] ;; nsec
+	mov ecx, DWORD [rel .kvm_wallclock + 4] ;; sec
+	mov edx, DWORD [rel .kvm_wallclock + 8] ;; nsec
 	add rax, rdx  ;; Add nanoseconds to RAX
 	;; Seconds are in RCX now
 	ret
@@ -276,7 +278,7 @@ ALIGN 0x10
 
 	;; Make the next function call return to a custom system call location
 	;; Get remote-disconnect syscall address
-	movzx rax, WORD [INTR_ASM_BASE + .vm64_remote_return_addr]
+	movzx rax, WORD [rel .vm64_remote_return_addr]
 	;; Get original stack pointer
 	mov rcx, [rsp + 16 + 32] ;; Original RSP
 	;; Overwrite the guests return address
