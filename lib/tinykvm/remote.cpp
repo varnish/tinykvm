@@ -58,7 +58,6 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 		// Live-patch the interrupt assembly to support remote memory
 		uint64_t* iasm = memory.page_at(memory.physbase + INTR_ASM_ADDR);
 		iasm_header& hdr = *(iasm_header*)iasm;
-		hdr.vm64_remote_base = remote_vmem.physbase;
 		hdr.vm64_remote_return_addr =
 			usercode_header().translated_vm_remote_disconnect(this->main_memory());
 	}
@@ -173,14 +172,6 @@ bool Machine::is_remote_connected() const noexcept
 	return this->m_remote != nullptr && this->vcpu.remote_original_tls_base != 0;
 }
 
-Machine::address_t Machine::remote_base_address() const noexcept
-{
-	if (this->has_remote()) {
-		const uint64_t base_addr = this->m_remote->main_memory().physbase;
-		return base_addr < this->main_memory().physbase ? 0 : base_addr;
-	}
-	return ~0ULL;
-}
 bool Machine::is_foreign_address(address_t addr) const noexcept
 {
 	if (this->has_remote()) {

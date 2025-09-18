@@ -31,8 +31,6 @@ dw .vm64_dso
 .vm64_remote_return_addr:
 	dw 0x0   ;; Return address after remote call
 dd 0x0       ;; Reserved/Padding
-.vm64_remote_base:
-	dq 0x0   ;; Gigapage base address of the remote VM
 
 ALIGN 0x10
 .kvm_wallclock:   ;; 0x2010
