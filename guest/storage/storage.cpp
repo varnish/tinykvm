@@ -4,7 +4,7 @@
 #include "json.hpp"
 using namespace rapidjson;
 
-extern int remote_function(int (*arg)(int), int value)
+extern "C" int remote_function(int (*arg)(int), int value)
 {
 	//write(1, "In remote_function\n", 20);
 	return arg(value);
@@ -18,7 +18,7 @@ extern std::pmr::vector<int> remote_allocation(std::pmr::memory_resource* mr, si
 	return vec;
 }
 
-extern void remote_json(JsonDocument& j)
+extern "C" void remote_json(JsonDocument& j)
 {
 	auto& alloc = j.GetAllocator();
 	// Create JSON object

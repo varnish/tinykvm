@@ -25,4 +25,10 @@ fi
 
 # Verbose shell
 set -x
-./build/storagekvm $MAIN $SECONDARY
+# If second argument is --gdb, run under gdb
+if [ "$2" = "--gdb" ]; then
+	gdb --args ./build/storagekvm $MAIN $SECONDARY
+else
+	# Run normally
+	./build/storagekvm $MAIN $SECONDARY
+fi

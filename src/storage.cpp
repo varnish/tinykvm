@@ -148,8 +148,8 @@ int main(int argc, char** argv)
 	/* Create storage VM */
 	const tinykvm::MachineOptions storage_options {
 		.max_mem = 256ULL << 20, // MB
-		.dylink_address_hint = 0x44000000, // 1GB + 64MB
-		.vmem_base_address = 1ULL << 30, // 1GB
+		.dylink_address_hint = 0x4400200000,
+		.vmem_base_address = 0x4400000000,
 		.verbose_loader = false,
 		.mmap_backed_files = true,
 	};

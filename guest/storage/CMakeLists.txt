@@ -22,11 +22,16 @@ add_executable(storage
 	storage.cpp
 )
 target_compile_options(storage PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(storage PRIVATE -static -Wl,-Ttext-segment=0x44000000)
+target_link_libraries(storage PRIVATE -static-pie)
 target_link_libraries(storage PRIVATE RapidJSON)
 target_include_directories(storage PUBLIC
 	${CMAKE_CURRENT_SOURCE_DIR}
 	${CMAKE_BINARY_DIR}/_deps/rapidjson-src/include
+)
+
+# Symbol offset helper program
+add_executable(symbol_offset
+	${CMAKE_CURRENT_SOURCE_DIR}/symbol_offset.c
 )
 
 # Now execute objcopy to extract symbols
@@ -34,22 +39,26 @@ target_include_directories(storage PUBLIC
 # Output: storage.syms
 add_custom_command(
 	COMMAND objcopy -w --extract-symbol --strip-symbol=!remote* --strip-symbol=!_Z*remote* --strip-symbol=* storage storage.syms
+	COMMAND ./symbol_offset storage.syms 0x4400200000
 	OUTPUT storage.syms
 	DEPENDS storage
+	DEPENDS symbol_offset
 )
 add_custom_target(extract_symbols
 	DEPENDS storage.syms
 )
+set_source_files_properties("storage.syms" PROPERTIES GENERATED TRUE)
 
 # Now build main, linking against the symbols from storage.syms
 add_executable(main
     main.cpp
+	${CMAKE_CURRENT_BINARY_DIR}/storage.syms
 )
 target_compile_options(main PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(main PRIVATE -static -Wl,--just-symbols=$<TARGET_FILE:storage>.syms)
+target_link_libraries(main PRIVATE -static -Wl,--just-symbols=storage.syms)
 target_link_libraries(main PRIVATE RapidJSON)
 target_include_directories(main PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 	${CMAKE_BINARY_DIR}/_deps/rapidjson-src/include
 )
-add_dependencies(main extract_symbols)
+set_target_properties(main PROPERTIES LINK_DEPENDS "storage.syms")
