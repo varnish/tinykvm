@@ -130,6 +130,7 @@ Machine::address_t Machine::remote_disconnect()
 		return 0;
 
 	auto& remote = *this->m_remote;
+	remote.remote_connect_halfway(remote); // Clear halfway state
 	if (remote.cpu().remote_serializer != nullptr)
 	{
 		// Unlock the remote serializer
@@ -141,7 +142,6 @@ Machine::address_t Machine::remote_disconnect()
 
 	// Restore the vCPU machine to the original machine
 	this->vcpu.set_machine(this->vcpu.original_machine());
-	remote.remote_connect_halfway(remote); // Clear halfway state
 
 	// Unpresent gigabyte entries from remote VM in this VM
 	const auto remote_vmem = remote.main_memory().vmem();
