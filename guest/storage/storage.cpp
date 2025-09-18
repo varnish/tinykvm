@@ -30,7 +30,7 @@ extern void remote_json(JsonDocument& j)
 	d.Parse(R"({"array": [1, 2, 3], "boolean": true})");
 	assert(!d.HasParseError());
 	for (auto& m : d.GetObject())
-		j.AddMember(m.name, m.value, alloc);
+		j.AddMember(Value(m.name, alloc), Value(m.value, alloc), alloc);
 }
 
 int main()

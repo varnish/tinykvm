@@ -43,7 +43,7 @@ int main(int argc, char** argv)
 	}
 	close(fd);
 
-	const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*) data;
+	Elf64_Ehdr* ehdr = (const Elf64_Ehdr*) data;
 	if (ehdr->e_ident[EI_MAG0] != ELFMAG0 ||
 		ehdr->e_ident[EI_MAG1] != ELFMAG1 ||
 		ehdr->e_ident[EI_MAG2] != ELFMAG2 ||
@@ -55,6 +55,8 @@ int main(int argc, char** argv)
 		fprintf(stderr, "Not a valid x86-64 ELF object file\n");
 		exit(1);
 	}
+	// We need a static executable type in order for --just-symbols to work
+	ehdr->e_type = ET_EXEC; // Change to executable type
 
 	const Elf64_Shdr* shdr = (const Elf64_Shdr*) (data + ehdr->e_shoff);
 	const Elf64_Shdr* strtab_hdr = &shdr[ehdr->e_shstrndx];
@@ -93,6 +95,8 @@ int main(int argc, char** argv)
 				const uint64_t old_value = symtab[i].st_value;
 				((Elf64_Sym *) symtab)[i].st_value += offset;
 				printf("Symbol: %s at 0x%lX -> 0x%lX\n", &strtab[symtab[i].st_name], old_value, symtab[i].st_value);
+				// Also, make it absolute
+				((Elf64_Sym *) symtab)[i].st_shndx = SHN_ABS;
 			}
 		}
 	}
