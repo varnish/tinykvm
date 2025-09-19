@@ -32,6 +32,16 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	// Main memory is not always starting at 0x0
 	// The default top-level pagetable location
 	this->page_tables = this->physbase + PT_ADDR;
+	// Find the end of the virtual memory space, which includes
+	// any remapped areas. Remote access uses this to determine
+	// whether an address is inside this VM's memory space.
+	this->remote_end = this->physbase + this->size;
+	for (const auto& mapping : options.remappings) {
+		if (mapping.blackout) {
+			continue;
+		}
+		this->remote_end = std::max(this->remote_end, mapping.virt + mapping.size);
+	}
 }
 vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other)
 	: vMemory{m, options, other.physbase, other.safebase, other.ptr, other.size, false}
@@ -330,7 +340,7 @@ vMemory vMemory::New(Machine& m, const MachineOptions& options,
 
 VirtualMem vMemory::vmem() const
 {
-	return VirtualMem::New(physbase, ptr, size);
+	return VirtualMem::New(physbase, ptr, size, remote_end);
 }
 
 MemoryBank::Page vMemory::new_page()

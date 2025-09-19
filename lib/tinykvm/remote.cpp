@@ -42,7 +42,7 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 
 		// Gigabyte starting index and end index (rounded up)
 		const auto begin = remote_vmem.physbase >> 30;
-		const auto end   = (remote_vmem.physbase + remote_vmem.size + 0x3FFFFFFF) >> 30;
+		const auto end   = (remote_vmem.remote_end + 0x3FFFFFFF) >> 30;
 		if (UNLIKELY(begin >= 512 || end > 512 || begin >= end))
 			throw MachineException("Remote memory produced invalid indexes (>512GB?)");
 
@@ -151,7 +151,7 @@ Machine::address_t Machine::remote_disconnect()
 
 	// Gigabyte starting index and end index (rounded up)
 	const auto begin = remote_vmem.physbase >> 30;
-	const auto end   = (remote_vmem.physbase + remote_vmem.size + 0x3FFFFFFF) >> 30;
+	const auto end   = (remote_vmem.remote_end + 0x3FFFFFFF) >> 30;
 
 	for (size_t i = begin; i < end; i++)
 	{
@@ -176,11 +176,11 @@ bool Machine::is_foreign_address(address_t addr) const noexcept
 {
 	if (this->has_remote()) {
 		const auto& rmem = this->m_remote->main_memory();
-		bool test = addr >= rmem.physbase && addr < rmem.physbase + rmem.size;
+		bool test = addr >= rmem.physbase && addr < rmem.remote_end;
 		if constexpr (VERBOSE_REMOTE) {
 			if (test) {
 				printf("Foreign address 0x%lX is in remote memory 0x%lX-0x%lX\n",
-					addr, rmem.physbase, rmem.physbase + rmem.size);
+					addr, rmem.physbase, rmem.remote_end);
 			}
 		}
 		return test;
