@@ -23,11 +23,21 @@ int main(int argc, char** argv)
 	// Only modify symbols starting with the symbol_prefix
 	const char* symbol_prefix = "remote_";
 	const char* symbol_contains = NULL; // If set, only modify symbols containing this substring
+	// We ignore the last argument if it is "+exec"
 	if (argc >= 4) {
-		symbol_prefix = argv[3];
+		if (strcmp(argv[3], "+exec") == 0) {
+			symbol_prefix = "remote_";
+			symbol_contains = NULL;
+		} else {
+			symbol_prefix = argv[3];
+		}
 	}
 	if (argc >= 5) {
-		symbol_contains = argv[4];
+		if (strcmp(argv[4], "+exec") == 0) {
+			symbol_contains = NULL;
+		} else {
+			symbol_contains = argv[4];
+		}
 	}
 	printf("Input ELF: %s  Offset: 0x%lX  Prefix: %s  Contains: %s\n",
 		input_elf, offset, symbol_prefix, symbol_contains ? symbol_contains : "(none)");
@@ -122,6 +132,8 @@ int main(int argc, char** argv)
 				printf("Symbol: %s at 0x%lX -> 0x%lX\n", &strtab[symtab[i].st_name], old_value, symtab[i].st_value);
 				// Also, make it absolute
 				((Elf64_Sym *) symtab)[i].st_shndx = SHN_ABS;
+				// And weak
+				((Elf64_Sym *) symtab)[i].st_info |= (STB_WEAK << 4);
 			}
 		}
 	}
