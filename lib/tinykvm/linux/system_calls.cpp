@@ -348,6 +348,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				const int64_t voff = regs.r9;
 				const int real_fd = cpu.machine().fds().translate(vfd);
 				const bool mmap_backed_files = cpu.machine().memory.mmap_backed_files;
+				const uint64_t read_length = regs.rsi; // Don't align the read length
+				const bool is_somewhat_large = (read_length >= 0x400000);
 
 				uint64_t dst = 0x0;
 				if (address != 0x0 && (address + length) > cpu.machine().mmap_start()) {
@@ -362,14 +364,12 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					}
 				}
 				else {
-					const bool use_hugepages = mmap_backed_files;
+					const bool use_hugepages = mmap_backed_files && is_somewhat_large;
 					dst = cpu.machine().mmap_allocate(length, prot, use_hugepages);
 				}
 				// Readv into the area
-				const uint64_t read_length = regs.rsi; // Don't align the read length
 				regs.rax = ~0ULL;
 
-				const bool is_somewhat_large = (read_length >= 0x400000);
 				if (cpu.machine().memory.mmap_backed_files && dst >= cpu.machine().mmap_start() && is_somewhat_large && !cpu.machine().is_forked())
 				{
 					// Use mmap area for large reads
@@ -470,7 +470,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			// Because we do not support MMAP fully, we will just return 0 here.
 			regs.rax = 0;
 			cpu.set_registers(regs);
-			PRINTMMAP("munmap(0x%lX, %lu, relaxed=%d)\n", old_base, old_size, relaxed);
+			PRINTMMAP("munmap(0x%lX, %lu, relaxed=%d) = %lld (current=0x%lX)\n",
+				old_base, old_size, relaxed, regs.rax, cpu.machine().mmap_current());
 		});
 	Machine::install_syscall_handler(
 		SYS_brk, [](vCPU& cpu) { // BRK
