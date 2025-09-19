@@ -207,6 +207,8 @@ Machine::address_t Machine::mmap_fixed_allocate(uint64_t addr, size_t bytes, boo
 	if (UNLIKELY(addr < this->mmap_start())) {
 		throw MemoryException("MMapCache: Invalid range (below mmap_start)", addr, bytes);
 	} else if (UNLIKELY(addr + bytes > this->mmap_cache().current())) {
+		if (addr > this->mmap_cache().current() + MMAP_COLLISION_TRESHOLD)
+			return addr; // Allow mappings far beyond current without error
 		throw MemoryException("MMapCache: Invalid range (exceeds current address)", addr, bytes);
 	}
 
