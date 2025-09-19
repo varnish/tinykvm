@@ -39,7 +39,7 @@ add_executable(symbol_offset
 # Output: storage.syms
 add_custom_command(
 	COMMAND objcopy -w --extract-symbol --strip-symbol=!remote* --strip-symbol=!_Z*remote* --strip-symbol=* storage storage.syms
-	COMMAND ./symbol_offset storage.syms 0x4400200000
+	COMMAND ./symbol_offset storage.syms 0x4400200000 +exec
 	OUTPUT storage.syms
 	DEPENDS storage
 	DEPENDS symbol_offset

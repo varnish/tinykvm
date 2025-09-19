@@ -20,7 +20,17 @@ int main(int argc, char** argv)
 	const char* input_elf = argv[1];
 	// The offset is a hex address (0x...)
 	const uint64_t offset = strtoull(argv[2], NULL, 0);
-	printf("Input ELF: %s  Offset: 0x%lX\n", input_elf, offset);
+	// Only modify symbols starting with the symbol_prefix
+	const char* symbol_prefix = "remote_";
+	const char* symbol_contains = NULL; // If set, only modify symbols containing this substring
+	if (argc >= 4) {
+		symbol_prefix = argv[3];
+	}
+	if (argc >= 5) {
+		symbol_contains = argv[4];
+	}
+	printf("Input ELF: %s  Offset: 0x%lX  Prefix: %s  Contains: %s\n",
+		input_elf, offset, symbol_prefix, symbol_contains ? symbol_contains : "(none)");
 
 	// Get file size
 	struct stat st;
@@ -55,8 +65,11 @@ int main(int argc, char** argv)
 		fprintf(stderr, "Not a valid x86-64 ELF object file\n");
 		exit(1);
 	}
-	// We need a static executable type in order for --just-symbols to work
-	ehdr->e_type = ET_EXEC; // Change to executable type
+	// If the last argument is "+exec", change the type to ET_EXEC
+	if (strcmp(argv[argc-1], "+exec") == 0) {
+		// We need a static executable type in order for --just-symbols to work
+		ehdr->e_type = ET_EXEC; // Change to executable type
+	}
 
 	const Elf64_Shdr* shdr = (const Elf64_Shdr*) (data + ehdr->e_shoff);
 	const Elf64_Shdr* strtab_hdr = &shdr[ehdr->e_shstrndx];
@@ -91,7 +104,19 @@ int main(int argc, char** argv)
 				symtab[i].st_shndx < ehdr->e_shnum &&
 				shdr[symtab[i].st_shndx].sh_type != SHT_NOBITS)
 			{
-				// Valid symbol, add offset
+				// Valid symbol, check prefix
+				if (strncmp(&strtab[symtab[i].st_name], symbol_prefix, strlen(symbol_prefix)) != 0) {
+					// Prefix does not match, check if we have a "contains" filter
+					if (symbol_contains) {
+						if (strstr(&strtab[symtab[i].st_name], symbol_contains) == NULL) {
+							// Does not contain the substring, skip
+							continue;
+						}
+					} else {
+						continue;
+					}
+				}
+				// Apply the offset
 				const uint64_t old_value = symtab[i].st_value;
 				((Elf64_Sym *) symtab)[i].st_value += offset;
 				printf("Symbol: %s at 0x%lX -> 0x%lX\n", &strtab[symtab[i].st_name], old_value, symtab[i].st_value);
