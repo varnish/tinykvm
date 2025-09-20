@@ -250,7 +250,6 @@ struct Machine
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);
-	void remote_connect_halfway(Machine& other);
 	void ipre_remote_resume_now(float timeout = 0.0f);
 	address_t remote_disconnect();
 	bool has_remote() const noexcept { return m_remote != nullptr; }

@@ -284,7 +284,9 @@ long vCPU::run_once()
 						if (machine().remote().is_remote_connected()) {
 							// Not an instruction fetch, but a memory read or write
 							// Since it's foreign memory, we try to handle it in the remote VM
-							machine().remote().memory.get_writable_page(addr, PDE64_USER | PDE64_RW, false, false);
+							WritablePageOptions zero_opts;
+							zero_opts.zeroes = false;
+							(void)writable_page_at(machine().remote().memory, addr, PDE64_USER | PDE64_RW, zero_opts);
 							return KVM_EXIT_IO;
 						} else {
 							// Not connected, so we can't handle it
@@ -309,7 +311,9 @@ long vCPU::run_once()
 				}
 				this->set_registers(regs);
 
-				machine().memory.get_writable_page(addr, PDE64_USER | PDE64_RW, false, false);
+				WritablePageOptions zero_opts;
+				zero_opts.zeroes = false;
+				(void)writable_page_at(memory, addr, PDE64_USER | PDE64_RW, zero_opts);
 				return KVM_EXIT_IO;
 			}
 			else if (intr == 1) /* Debug trap */

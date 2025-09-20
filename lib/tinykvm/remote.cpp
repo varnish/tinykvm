@@ -76,7 +76,6 @@ void Machine::ipre_remote_resume_now(float timeout)
 		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
 	if (is_remote_connected())
 		throw MachineException("Remote already connected");
-	tinykvm::Machine& local_vm = *this;
 	tinykvm::Machine& remote_vm = remote();
 	// 1. Connect to remote now
 	const auto remote_fsbase = this->remote_activate_now();
@@ -87,15 +86,15 @@ void Machine::ipre_remote_resume_now(float timeout)
 	auto& callee_sprs = remote_vm.get_special_registers();
 
 	// 3. Copy remote registers into current state
-	local_vm.set_registers(remote_vm.registers());
-	local_sprs.fs.base = callee_sprs.fs.base;
-	local_vm.set_special_registers(local_sprs);
+	this->set_registers(remote_vm.registers());
+	local_sprs.fs.base = remote_fsbase;
+	this->set_special_registers(local_sprs);
 
 	// 4. Resume execution
-	local_vm.vmresume(timeout);
+	this->vmresume(timeout);
 
 	// 5. Disconnect from remote and reset waiting state
-	const auto our_fsbase = local_vm.remote_disconnect();
+	const auto our_fsbase = this->remote_disconnect();
 	if (our_fsbase == 0)
 		throw std::runtime_error("ipre_resume_storage: Remote disconnect failed");
 
@@ -106,15 +105,8 @@ void Machine::ipre_remote_resume_now(float timeout)
 	this->set_registers(saved_gprs);
 	local_sprs.fs.base = our_fsbase;
 	this->set_special_registers(local_sprs);
-	local_vm.prepare_vmresume();
+	this->prepare_vmresume();
 	vcpu.stopped = false;
-}
-void Machine::remote_connect_halfway(Machine& other)
-{
-	if (&other == this)
-		this->m_remote = nullptr;
-	else
-		this->m_remote = &other;
 }
 
 Machine::address_t Machine::remote_activate_now()
@@ -156,7 +148,7 @@ Machine::address_t Machine::remote_activate_now()
 			return it->second.fsbase;
 		}
 	}
-	remote.remote_connect_halfway(*this);
+	remote.m_remote = this; // Set halfway state
 	// Set the vCPU machine to the remote machine
 	this->vcpu.set_original_machine(this);
 	this->vcpu.set_machine(&remote);
@@ -170,7 +162,7 @@ Machine::address_t Machine::remote_disconnect()
 		return 0;
 
 	auto& remote = *this->m_remote;
-	remote.remote_connect_halfway(remote); // Clear halfway state
+	remote.m_remote = nullptr; // Clear halfway state
 	if (remote.cpu().remote_serializer != nullptr)
 	{
 		// Unlock the remote serializer
@@ -218,10 +210,8 @@ bool Machine::is_foreign_address(address_t addr) const noexcept
 		const auto& rmem = this->m_remote->main_memory();
 		bool test = addr >= rmem.physbase && addr < rmem.remote_end;
 		if constexpr (VERBOSE_REMOTE) {
-			if (test) {
-				printf("Foreign address 0x%lX is in remote memory 0x%lX-0x%lX\n",
-					addr, rmem.physbase, rmem.remote_end);
-			}
+			printf("Address 0x%lX is in remote memory 0x%lX-0x%lX? %s\n",
+				addr, rmem.physbase, rmem.remote_end, test ? "yes" : "no");
 		}
 		return test;
 	}
