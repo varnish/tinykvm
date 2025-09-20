@@ -2,6 +2,7 @@
 #include "amd64/idt.hpp"
 #include "amd64/usercode.hpp"
 #include "linux/threads.hpp"
+#include <linux/kvm.h>
 #include <thread>
 
 namespace tinykvm {
@@ -68,6 +69,45 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 		fprintf(stderr, "Remote connected: this VM %p remote VM %p (%s)\n",
 			this, &remote, connect_now ? "just-in-time" : "setup");
 	}
+}
+void Machine::ipre_remote_resume_now(float timeout)
+{
+	if (!has_remote())
+		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
+	if (is_remote_connected())
+		throw MachineException("Remote already connected");
+	tinykvm::Machine& local_vm = *this;
+	tinykvm::Machine& remote_vm = remote();
+	// 1. Connect to remote now
+	const auto remote_fsbase = this->remote_activate_now();
+
+	// 2. Make a copy of current register state
+	auto saved_gprs = this->registers();
+	auto& local_sprs = cpu().get_special_registers();
+	auto& callee_sprs = remote_vm.get_special_registers();
+
+	// 3. Copy remote registers into current state
+	local_vm.set_registers(remote_vm.registers());
+	local_sprs.fs.base = callee_sprs.fs.base;
+	local_vm.set_special_registers(local_sprs);
+
+	// 4. Resume execution
+	local_vm.vmresume(timeout);
+
+	// 5. Disconnect from remote and reset waiting state
+	const auto our_fsbase = local_vm.remote_disconnect();
+	if (our_fsbase == 0)
+		throw std::runtime_error("ipre_resume_storage: Remote disconnect failed");
+
+	// 5. Skip over OUT instruction in original registers
+	saved_gprs.rip += 2;
+
+	// 6. When returning, restore original register state
+	this->set_registers(saved_gprs);
+	local_sprs.fs.base = our_fsbase;
+	this->set_special_registers(local_sprs);
+	local_vm.prepare_vmresume();
+	vcpu.stopped = false;
 }
 void Machine::remote_connect_halfway(Machine& other)
 {

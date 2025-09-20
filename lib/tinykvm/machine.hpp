@@ -251,7 +251,7 @@ struct Machine
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);
 	void remote_connect_halfway(Machine& other);
-	address_t remote_activate_now();
+	void ipre_remote_resume_now(float timeout = 0.0f);
 	address_t remote_disconnect();
 	bool has_remote() const noexcept { return m_remote != nullptr; }
 	bool is_remote_connected() const noexcept;
@@ -315,6 +315,9 @@ private:
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
 	void smp_vcpu_broadcast(std::function<void(vCPU&)>);
+	address_t remote_activate_now();
+	/* Prepare for resume with a pagetable reload */
+	void prepare_vmresume();
 
 	vCPU  vcpu;
 	int   fd = 0;
