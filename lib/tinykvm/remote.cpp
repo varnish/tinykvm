@@ -70,7 +70,7 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 			this, &remote, connect_now ? "just-in-time" : "setup");
 	}
 }
-void Machine::ipre_remote_resume_now(float timeout)
+void Machine::ipre_remote_resume_now(float timeout, bool save_fpu)
 {
 	if (!has_remote())
 		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
@@ -82,11 +82,16 @@ void Machine::ipre_remote_resume_now(float timeout)
 
 	// 2. Make a copy of current register state
 	auto saved_gprs = this->registers();
+	tinykvm_fpuregs saved_fprs;
+	if (save_fpu)
+		saved_fprs = this->fpu_registers();
 	auto& local_sprs = cpu().get_special_registers();
 	auto& callee_sprs = remote_vm.get_special_registers();
 
 	// 3. Copy remote registers into current state
 	this->set_registers(remote_vm.registers());
+	if (save_fpu)
+		this->set_fpu_registers(remote_vm.fpu_registers());
 	local_sprs.fs.base = remote_fsbase;
 	this->set_special_registers(local_sprs);
 
@@ -103,6 +108,8 @@ void Machine::ipre_remote_resume_now(float timeout)
 
 	// 6. When returning, restore original register state
 	this->set_registers(saved_gprs);
+	if (save_fpu)
+		this->set_fpu_registers(saved_fprs);
 	local_sprs.fs.base = our_fsbase;
 	this->set_special_registers(local_sprs);
 	this->prepare_vmresume();
