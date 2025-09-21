@@ -107,30 +107,9 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 
 inline void Machine::vmresume(float timeout)
 {
-	auto& regs = vcpu.registers();
 	if (this->m_just_reset) {
 		this->m_just_reset = false;
-		// We have to go the long way around using the preserving entry
-		// point, because the guest cannot see the correct memory now.
-		// Carefully push RAX, RCX and R11 (used by SYSCALL instruction)
-		// which will be popped by the preserving entry point. And finally,
-		// push the old RIP which will be used by the RET instruction.
-		struct PreservedRegisters {
-			uint64_t r11;
-			uint64_t rcx;
-			uint64_t rax;
-			uint64_t rip; // for the RET instruction
-		} pvs;
-		regs.rsp -= sizeof(pvs);
-		pvs.rip = regs.rip;
-		pvs.rax = regs.rax;
-		pvs.rcx = regs.rcx;
-		pvs.r11 = regs.r11;
-		// Push the registers
-		this->copy_to_guest(regs.rsp, &pvs, sizeof(pvs));
-		// Set the new registers
-		regs.rip = this->preserving_entry_address();
-		vcpu.set_registers(regs);
+		this->prepare_vmresume();
 	} else {
 		// Nothing to do as the registers are already set
 		// and the guest can see the memory.
