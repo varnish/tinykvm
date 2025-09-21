@@ -137,6 +137,7 @@ inline void Machine::prepare_vmresume(address_t fsbase)
 	// Push the registers
 	this->copy_to_guest(regs.rsp, &pvs, sizeof(pvs));
 	// Set the new registers
+	regs.rax = 0x1F777; // ENTRY SYSCALL
 	regs.rip = this->preserving_entry_address();
 	vcpu.set_registers(regs);
 }

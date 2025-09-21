@@ -33,7 +33,6 @@ ALIGN 0x10
 	;; correct memory. Since the guest is potentially
 	;; blind here, the host has pushed the registers
 	;; necessary to perform the syscall safely.
-	mov rax, 0x1F777
 	syscall
 	pop r11 ;; used by syscall for rflags
 	pop rcx ;; used by syscall for rip
