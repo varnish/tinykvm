@@ -115,6 +115,9 @@ void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)
 	// 5. Disconnect from remote and store back registers
 	remote_vm.set_registers(this->registers());
 	remote_vm.registers().rip += 2; // Skip over OUT instruction
+	// XXX: Avoid this???
+	remote_vm.cpu().get_special_registers().fs.base =
+		this->get_special_registers().fs.base;
 	// After disconnect, access is no longer serialized (don't touch remote anymore)
 	const auto our_fsbase = this->remote_disconnect();
 	if (our_fsbase == 0)
