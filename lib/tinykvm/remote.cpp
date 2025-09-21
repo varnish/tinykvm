@@ -70,7 +70,7 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 			this, &remote, connect_now ? "just-in-time" : "setup");
 	}
 }
-void Machine::ipre_remote_resume_now(float timeout, bool save_fpu)
+void Machine::ipre_remote_resume_now(bool save_fpu)
 {
 	if (!has_remote())
 		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
@@ -86,7 +86,6 @@ void Machine::ipre_remote_resume_now(float timeout, bool save_fpu)
 	if (save_fpu)
 		saved_fprs = this->fpu_registers();
 	auto& local_sprs = cpu().get_special_registers();
-	auto& callee_sprs = remote_vm.get_special_registers();
 
 	// 3. Copy remote registers into current state
 	this->set_registers(remote_vm.registers());
@@ -97,10 +96,14 @@ void Machine::ipre_remote_resume_now(float timeout, bool save_fpu)
 
 	try {
 		// 4. Resume execution
-		this->vmresume(timeout);
+		const auto rdi = this->registers().rdi;
+		auto rdi_ptr = remote().writable_memarray<uint64_t>(rdi)[0];
+		auto rsp_ptr = remote().writable_memarray<uint64_t>(registers().rsp)[0];
+		printf("ipre_remote_resume_now: Resuming remote, rip=0x%lX rdi=0x%lX rdi_ptr=0x%lX rsp_ptr=0x%lX\n",
+			   (long)this->registers().rip, (long)rdi, (long)rdi_ptr, (long)rsp_ptr);
+		this->run(0.0f);
 	} catch (const std::exception& e) {
-		// If an exception occurred, disconnect and
-		// restore FSBASE
+		// If an exception occurred, disconnect and restore FSBASE
 		const auto our_fsbase = this->remote_disconnect();
 		local_sprs.fs.base = our_fsbase;
 		this->set_special_registers(local_sprs);
