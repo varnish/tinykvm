@@ -70,7 +70,7 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 			this, &remote, connect_now ? "just-in-time" : "setup");
 	}
 }
-void Machine::ipre_remote_resume_now(bool save_fpu)
+void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)> before)
 {
 	if (!has_remote())
 		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
@@ -94,6 +94,10 @@ void Machine::ipre_remote_resume_now(bool save_fpu)
 	local_sprs.fs.base = remote_fsbase;
 	this->set_special_registers(local_sprs);
 
+	// Call the before function if provided
+	if (before)
+		before(*this);
+
 	try {
 		// 4. Resume execution
 		this->run(0.0f);
@@ -108,11 +112,12 @@ void Machine::ipre_remote_resume_now(bool save_fpu)
 	}
 
 	// 5. Disconnect from remote and store back registers
+	remote_vm.set_registers(this->registers());
+	remote_vm.registers().rip += 2; // Skip over OUT instruction
+	// After disconnect, access is no longer serialized (don't touch remote anymore)
 	const auto our_fsbase = this->remote_disconnect();
 	if (our_fsbase == 0)
 		throw std::runtime_error("ipre_resume_storage: Remote disconnect failed");
-	remote_vm.set_registers(this->registers());
-	remote_vm.registers().rip += 2; // Skip over OUT instruction
 
 	// 6. When returning, restore original register state
 	this->set_registers(saved_gprs);
