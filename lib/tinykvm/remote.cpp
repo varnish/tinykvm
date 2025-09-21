@@ -95,8 +95,19 @@ void Machine::ipre_remote_resume_now(float timeout, bool save_fpu)
 	local_sprs.fs.base = remote_fsbase;
 	this->set_special_registers(local_sprs);
 
-	// 4. Resume execution
-	this->vmresume(timeout);
+	try {
+		// 4. Resume execution
+		this->vmresume(timeout);
+	} catch (const std::exception& e) {
+		// If an exception occurred, disconnect and
+		// restore FSBASE
+		const auto our_fsbase = this->remote_disconnect();
+		local_sprs.fs.base = our_fsbase;
+		this->set_special_registers(local_sprs);
+		// If we restore original registers, the exception
+		// will lose the information about what happened.
+		throw; // Rethrow
+	}
 
 	// 5. Disconnect from remote and reset waiting state
 	const auto our_fsbase = this->remote_disconnect();
