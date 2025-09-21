@@ -37,7 +37,12 @@ ALIGN 0x10
 	syscall
 	pop r11 ;; used by syscall for rflags
 	pop rcx ;; used by syscall for rip
-	pop rax
+	pop rax ;; fsbase
+	test rax, rax ;; If zero, skip wrfsbase
+	jz .vm64_preserving_entry_skip_fsbase
+	wrfsbase rax ;; Restore FSBASE for guest
+.vm64_preserving_entry_skip_fsbase:
+	pop rax ;; real rax
 	;; With the registers restored, we can now
 	;; return to the guest program.
 	ret

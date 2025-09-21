@@ -117,19 +117,21 @@ inline void Machine::vmresume(float timeout)
 	this->run_in_usermode(timeout);
 }
 
-inline void Machine::prepare_vmresume()
+inline void Machine::prepare_vmresume(address_t fsbase)
 {
 	auto& regs = vcpu.registers();
 	struct PreservedRegisters
 	{
 		uint64_t r11;
 		uint64_t rcx;
+		uint64_t fsbase; // Skip if zero
 		uint64_t rax;
 		uint64_t rip; // for the RET instruction
 	} pvs;
 	regs.rsp -= sizeof(pvs);
 	pvs.rip = regs.rip;
 	pvs.rax = regs.rax;
+	pvs.fsbase = fsbase;
 	pvs.rcx = regs.rcx;
 	pvs.r11 = regs.r11;
 	// Push the registers

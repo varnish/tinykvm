@@ -76,23 +76,21 @@ void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)
 		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
 	if (is_remote_connected())
 		throw MachineException("Remote already connected");
-	tinykvm::Machine& remote_vm = remote();
-	// 1. Connect to remote now
-	const auto remote_fsbase = this->remote_activate_now();
 
-	// 2. Make a copy of current register state
+	// 1. Make a copy of current register state
 	auto saved_gprs = this->registers();
 	tinykvm_fpuregs saved_fprs;
 	if (save_fpu)
 		saved_fprs = this->fpu_registers();
-	auto& local_sprs = cpu().get_special_registers();
+
+	// 2. Connect to remote now
+	const auto remote_fsbase = this->remote_activate_now();
 
 	// 3. Copy remote registers into current state
+	tinykvm::Machine& remote_vm = remote();
 	this->set_registers(remote_vm.registers());
 	if (save_fpu)
 		this->set_fpu_registers(remote_vm.fpu_registers());
-	local_sprs.fs.base = remote_fsbase;
-	this->set_special_registers(local_sprs);
 
 	// Call the before function if provided
 	if (before)
@@ -100,10 +98,13 @@ void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)
 
 	try {
 		// 4. Resume execution
+		// Set RDI to our FSBASE for the remote VM
+		this->registers().rdi = remote_fsbase;
 		this->run(0.0f);
 	} catch (const std::exception& e) {
 		// If an exception occurred, disconnect and restore FSBASE
 		const auto our_fsbase = this->remote_disconnect();
+		auto& local_sprs = vcpu.get_special_registers();
 		local_sprs.fs.base = our_fsbase;
 		this->set_special_registers(local_sprs);
 		// If we restore original registers, the exception
@@ -124,9 +125,7 @@ void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)
 	this->registers().rip += 2; // Skip over OUT instruction
 	if (save_fpu)
 		this->set_fpu_registers(saved_fprs);
-	local_sprs.fs.base = our_fsbase;
-	this->set_special_registers(local_sprs);
-	this->prepare_vmresume();
+	this->prepare_vmresume(our_fsbase);
 	vcpu.stopped = false;
 }
 
