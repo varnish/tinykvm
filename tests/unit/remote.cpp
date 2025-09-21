@@ -89,6 +89,11 @@ extern void remote_integer_set() {
 extern int* remote_integer_get() {
 	return &remote_integer;
 }
+extern void remote_array_write(char* cp, unsigned len) {
+	for (unsigned i = 0; i < len; i++) {
+		cp[i] = (char)(i & 0xFF);
+	}
+}
 )M", "-Wl,-Ttext-segment=0x40400000");
 
 	// Extract storage remote symbols
@@ -102,6 +107,7 @@ extern int* remote_integer_get() {
 	const auto main_binary = build_and_load(R"M(
 extern int* remote_integer_get();
 extern void remote_integer_set();
+extern void remote_array_write(char*, unsigned);
 int main() {
 	remote_integer_set();
 	int* p = remote_integer_get();
@@ -114,11 +120,27 @@ extern void test_failing() {
 	int* p = remote_integer_get();
 	*p = 123; // This should cause a fault
 }
+extern int test_remote_array()
+{
+	char arr[65536];
+	remote_array_write(arr, sizeof(arr));
+	for (int i = 0; i < sizeof(arr); i++) {
+		// We should be able to read this
+		if (arr[i] != (char)(i & 0xFF)) {
+			// Failed
+			return 1;
+		}
+		// and write to it
+		arr[i] = 0;
+	}
+	return 0;
+}
 )M", "-Wl,--just-symbols=storage.syms");
 
 	tinykvm::Machine storage { storage_binary.second, {
 		.max_mem = 16ULL << 20, // MB
 		.vmem_base_address = 1ULL << 30, // 1GB
+		.mmap_backed_files = false,
 	} };
 	storage.setup_linux({"storage"}, env);
 	storage.run(4.0f);
@@ -139,4 +161,19 @@ extern void test_failing() {
 	REQUIRE_THROWS([&machine]() {
 		machine.vmcall("test_failing");
 	}());
+
+	// Create a fork
+	machine.prepare_copy_on_write(1UL << 20);
+	tinykvm::Machine fork(machine, {
+		.max_mem = MAX_MEMORY,
+		.max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
+	});
+
+	REQUIRE_THROWS([&fork]() {
+		fork.vmcall("test_failing");
+	}());
+
+	fork.vmcall("test_remote_array");
+	REQUIRE(fork.return_value() == 0);
 }
