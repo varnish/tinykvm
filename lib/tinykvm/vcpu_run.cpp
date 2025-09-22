@@ -226,6 +226,9 @@ long vCPU::run_once()
 					printf("Remote VM disconnect syscall, return=0x%lX\n",
 						this->remote_return_address);
 				}
+				if (m_original_machine == nullptr || !original_machine()->is_remote_connected()) {
+					Machine::machine_exception("Remote VM disconnect called, but not connected", intr);
+				}
 				const auto result = original_machine()->remote_disconnect();
 
 				// Overwrite return address to return to the remote VM handler
@@ -296,6 +299,10 @@ long vCPU::run_once()
 						}
 					}
 					/* Remote VM page fault */
+					if (!machine().m_remote_pfaults) {
+						this->handle_exception(intr);
+						Machine::machine_exception("Remote VM execution disabled (resume-only)", intr);
+					}
 					uint64_t retstack; machine().unsafe_copy_from_guest(&retstack, regs.rsp + 16 + 32, 8);
 					uint64_t retaddr; machine().unsafe_copy_from_guest(&retaddr, retstack, 8);
 					if constexpr (VERBOSE_REMOTE) {

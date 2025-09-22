@@ -59,6 +59,7 @@ int main() {
 	} };
 	machine.setup_linux({"main"}, env);
 	machine.remote_connect(storage);
+	machine.set_remote_allow_page_faults(true);
 	REQUIRE(machine.has_remote());
 
 	bool output_is_hello_world = false;
@@ -151,6 +152,7 @@ extern int test_remote_array()
 	} };
 	machine.setup_linux({"main"}, env);
 	machine.remote_connect(storage);
+	machine.set_remote_allow_page_faults(true);
 	REQUIRE(machine.has_remote());
 
 	machine.run(4.0f);
@@ -169,6 +171,7 @@ extern int test_remote_array()
 		.max_cow_mem = MAX_COWMEM,
 		.split_hugepages = true
 	});
+	fork.set_remote_allow_page_faults(true);
 
 	REQUIRE_THROWS([&fork]() {
 		fork.vmcall("test_failing");

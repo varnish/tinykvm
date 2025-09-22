@@ -250,6 +250,7 @@ struct Machine
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);
+	void set_remote_allow_page_faults(bool v) { m_remote_pfaults = v; }
 	void ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)> before);
 	address_t remote_disconnect();
 	bool has_remote() const noexcept { return m_remote != nullptr; }
@@ -323,6 +324,7 @@ private:
 	bool  m_prepped = false;
 	bool  m_forked = false;
 	bool  m_just_reset = false;
+	bool  m_remote_pfaults = false;
 	bool  m_relocate_fixed_mmap = false;
 	bool  m_verbose_system_calls = false;
 	bool  m_verbose_mmap_syscalls = false;
