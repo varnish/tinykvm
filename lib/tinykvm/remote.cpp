@@ -24,11 +24,12 @@ const Machine& Machine::remote() const
 void Machine::remote_connect(Machine& remote, bool connect_now)
 {
 	const auto remote_vmem = remote.main_memory().vmem();
-	if (this->m_remote == nullptr) {
+	if (&remote != this->m_remote) {
+		if (this->m_remote != nullptr) {
+			this->delete_memory(1);
+		}
 		// Install the remote memory in this machine
 		this->install_memory(1, remote_vmem, false);
-	} else if (&remote != this->m_remote) {
-		throw MachineException("Remote already connected to another VM");
 	}
 
 	if (connect_now)
