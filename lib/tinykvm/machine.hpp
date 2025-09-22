@@ -317,7 +317,7 @@ private:
 	void smp_vcpu_broadcast(std::function<void(vCPU&)>);
 	address_t remote_activate_now();
 	/* Prepare for resume with a pagetable reload */
-	void prepare_vmresume(address_t fsbase = 0);
+	void prepare_vmresume(address_t fsbase = 0, bool reload_pagetables = true);
 
 	vCPU  vcpu;
 	int   fd = 0;

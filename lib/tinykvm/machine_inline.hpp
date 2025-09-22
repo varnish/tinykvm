@@ -117,7 +117,7 @@ inline void Machine::vmresume(float timeout)
 	this->run_in_usermode(timeout);
 }
 
-inline void Machine::prepare_vmresume(address_t fsbase)
+inline void Machine::prepare_vmresume(address_t fsbase, bool reload_pagetables)
 {
 	auto& regs = vcpu.registers();
 	struct PreservedRegisters
@@ -137,7 +137,7 @@ inline void Machine::prepare_vmresume(address_t fsbase)
 	// Push the registers
 	this->copy_to_guest(regs.rsp, &pvs, sizeof(pvs));
 	// Set the new registers
-	regs.rax = 0x1F777; // ENTRY SYSCALL
+	regs.rax = (reload_pagetables) ? 0x1F777 : 0x1F707; // ENTRY/REENTRY SYSCALL
 	regs.rip = this->preserving_entry_address();
 	vcpu.set_registers(regs);
 }

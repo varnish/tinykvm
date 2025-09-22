@@ -129,7 +129,7 @@ void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)
 	this->registers().rip += 2; // Skip over OUT instruction
 	if (save_fpu)
 		this->set_fpu_registers(saved_fprs);
-	this->prepare_vmresume(our_fsbase);
+	this->prepare_vmresume(our_fsbase, true);
 	vcpu.stopped = false;
 }
 
