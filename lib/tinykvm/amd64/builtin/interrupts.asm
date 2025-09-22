@@ -37,15 +37,12 @@ ALIGN 0x10
 	resb 0x10     ;; 16b for KVM Wall-clock
 .kvm_system_time: ;; 0x2020
 	resb 0x20     ;; 32b for KVM System-time
-;; Save state for remote function calls
-.remote_state:
-	resb 0x100    ;; 256b for remote state saving
 
 ALIGN 0x10
 .vm64_syscall:
-	cmp ax, 158 ;; PRCTL
+	cmp eax, 158 ;; PRCTL
 	je .vm64_prctl
-	cmp ax, 228 ;; CLOCK_GETTIME
+	cmp eax, 228 ;; CLOCK_GETTIME
 	je .vm64_clock_gettime
 	cmp eax, 9  ;; MMAP
 	je .vm64_mmap
