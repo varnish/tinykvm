@@ -97,7 +97,9 @@ struct vMemory {
 
 	/* Create new identity-mapped memory regions */
 	vMemory(Machine&, const MachineOptions&, uint64_t, uint64_t, char*, size_t, bool = true);
+	unsigned allocate_region_idx();
 	void install_mmap_ranges(const Machine& other);
+	void delete_foreign_mmap_ranges();
 	/* Loan memory from another machine */
 	vMemory(Machine&, const MachineOptions&, const vMemory& other);
 	~vMemory();
@@ -109,6 +111,7 @@ struct vMemory {
 private:
 	using AllocationResult = std::tuple<char*, size_t>;
 	static AllocationResult allocate_mapped_memory(const MachineOptions&, size_t size);
+	std::vector<unsigned> m_bank_idx_free_list;
 };
 
 }

@@ -17,6 +17,7 @@
 
 namespace tinykvm {
 #define USERMODE_FLAGS (0x7 | 1UL << 63) /* USER, READ/WRITE, PRESENT, NX */
+static constexpr bool VERBOSE_MMAP = false;
 
 vMemory::vMemory(Machine& m, const MachineOptions& options,
 	uint64_t ph, uint64_t sf, char* p, size_t s, bool own)
@@ -42,6 +43,12 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 		}
 		this->remote_end = std::max(this->remote_end, mapping.virt + mapping.size);
 	}
+
+	this->mmap_physical = MMAP_PHYS_BASE + ((physbase == 0) ? 0x0 : 0x2000000000);
+	if constexpr (VERBOSE_MMAP) {
+		fprintf(stderr, "vMemory: physbase=0x%lX safebase=0x%lX size=0x%zX mmap_physical=0x%lX\n",
+			physbase, safebase, size, mmap_physical);
+	}
 }
 vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other)
 	: vMemory{m, options, other.physbase, other.safebase, other.ptr, other.size, false}
@@ -60,12 +67,67 @@ vMemory::~vMemory()
 		}
 	}
 }
+unsigned vMemory::allocate_region_idx()
+{
+	if (!m_bank_idx_free_list.empty()) {
+		// Reuse a previously freed index
+		auto idx = m_bank_idx_free_list.back();
+		m_bank_idx_free_list.pop_back();
+		return idx;
+	}
+	// Allocate a new index
+	return banks.allocate_region_idx();
+}
 void vMemory::install_mmap_ranges(const Machine &other)
 {
-	this->mmap_ranges = other.main_memory().mmap_ranges;
-	for (size_t i = 0; i < this->mmap_ranges.size(); ++i)
+	for (auto& range : other.main_memory().mmap_ranges)
 	{
-		machine.install_memory(banks.allocate_region_idx(), this->mmap_ranges[i], false);
+		for (const auto& existing : this->mmap_ranges) {
+			if (existing.overlaps_physical(range.physbase, range.size)) {
+				// Already installed
+				if constexpr (VERBOSE_MMAP) {
+					printf("Error: overlapping mmap ranges detected at 0x%lX-0x%lX of size %zu KiB file %s\n",
+						range.physbase, range.physbase + range.size, range.size >> 10, range.filename.c_str());
+					printf("  Existing range at 0x%lX-0x%lX file %s\n",
+						existing.physbase, existing.physbase + existing.size, existing.filename.c_str());
+				}
+				throw std::runtime_error("Overlapping mmap ranges detected");
+			}
+		}
+		if constexpr (VERBOSE_MMAP) {
+			printf("Installing mmap range at 0x%lX of size %zu KiB file %s\n",
+				range.physbase, range.size >> 10, range.filename.c_str());
+		}
+		// Install the mmap range in a new memory slot
+		const unsigned region_idx = this->allocate_region_idx();
+		machine.install_memory(region_idx, range, false);
+		// Record the mmap range
+		auto new_range = range;
+		new_range.bank_idx = region_idx;
+		this->mmap_ranges.push_back(new_range);
+	}
+}
+void vMemory::delete_foreign_mmap_ranges()
+{
+	for (auto it = this->mmap_ranges.begin(); it != this->mmap_ranges.end(); ){
+		// Only delete ranges that are not part of this VM's memory
+		const auto& range = *it;
+		// XXX: This is a hacky way to detect foreign ranges, although
+		// it should work in practice for now. We only care about MMAP
+		// ranges, and they start at either 0x4000000000 or 0x6000000000.
+		// If the physical address is above 0x6000000000, it's definitely
+		// a foreign range... until it isn't. :-(
+		if (range.physbase >= MMAP_PHYS_BASE + 0x2000000000) {
+			machine.delete_memory(range.bank_idx);
+			this->m_bank_idx_free_list.push_back(range.bank_idx);
+			if constexpr (VERBOSE_MMAP) {
+				printf("Removed foreign mmap range at 0x%lX of size %zu KiB file %s\n",
+					range.physbase, range.size >> 10, range.filename.c_str());
+			}
+			it = this->mmap_ranges.erase(it);
+		} else {
+			++it;
+		}
 	}
 }
 

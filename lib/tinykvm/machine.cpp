@@ -100,14 +100,18 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	/* Reuse pre-CoWed pagetable from the master machine */
 	this->install_memory(0, memory.vmem(), false);
 
+	/* Install mmap ranges from the master machine */
+	memory.install_mmap_ranges(other);
+
 	/* Install remote VM memory too, if enabled. (read-write) */
 	if (other.has_remote()) {
 		this->m_remote = other.m_remote;
 		this->install_memory(1, remote().memory.vmem(), false);
+		// XXX: MMAP ranges are already installed above, as the
+		// remote memory is shared with the main memory of the
+		// master machine, so we should already have them.
+		//memory.install_mmap_ranges(remote());
 	}
-
-	/* Install mmap ranges from the master machine */
-	memory.install_mmap_ranges(other);
 
 	/* Initialize vCPU and long mode (fast path) */
 	this->vcpu.init(0, *this, options);

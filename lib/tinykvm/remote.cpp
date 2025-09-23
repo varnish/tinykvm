@@ -27,9 +27,11 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 	if (&remote != this->m_remote) {
 		if (this->m_remote != nullptr) {
 			this->delete_memory(1);
+			this->memory.delete_foreign_mmap_ranges();
 		}
 		// Install the remote memory in this machine
 		this->install_memory(1, remote_vmem, false);
+		this->memory.install_mmap_ranges(remote);
 	}
 
 	if (connect_now)

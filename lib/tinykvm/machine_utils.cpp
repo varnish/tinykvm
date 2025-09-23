@@ -291,7 +291,7 @@ bool Machine::mmap_backed_area(
 
 		// XXX: This isn't so important because you can only create these
 		// in master VMs, which don't use memory banks.
-		const int region_idx = memory.banks.allocate_region_idx();
+		const int region_idx = memory.allocate_region_idx();
 		if constexpr (VERBOSE_FILE_BACKED_MMAP) {
 			printf("mmap: inserting physical %zu kB at 0x%lX -> 0x%lX, phys 0x%lX region %d\n",
 				size_memory / 1024, virt_base, virt_base + size_memory, mmap_phys_base, region_idx);
@@ -315,6 +315,8 @@ bool Machine::mmap_backed_area(
 		}
 		// Record the mmap range
 		this->memory.mmap_ranges.emplace_back(mmap_phys_base, (char*)real_addr, virt_base, size_memory, std::move(filename));
+		// Set the bank index for the new mmap range
+		this->memory.mmap_ranges.back().bank_idx = region_idx;
 		// XXX: TODO: madvise(MADV_DONTNEED) on the old pages using gather_buffers_from_range
 		// With the new physical memory, we now need to create pagetable entries
 		// we'll do it the slow way by allocating the same range and for each page redirect it to the new phys
