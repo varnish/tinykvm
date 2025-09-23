@@ -62,8 +62,8 @@ struct MemoryBanks {
 		return m_idx++;
 	}
 
-	bool using_hugepages() const noexcept { return m_hugepage_banks > 0; }
-	size_t banks_with_hugepages() const noexcept { return m_hugepage_banks; }
+	bool using_hugepages() const noexcept { return m_hugepage_pages > 0; }
+	size_t banks_with_hugepages() const noexcept { return m_hugepage_pages / MemoryBank::N_PAGES; }
 
 	auto begin() { return m_mem.begin(); }
 	auto end()   { return m_mem.end(); }
@@ -71,7 +71,7 @@ struct MemoryBanks {
 	auto end() const   { return m_mem.cend(); }
 
 private:
-	MemoryBank& allocate_new_bank(uint64_t addr);
+	MemoryBank& allocate_new_bank(uint64_t addr, unsigned pages);
 	char* try_alloc(size_t N, bool try_hugepages);
 
 	std::vector<MemoryBank> m_mem;
@@ -80,7 +80,7 @@ private:
 	uint64_t m_arena_next;
 	uint16_t m_idx;
 	/* Number of initial banks that will allocate backing memory using hugepages */
-	uint32_t m_hugepage_banks = 0;
+	uint32_t m_hugepage_pages = 0;
 	uint32_t m_num_pages = 0;
 	/* Max number of pages in all the banks */
 	uint32_t m_max_pages;

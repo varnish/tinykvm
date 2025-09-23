@@ -24,7 +24,11 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 void MemoryBanks::set_max_pages(size_t new_max, size_t new_hugepages)
 {
 	this->m_max_pages = new_max;
-	this->m_hugepage_banks = new_hugepages / MemoryBank::N_PAGES;
+	this->m_hugepage_pages = new_hugepages;
+	if (this->m_hugepage_pages % MemoryBank::N_PAGES != 0) {
+		throw MemoryException("Hugepages size must be multiple of 2MB",
+			this->m_hugepage_pages * vMemory::PageSize(), MemoryBank::N_PAGES * vMemory::PageSize());
+	}
 	//printf("Memory banks: %u pages, %u hugepages\n",
 	//	m_max_pages, m_hugepage_banks * MemoryBank::N_PAGES);
 	/* Reserve the maximum number of banks possible.
@@ -46,13 +50,17 @@ char* MemoryBanks::try_alloc(size_t N, bool try_hugepages)
 	return ptr;
 }
 
-MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr)
+MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr, unsigned pages)
 {
-	size_t pages = MemoryBank::N_PAGES;
-	const bool try_hugepages = m_mem.size() < m_hugepage_banks;
+	const bool try_hugepages = m_mem.empty() && this->using_hugepages();
+	if (try_hugepages && pages >= MemoryBank::N_PAGES) {
+		pages = std::min(m_hugepage_pages, pages);
+		pages = (pages / MemoryBank::N_PAGES) * MemoryBank::N_PAGES;
+		m_hugepage_pages -= pages;
+	}
 	char* mem = this->try_alloc(pages, try_hugepages);
 	if (mem == nullptr) {
-		pages = 4;
+		pages = 16;
 		mem = this->try_alloc(pages, false);
 	}
 
@@ -84,7 +92,7 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 			printf("Allocating new bank at 0x%lX with total pages %u/%u\n",
 				m_arena_next, m_num_pages + MemoryBank::N_PAGES, m_max_pages);
 		}
-		auto& bank = this->allocate_new_bank(m_arena_next);
+		auto& bank = this->allocate_new_bank(m_arena_next, m_max_pages - m_num_pages);
 		m_num_pages += bank.n_pages;
 		m_arena_next += bank.size();
 		return bank;
