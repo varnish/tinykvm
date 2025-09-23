@@ -71,7 +71,26 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 			this, &remote, connect_now ? "just-in-time" : "setup");
 	}
 }
-void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)> before)
+static void copy_callee_saved_registers(bool save_all, tinykvm_regs& dest, const tinykvm_regs& src)
+{
+	if (!save_all) {
+		// Callee-saved registers: RBX, RBP, R12-R15 + arguments in RDI, RSI
+		dest.rbx = src.rbx;
+		dest.rdi = src.rdi;
+		dest.rsi = src.rsi;
+		dest.rsp = src.rsp;
+		dest.rbp = src.rbp;
+		dest.r12 = src.r12;
+		dest.r13 = src.r13;
+		dest.r14 = src.r14;
+		dest.r15 = src.r15;
+		dest.rip = src.rip;
+	} else {
+		// Copy all registers (slower, but simpler)
+		dest = src;
+	}
+}
+void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)> before)
 {
 	if (!has_remote())
 		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
@@ -79,9 +98,10 @@ void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)
 		throw MachineException("Remote already connected");
 
 	// 1. Make a copy of current register state
-	auto saved_gprs = this->registers();
+	tinykvm_regs saved_gprs;
+	copy_callee_saved_registers(save_all, saved_gprs, this->registers());
 	tinykvm_fpuregs saved_fprs;
-	if (save_fpu)
+	if (save_all)
 		saved_fprs = this->fpu_registers();
 
 	// 2. Connect to remote now
@@ -89,8 +109,9 @@ void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)
 
 	// 3. Copy remote registers into current state
 	tinykvm::Machine& remote_vm = remote();
-	this->set_registers(remote_vm.registers());
-	if (save_fpu)
+	copy_callee_saved_registers(save_all, this->registers(), remote_vm.registers());
+	this->set_registers(this->registers()); // Set dirty bit
+	if (save_all)
 		this->set_fpu_registers(remote_vm.fpu_registers());
 
 	// Call the before function if provided
@@ -114,7 +135,7 @@ void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)
 	}
 
 	// 5. Disconnect from remote and store back registers
-	remote_vm.set_registers(this->registers());
+	copy_callee_saved_registers(save_all, remote_vm.registers(), this->registers());
 	remote_vm.registers().rip += 2; // Skip over OUT instruction
 	// XXX: Avoid this???
 	remote_vm.cpu().get_special_registers().fs.base =
@@ -125,9 +146,9 @@ void Machine::ipre_remote_resume_now(bool save_fpu, std::function<void(Machine&)
 		throw std::runtime_error("ipre_resume_storage: Remote disconnect failed");
 
 	// 6. When returning, restore original register state
-	this->set_registers(saved_gprs);
+	copy_callee_saved_registers(save_all, this->registers(), saved_gprs);
 	this->registers().rip += 2; // Skip over OUT instruction
-	if (save_fpu)
+	if (save_all)
 		this->set_fpu_registers(saved_fprs);
 	this->prepare_vmresume(our_fsbase, true);
 	vcpu.stopped = false;
