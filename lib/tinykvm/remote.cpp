@@ -2,6 +2,7 @@
 #include "amd64/idt.hpp"
 #include "amd64/usercode.hpp"
 #include "linux/threads.hpp"
+#include "util/scoped_profiler.hpp"
 #include <linux/kvm.h>
 #include <thread>
 
@@ -98,6 +99,7 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
 	if (is_remote_connected())
 		throw MachineException("Remote already connected");
+	ScopedProfiler<MachineProfiling::RemoteResume> prof(profiling());
 
 	// 1. Make a copy of current register state
 	tinykvm_regs saved_gprs;

@@ -638,12 +638,13 @@ std::string Machine::memcstring(address_t src, size_t maxlen) const
 }
 
 void MachineProfiling::print(const char* user_defined) {
-	std::array<std::string, 6> locnames = {
+	std::array<std::string, 7> locnames = {
 		"vCPU Run",
 		"Reset",
 		"Syscall",
 		"Page Fault",
 		"MMap Files",
+		"Remote Resume",
 		"UserDefined"
 	};
 	if (user_defined && *user_defined) {

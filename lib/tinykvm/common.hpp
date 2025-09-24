@@ -38,8 +38,9 @@ namespace tinykvm
 			Syscall = 2,
 			PageFault = 3,
 			MMapFiles = 4,
-			UserDefined = 5,
-			Count = 6
+			RemoteResume = 5,
+			UserDefined = 6,
+			Count = 7
 		};
 		// Each entry contains a list of times in nanoseconds
 		std::array<std::vector<uint64_t>, Count> times;
