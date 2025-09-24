@@ -10,7 +10,6 @@
 
 namespace tinykvm {
 static constexpr bool VERBOSE_MEMORY_BANK = false;
-static constexpr bool MADVISE_NOT_DELETE  = true;
 
 MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	: m_machine { machine },
@@ -25,15 +24,18 @@ void MemoryBanks::set_max_pages(size_t new_max, size_t new_hugepages)
 {
 	this->m_max_pages = new_max;
 	this->m_hugepage_pages = new_hugepages;
-	if (this->m_hugepage_pages % MemoryBank::N_PAGES != 0) {
+	if (this->m_hugepage_pages % MemoryBank::N_HUGEPAGES != 0) {
 		throw MemoryException("Hugepages size must be multiple of 2MB",
-			this->m_hugepage_pages * vMemory::PageSize(), MemoryBank::N_PAGES * vMemory::PageSize());
+			this->m_hugepage_pages * vMemory::PageSize(), MemoryBank::N_HUGEPAGES * vMemory::PageSize());
 	}
-	//printf("Memory banks: %u pages, %u hugepages\n",
-	//	m_max_pages, m_hugepage_banks * MemoryBank::N_PAGES);
+	if constexpr (VERBOSE_MEMORY_BANK) {
+		printf("Memory banks: %u pages, %u hugepages\n",
+			m_max_pages, m_hugepage_pages);
+	}
 	/* Reserve the maximum number of banks possible.
 	   NOTE: DO NOT modify this! Needs deque behavior. */
-	m_mem.reserve((m_max_pages + MemoryBank::N_PAGES-1) / MemoryBank::N_PAGES);
+	const size_t max_banks = (m_max_pages + MemoryBank::N_PAGES - 1) / MemoryBank::N_PAGES;
+	m_mem.reserve(max_banks);
 }
 
 char* MemoryBanks::try_alloc(size_t N, bool try_hugepages)
@@ -52,16 +54,18 @@ char* MemoryBanks::try_alloc(size_t N, bool try_hugepages)
 
 MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr, unsigned pages)
 {
+	if constexpr (VERBOSE_MEMORY_BANK) {
+		printf("Allocating new memory bank at 0x%lX with %u pages\n", addr, pages);
+	}
 	const bool try_hugepages = m_mem.empty() && this->using_hugepages();
-	if (try_hugepages && pages >= MemoryBank::N_PAGES) {
-		pages = std::min(m_hugepage_pages, pages);
-		pages = (pages / MemoryBank::N_PAGES) * MemoryBank::N_PAGES;
-		m_hugepage_pages -= pages;
+	if (try_hugepages) {
+		pages = m_hugepage_pages;
 	}
 	char* mem = this->try_alloc(pages, try_hugepages);
 	if (mem == nullptr) {
 		pages = 16;
 		mem = this->try_alloc(pages, false);
+		this->m_hugepage_pages = 0;
 	}
 
 	const size_t size = pages * vMemory::PageSize();
@@ -69,8 +73,10 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr, unsigned pages)
 		m_mem.emplace_back(*this, mem, addr, pages, m_idx);
 
 		VirtualMem vmem { addr, mem, size };
-		//printf("Installing memory %u at 0x%lX from 0x%lX, %zu pages\n",
-		//	m_idx, addr, (uintptr_t) mem, N_PAGES);
+		if constexpr (VERBOSE_MEMORY_BANK) {
+			printf("  Allocated bank %zu (slot %u) at 0x%lX with %u pages (%zu KiB)\n",
+				m_mem.size(), m_idx, addr, pages, size >> 10);
+		}
 		m_machine.install_memory(m_idx++, vmem, false);
 
 		return m_mem.back();
@@ -79,10 +85,17 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr, unsigned pages)
 }
 MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 {
+	if constexpr (VERBOSE_MEMORY_BANK) {
+		printf("Requesting %zu working memory pages\n", pages);
+	}
 	/* Hugepages are 512 4k pages, and consume a whole bank, right now. */
 	for (unsigned idx = 0; idx < m_mem.size(); idx++) {
 		auto& bank = m_mem.at(idx);
 		if (bank.room_for(pages)) {
+			if constexpr (VERBOSE_MEMORY_BANK) {
+				printf("Reusing bank %u at 0x%lX with %zu/%u used pages\n",
+					bank.idx, bank.addr, bank.n_used + pages, bank.n_pages);
+			}
 			return bank;
 		}
 	}
@@ -90,9 +103,9 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 	if (m_num_pages < m_max_pages) {
 		if constexpr (VERBOSE_MEMORY_BANK) {
 			printf("Allocating new bank at 0x%lX with total pages %u/%u\n",
-				m_arena_next, m_num_pages + MemoryBank::N_PAGES, m_max_pages);
+				m_arena_next, m_num_pages, m_max_pages);
 		}
-		auto& bank = this->allocate_new_bank(m_arena_next, m_max_pages - m_num_pages);
+		auto& bank = this->allocate_new_bank(m_arena_next, MemoryBank::N_PAGES);
 		m_num_pages += bank.n_pages;
 		m_arena_next += bank.size();
 		return bank;
@@ -111,26 +124,13 @@ void MemoryBanks::reset(const MachineOptions& options)
 
 	/* Free memory belonging to banks after the free limit. */
 	size_t limit_pages = options.reset_free_work_mem / vMemory::PageSize();
-	/* Avoid freeing memory from the first bank, which always has 4k pages. */
-	size_t final_banks = std::max(size_t(1u), limit_pages / MemoryBank::N_PAGES);
 
-	if constexpr (MADVISE_NOT_DELETE)
-	{
-		/* Instead of removing the banks, give memory back to kernel */
-		for (size_t i = final_banks; i < m_mem.size(); i++) {
-			if (m_mem[i].dirty_size() > 0)
-				madvise(m_mem[i].mem, m_mem[i].dirty_size(), MADV_FREE);
-			/* WARNING: MADV_FREE does not immediately free, so we can *not* consider them reclaimed. :( */
-			//m_mem[i].n_dirty = 0;
-		}
-	} else {
-		/* Erase the last N elements after final_banks */
-		while (final_banks < m_mem.size()) {
-			this->m_idx--;
-			this->m_num_pages -= m_mem.back().n_pages;
-			m_machine.delete_memory(this->m_idx);
-			m_mem.pop_back();
-		}
+	/* Instead of removing the banks, give memory back to kernel */
+	for (size_t i = 1u; i < m_mem.size(); i++) {
+		/* WARNING: MADV_FREE *does not* immediately free, so use MADV_DONTNEED instead. */
+		if (m_mem[i].dirty_size() > 0)
+			madvise(m_mem[i].mem, m_mem[i].dirty_size(), MADV_DONTNEED);
+		m_mem[i].n_dirty = 0;
 	}
 
 	/* Reset page usage for remaining banks */
@@ -139,9 +139,14 @@ void MemoryBanks::reset(const MachineOptions& options)
 	}
 }
 
-MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint16_t np, uint16_t x)
+MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint32_t np, uint16_t x)
 	: mem(p), addr(a), n_pages(np), idx(x), banks(b)
-{}
+{
+	if constexpr (VERBOSE_MEMORY_BANK) {
+		printf("Created memory bank slot=%u at 0x%lX with %u pages (%zu KiB)\n",
+			idx, addr, n_pages, n_pages * vMemory::PageSize() >> 10);
+	}
+}
 MemoryBank::~MemoryBank()
 {
 	munmap(this->mem, this->n_pages * vMemory::PageSize());

@@ -10,14 +10,15 @@ struct MemoryBanks;
 
 struct MemoryBank {
 	// This is 1x 2MB page (second-level amd64 page)
-	static constexpr unsigned N_PAGES = 1u * 512;
+	static constexpr unsigned N_PAGES = 4u * 512;
+	static constexpr unsigned N_HUGEPAGES = 512u;
 	static constexpr unsigned SEARCH_TRESHOLD = 512u;
 
 	char*    mem;
 	uint64_t addr;
-	uint16_t       n_used = 0;
-	uint16_t       n_dirty = 0;
-	const uint16_t n_pages;
+	uint32_t       n_used = 0;
+	uint32_t       n_dirty = 0;
+	const uint32_t n_pages;
 	const uint16_t idx;
 	MemoryBanks& banks;
 
@@ -30,8 +31,8 @@ struct MemoryBank {
 	const char* at(uint64_t paddr) const {
 		return &mem[paddr - this->addr];
 	}
-	uint64_t size() const noexcept { return n_pages * 4096; }
-	uint64_t dirty_size() const noexcept { return n_dirty * 4096; }
+	uint64_t size() const noexcept { return uint64_t(n_pages) * 4096; }
+	uint64_t dirty_size() const noexcept { return uint64_t(n_dirty) * 4096; }
 	bool empty() const noexcept { return n_used == n_pages; }
 	bool room_for(size_t pages) const noexcept { return n_used + pages <= n_pages; }
 	struct Page {
@@ -44,7 +45,7 @@ struct MemoryBank {
 
 	VirtualMem to_vmem() const noexcept;
 
-	MemoryBank(MemoryBanks&, char*, uint64_t, uint16_t n, uint16_t idx);
+	MemoryBank(MemoryBanks&, char*, uint64_t, uint32_t n, uint16_t idx);
 	~MemoryBank();
 };
 
