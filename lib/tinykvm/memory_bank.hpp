@@ -12,7 +12,6 @@ struct MemoryBank {
 	// This is 1x 2MB page (second-level amd64 page)
 	static constexpr unsigned N_PAGES = 4u * 512;
 	static constexpr unsigned N_HUGEPAGES = 512u;
-	static constexpr unsigned SEARCH_TRESHOLD = 512u;
 
 	char*    mem;
 	uint64_t addr;
@@ -34,7 +33,7 @@ struct MemoryBank {
 	uint64_t size() const noexcept { return uint64_t(n_pages) * 4096; }
 	uint64_t dirty_size() const noexcept { return uint64_t(n_dirty) * 4096; }
 	bool empty() const noexcept { return n_used == n_pages; }
-	bool room_for(size_t pages) const noexcept { return n_used + pages <= n_pages; }
+	bool room_for(size_t pages) const noexcept;
 	struct Page {
 		uint64_t* pmem;
 		uint64_t  addr;

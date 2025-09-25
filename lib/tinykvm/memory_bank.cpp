@@ -34,8 +34,9 @@ void MemoryBanks::set_max_pages(size_t new_max, size_t new_hugepages)
 	}
 	/* Reserve the maximum number of banks possible.
 	   NOTE: DO NOT modify this! Needs deque behavior. */
-	const size_t max_banks = (m_max_pages + MemoryBank::N_PAGES - 1) / MemoryBank::N_PAGES;
-	m_mem.reserve(max_banks);
+	const size_t banks = (m_max_pages + MemoryBank::N_PAGES - 1) / MemoryBank::N_PAGES;
+	const size_t new_banks = banks + 1u + (this->using_hugepages() ? 1u : 0u);
+	m_mem.reserve(new_banks);
 }
 
 char* MemoryBanks::try_alloc(size_t N, bool try_hugepages)
@@ -88,12 +89,12 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 	if constexpr (VERBOSE_MEMORY_BANK) {
 		printf("Requesting %zu working memory pages\n", pages);
 	}
-	/* Hugepages are 512 4k pages, and consume a whole bank, right now. */
+	/* Try to find room for the pages. */
 	for (unsigned idx = 0; idx < m_mem.size(); idx++) {
 		auto& bank = m_mem.at(idx);
 		if (bank.room_for(pages)) {
 			if constexpr (VERBOSE_MEMORY_BANK) {
-				printf("Reusing bank %u at 0x%lX with %zu/%u used pages\n",
+				printf("Reusing bank slot=%u at 0x%lX with %zu/%u used pages\n",
 					bank.idx, bank.addr, bank.n_used + pages, bank.n_pages);
 			}
 			return bank;
@@ -109,6 +110,21 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 		m_num_pages += bank.n_pages;
 		m_arena_next += bank.size();
 		return bank;
+	}
+	/* Find room but with possible fragmentation. */
+	if (pages == MemoryBank::N_HUGEPAGES) {
+		for (unsigned idx = 0; idx < m_mem.size(); idx++) {
+			auto& bank = m_mem.at(idx);
+			const unsigned n_used = (bank.n_used + MemoryBank::N_HUGEPAGES - 1) & ~(MemoryBank::N_HUGEPAGES - 1);
+			if (n_used + pages <= bank.n_pages) {
+				if constexpr (VERBOSE_MEMORY_BANK) {
+					printf("Reusing bank (fragmented) slot=%u at 0x%lX with %u/%u used pages\n",
+						bank.idx, bank.addr, n_used + pages, bank.n_pages);
+				}
+				bank.n_used = n_used;
+				return bank;
+			}
+		}
 	}
 	if constexpr (VERBOSE_MEMORY_BANK) {
 		fprintf(stderr, "Out of working memory requesting %zu pages, %u vs %u max pages\n",
@@ -152,6 +168,15 @@ MemoryBank::~MemoryBank()
 	munmap(this->mem, this->n_pages * vMemory::PageSize());
 }
 
+bool MemoryBank::room_for(size_t pages) const noexcept {
+	if (pages == N_HUGEPAGES) {
+		// It's a hugepage, which must be aligned
+		if (this->n_used % N_HUGEPAGES != 0) {
+			return false;
+		}
+	}
+	return n_used + pages <= n_pages;
+}
 MemoryBank::Page MemoryBank::get_next_page(size_t pages)
 {
 	assert(this->n_used + pages <= this->n_pages);
