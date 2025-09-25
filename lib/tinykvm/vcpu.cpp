@@ -368,6 +368,12 @@ void Machine::setup_long_mode(const MachineOptions& options)
 	setup_vm64_usercode(
 		memory.at(physbase + USER_ASM_ADDR));
 
+	/* Live-patch the interrupt assembly to support remote memory */
+	uint64_t* iasm = memory.page_at(physbase + INTR_ASM_ADDR);
+	iasm_header& hdr = *(iasm_header*)iasm;
+	hdr.vm64_remote_return_addr =
+		usercode_header().translated_vm_remote_disconnect(memory);
+
 	this->m_kernel_end = setup_amd64_paging(memory, m_binary, options.remappings, options.split_hugepages);
 }
 

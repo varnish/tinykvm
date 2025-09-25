@@ -58,14 +58,6 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 			main_pdpt[i] = remote_pdpt[i]; // GB-page
 		}
 	}
-	else
-	{
-		// Live-patch the interrupt assembly to support remote memory
-		uint64_t* iasm = memory.page_at(memory.physbase + INTR_ASM_ADDR);
-		iasm_header& hdr = *(iasm_header*)iasm;
-		hdr.vm64_remote_return_addr =
-			usercode_header().translated_vm_remote_disconnect(this->main_memory());
-	}
 
 	// Finalize
 	this->m_remote = &remote;
@@ -156,6 +148,30 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 		this->set_fpu_registers(saved_fprs);
 	this->prepare_vmresume(our_fsbase, true);
 	vcpu.stopped = false;
+}
+void Machine::ipre_permanent_remote_resume_now(bool save_all_regs, std::function<void(Machine&)> before)
+{
+	if (!has_remote())
+		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
+	if (is_remote_connected())
+		throw MachineException("Remote already connected");
+	ScopedProfiler<MachineProfiling::RemoteResume> prof(profiling());
+
+	// There is a permanent connection back from the remote into this VM,
+	// because while this VM should not be able to "always" access the remote,
+	// the remote VM should always be able to access this VM. This mode is for
+	// when each calling VM has a permanent connection to a select remote VM.
+
+	// Call the before function if provided
+	if (before)
+		before(*this);
+
+	this->registers().rdi = this->get_special_registers().fs.base;
+	this->set_registers(this->registers()); // Set dirty bit
+
+	// Resume execution directly into remote VM
+	// Our execution timeout will interrupt the remote VM if needed.
+	this->run(0.0f);
 }
 
 Machine::address_t Machine::remote_activate_now()
