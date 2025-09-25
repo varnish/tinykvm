@@ -149,7 +149,7 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 	this->prepare_vmresume(our_fsbase, true);
 	vcpu.stopped = false;
 }
-void Machine::ipre_permanent_remote_resume_now(bool save_all_regs, std::function<void(Machine&)> before)
+void Machine::ipre_permanent_remote_resume_now()
 {
 	if (!has_remote())
 		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
@@ -161,10 +161,6 @@ void Machine::ipre_permanent_remote_resume_now(bool save_all_regs, std::function
 	// because while this VM should not be able to "always" access the remote,
 	// the remote VM should always be able to access this VM. This mode is for
 	// when each calling VM has a permanent connection to a select remote VM.
-
-	// Call the before function if provided
-	if (before)
-		before(*this);
 
 	this->registers().rdi = this->get_special_registers().fs.base;
 	this->set_registers(this->registers()); // Set dirty bit

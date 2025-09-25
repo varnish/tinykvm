@@ -252,7 +252,7 @@ struct Machine
 	void remote_connect(Machine& other, bool connect_now = false);
 	void set_remote_allow_page_faults(bool v) { m_remote_pfaults = v; }
 	void ipre_remote_resume_now(bool save_all_regs, std::function<void(Machine&)> before);
-	void ipre_permanent_remote_resume_now(bool save_all_regs, std::function<void(Machine&)> before);
+	void ipre_permanent_remote_resume_now();
 	address_t remote_disconnect();
 	bool has_remote() const noexcept { return m_remote != nullptr; }
 	bool is_remote_connected() const noexcept;

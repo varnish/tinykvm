@@ -118,7 +118,7 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 			const unsigned n_used = (bank.n_used + MemoryBank::N_HUGEPAGES - 1) & ~(MemoryBank::N_HUGEPAGES - 1);
 			if (n_used + pages <= bank.n_pages) {
 				if constexpr (VERBOSE_MEMORY_BANK) {
-					printf("Reusing bank (fragmented) slot=%u at 0x%lX with %u/%u used pages\n",
+					printf("Reusing bank (fragmented) slot=%u at 0x%lX with %zu/%u used pages\n",
 						bank.idx, bank.addr, n_used + pages, bank.n_pages);
 				}
 				bank.n_used = n_used;
@@ -139,7 +139,7 @@ void MemoryBanks::reset(const MachineOptions& options)
 	this->m_max_pages = options.max_cow_mem / vMemory::PageSize();
 
 	/* Free memory belonging to banks after the free limit. */
-	size_t limit_pages = options.reset_free_work_mem / vMemory::PageSize();
+	//size_t limit_pages = options.reset_free_work_mem / vMemory::PageSize();
 
 	/* Instead of removing the banks, give memory back to kernel */
 	for (size_t i = 1u; i < m_mem.size(); i++) {
