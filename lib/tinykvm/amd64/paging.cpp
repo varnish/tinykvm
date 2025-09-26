@@ -128,14 +128,6 @@ static void add_remappings(vMemory& memory,
 		virt_giga_page++; // Next gigapage
 	}
 
-	// Track the first seen executable mapping, allowing mmap to use it for
-	// JIT segments.
-	if (remapping.executable && memory.vmem_exec_begin == 0)
-	{
-		memory.vmem_exec_begin = remapping.virt;
-		memory.vmem_exec_end = remapping.virt + remapping.size;
-	}
-
 #ifdef KVM_VERBOSE_PAGETABLES
 	printf("Remapping 0x%lX -> 0x%lX  size 0x%lX write=%d exec=%d blackout=%d\n",
 		remapping.virt, paddr_base, remapping.size,

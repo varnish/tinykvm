@@ -17,6 +17,9 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	  m_arena_next { m_arena_begin },
 	  m_idx { FIRST_BANK_IDX }
 {
+	if (options.vmem_base_address != 0 || options.dylink_address_hint >= 0x1000000000) {
+		this->m_arena_next += 0x800000000;
+	}
 	this->set_max_pages(options.max_cow_mem / vMemory::PageSize(),
 		options.hugepages_arena_size / vMemory::PageSize());
 }

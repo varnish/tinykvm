@@ -45,6 +45,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	}
 
 	this->mmap_physical = MMAP_PHYS_BASE + ((physbase == 0) ? 0x0 : 0x2000000000);
+	this->mmap_physical_begin = this->mmap_physical;
 	if constexpr (VERBOSE_MMAP) {
 		fprintf(stderr, "vMemory: physbase=0x%lX safebase=0x%lX size=0x%zX mmap_physical=0x%lX\n",
 			physbase, safebase, size, mmap_physical);
@@ -112,12 +113,7 @@ void vMemory::delete_foreign_mmap_ranges()
 	for (auto it = this->mmap_ranges.begin(); it != this->mmap_ranges.end(); ){
 		// Only delete ranges that are not part of this VM's memory
 		const auto& range = *it;
-		// XXX: This is a hacky way to detect foreign ranges, although
-		// it should work in practice for now. We only care about MMAP
-		// ranges, and they start at either 0x4000000000 or 0x6000000000.
-		// If the physical address is above 0x6000000000, it's definitely
-		// a foreign range... until it isn't. :-(
-		if (range.physbase >= MMAP_PHYS_BASE + 0x2000000000) {
+		if (range.physbase >= this->mmap_physical || range.physbase < this->mmap_physical_begin) {
 			machine.delete_memory(range.bank_idx);
 			this->m_bank_idx_free_list.push_back(range.bank_idx);
 			if constexpr (VERBOSE_MMAP) {
@@ -129,6 +125,18 @@ void vMemory::delete_foreign_mmap_ranges()
 			++it;
 		}
 	}
+}
+void vMemory::delete_foreign_banks()
+{
+	for (auto slot_idx : this->foreign_banks) {
+		machine.delete_memory(slot_idx);
+		this->m_bank_idx_free_list.push_back(slot_idx);
+		if constexpr (VERBOSE_MMAP) {
+			printf("Removed foreign memory bank at slot %u\n", slot_idx);
+		}
+	}
+	this->foreign_banks.clear();
+	this->remote_bank_break = 0x0;
 }
 
 bool vMemory::compare(const vMemory& other)

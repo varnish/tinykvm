@@ -21,9 +21,6 @@ struct vMemory {
 	uint64_t physbase;
 	uint64_t safebase;
 	uint64_t page_tables;
-	/* Optional executable memory range */
-	uint64_t vmem_exec_begin = 0;
-	uint64_t vmem_exec_end   = 0;
 	/* Counter for the number of pages that have been unlocked
 	   in the main memory. */
 	size_t unlocked_pages = 0;
@@ -33,6 +30,7 @@ struct vMemory {
 	bool   owned = true;
 	/* Remote end pointer for this memory */
 	uint64_t remote_end = 0;
+	uint64_t remote_bank_break = 0x0;
 	/* Use memory banks only for page tables, write directly
 	   to main memory. Used with is_forkable_master(). */
 	bool   main_memory_writes = false;
@@ -46,6 +44,8 @@ struct vMemory {
 	MemoryBanks banks; // fault-in memory banks
 	/* mmap-ranges */
 	std::vector<VirtualMem> mmap_ranges;
+	std::vector<unsigned> foreign_banks;
+	uint64_t mmap_physical_begin = MMAP_PHYS_BASE;
 	uint64_t mmap_physical = MMAP_PHYS_BASE;
 	/* SMP mutex */
 	std::mutex mtx_smp;
@@ -100,6 +100,7 @@ struct vMemory {
 	unsigned allocate_region_idx();
 	void install_mmap_ranges(const Machine& other);
 	void delete_foreign_mmap_ranges();
+	void delete_foreign_banks();
 	/* Loan memory from another machine */
 	vMemory(Machine&, const MachineOptions&, const vMemory& other);
 	~vMemory();

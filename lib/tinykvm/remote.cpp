@@ -29,6 +29,7 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 		if (this->m_remote != nullptr) {
 			this->delete_memory(1);
 			this->memory.delete_foreign_mmap_ranges();
+			this->memory.delete_foreign_banks();
 		}
 		// Install the remote memory in this machine
 		this->install_memory(1, remote_vmem, false);
@@ -61,6 +62,7 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 
 	// Finalize
 	this->m_remote = &remote;
+	remote.m_remote = this; // Mutual
 	if constexpr (VERBOSE_REMOTE) {
 		fprintf(stderr, "Remote connected: this VM %p remote VM %p (%s)\n",
 			this, &remote, connect_now ? "just-in-time" : "setup");
@@ -165,9 +167,42 @@ void Machine::ipre_permanent_remote_resume_now()
 	this->registers().rdi = this->get_special_registers().fs.base;
 	this->set_registers(this->registers()); // Set dirty bit
 
+	const auto remote_cow_counter = remote().memory.cow_written_pages.size();
+
+	if (this->m_remote_cow_counter != remote_cow_counter) {
+		this->m_remote_cow_counter = remote_cow_counter;
+		// New working memory pages have been created in the remote,
+		// so we need to make sure we see the latest changes.
+		this->remote_connect(*this->m_remote, true);
+		for (auto& bank : remote().memory.banks)
+		{
+			const VirtualMem vmem = bank.to_vmem();
+			if (this->memory.remote_bank_break < bank.addr) {
+				this->memory.remote_bank_break = bank.addr;
+				if constexpr (VERBOSE_REMOTE) {
+					fprintf(stderr, "Permanent remote: mapped bank %u at 0x%lX-0x%lX\n",
+						bank.idx, bank.addr, bank.addr + bank.size());
+				}
+				const unsigned new_idx = memory.allocate_region_idx();
+				this->install_memory(new_idx, vmem, false);
+				memory.foreign_banks.push_back(new_idx);
+			}
+		}
+		this->prepare_vmresume(0, true); // Reload page tables
+	}
+
 	// Resume execution directly into remote VM
 	// Our execution timeout will interrupt the remote VM if needed.
-	this->run(0.0f);
+	this->run_in_usermode(0.0f);
+	this->registers().rip += 2; // Skip over OUT instruction
+
+	if (remote_cow_counter != remote().memory.cow_written_pages.size()) {
+		// New working memory pages have been created in the caller,
+		// so we need to make sure it sees the latest changes.
+		printf("Permanent remote: caller created new CoW pages, updating\n");
+		remote().registers().rip += 2; // Skip over OUT instruction
+		remote().prepare_vmresume(0, true); // Reload page tables
+	}
 }
 
 Machine::address_t Machine::remote_activate_now()
