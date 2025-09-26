@@ -91,7 +91,9 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	  m_mt     {nullptr}
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
-	assert(other.m_prepped && "Call Machine::prepare_copy_on_write() first");
+	if (!other.m_prepped || other.memory.main_memory_writes) {
+		throw MachineException("Source Machine is not prepared for forking");
+	}
 
 	/* Unfortunately we have to create a new VM because
 	   memory is tied to VMs and not vCPUs. */

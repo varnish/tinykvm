@@ -413,6 +413,9 @@ void vCPU::set_vcpu_table_at(unsigned index, int value)
 void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_boundary)
 {
 	this->m_prepped = true;
+	if (max_work_mem == 0) {
+	}
+
 	/* Make each writable page read-only, causing page fault.
 	   any page after the @shared_memory_boundary is untouched,
 	   effectively turning it into a shared memory area for all. */
@@ -429,6 +432,12 @@ void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_
 	/* Without working memory we will not be able to make
 	   this master VM usable after prepare_copy_on_write. */
 	if (max_work_mem == 0) {
+		/* Zero working memory indicates the unlocking scheme
+		   is now pointless/finished, which means we can
+		   just disabled it. Also, we can use it to separate
+		   unlocking from forking, and prevent forking when
+		   it's not really going to work (main_memory_writes). */
+		memory.main_memory_writes = false;
 		/* If there are previously banked pages, we need to
 		   flatten them into the main memory. */
 		/// XXX: Implement memory flattening
