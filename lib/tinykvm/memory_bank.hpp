@@ -53,11 +53,13 @@ struct MemoryBanks {
 	static constexpr uint64_t ARENA_BASE_ADDRESS = 0x7000000000;
 
 	MemoryBanks(Machine&, const MachineOptions&);
+	void init_from(const MemoryBanks&);
 
 	MemoryBank& get_available_bank(size_t n_pages);
 	void reset(const MachineOptions&);
 	void set_max_pages(size_t new_max, size_t new_hugepages);
 	size_t max_pages() const noexcept { return m_max_pages; }
+	uint64_t arena_begin() const noexcept { return m_arena_begin; }
 	int allocate_region_idx() {
 		return m_idx++;
 	}
@@ -76,7 +78,7 @@ private:
 
 	std::vector<MemoryBank> m_mem;
 	Machine& m_machine;
-	const uint64_t m_arena_begin;
+	uint64_t m_arena_begin;
 	uint64_t m_arena_next;
 	uint16_t m_idx;
 	/* Number of initial banks that will allocate backing memory using hugepages */

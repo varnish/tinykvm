@@ -47,14 +47,17 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	this->mmap_physical = MMAP_PHYS_BASE + ((physbase == 0) ? 0x0 : 0x2000000000);
 	this->mmap_physical_begin = this->mmap_physical;
 	if constexpr (VERBOSE_MMAP) {
-		fprintf(stderr, "vMemory: physbase=0x%lX safebase=0x%lX size=0x%zX mmap_physical=0x%lX\n",
-			physbase, safebase, size, mmap_physical);
+		fprintf(stderr, "vMemory: physbase=0x%lX safebase=0x%lX size=0x%zX mmap_physical=0x%lX bank_physical=0x%lX\n",
+			physbase, safebase, size, mmap_physical_begin, banks.arena_begin());
 	}
 }
 vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other)
 	: vMemory{m, options, other.physbase, other.safebase, other.ptr, other.size, false}
 {
 	this->executable_heap = other.executable_heap;
+	this->mmap_physical_begin = other.mmap_physical_begin;
+	this->mmap_physical = other.mmap_physical;
+	banks.init_from(other.banks);
 }
 vMemory::~vMemory()
 {

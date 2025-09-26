@@ -18,10 +18,16 @@ MemoryBanks::MemoryBanks(Machine& machine, const MachineOptions& options)
 	  m_idx { FIRST_BANK_IDX }
 {
 	if (options.vmem_base_address != 0 || options.dylink_address_hint >= 0x1000000000) {
-		this->m_arena_next += 0x800000000;
+		this->m_arena_begin += 0x800000000;
+		this->m_arena_next = m_arena_begin;
 	}
 	this->set_max_pages(options.max_cow_mem / vMemory::PageSize(),
 		options.hugepages_arena_size / vMemory::PageSize());
+}
+void MemoryBanks::init_from(const MemoryBanks& other)
+{
+	this->m_arena_begin = other.m_arena_begin;
+	this->m_arena_next = other.m_arena_next;
 }
 void MemoryBanks::set_max_pages(size_t new_max, size_t new_hugepages)
 {
