@@ -209,6 +209,78 @@ void Machine::ipre_permanent_remote_resume_now(bool store_fsbase_rdi)
 		remote().prepare_vmresume(0, true); // Reload page tables
 	}
 }
+void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t return_address)
+{
+	if (!has_remote())
+		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
+	if (is_remote_connected())
+		throw MachineException("Remote already connected");
+
+	ScopedProfiler<MachineProfiling::RemoteResume> prof(profiling());
+
+	// There is a permanent connection back from the remote into this VM,
+	// because while this VM should not be able to "always" access the remote,
+	// the remote VM should always be able to access this VM. This mode is for
+	// when each calling VM has a permanent connection to a select remote VM.
+
+	auto& caller = remote();
+	// Copy all registers (page fault handler may need them all)
+	this->set_registers(caller.registers());
+	// Find the clobbered RIP after IRETQ, set RFLAGS to something sane
+	// The PF handler also pushed RAX and RDI
+	auto& regs = this->registers();
+	struct StackStuff {
+		uint64_t rdi;
+		uint64_t rax;
+		uint64_t return_rip;
+	} stack;
+	caller.unsafe_copy_from_guest(&stack, regs.rsp + 8, sizeof(stack));
+	regs.rax = stack.rax;
+	regs.rdi = stack.rdi;
+	/* Set IOPL=3 to allow I/O instructions in usermode */
+	regs.rflags = 2 | (3 << 12);
+	regs.rip = stack.return_rip;
+	regs.rsp = return_stack;
+	// Redirect the return address to our usercode entry
+	const uint64_t leave_function = this->exit_address();
+	this->copy_to_guest(regs.rsp, &leave_function, sizeof(leave_function));
+	this->set_registers(regs); // Set dirty bit
+
+	const auto remote_cow_counter = caller.memory.cow_written_pages.size();
+
+	if (this->m_remote_cow_counter != remote_cow_counter) {
+		this->m_remote_cow_counter = remote_cow_counter;
+		// New working memory pages have been created in the remote,
+		// so we need to make sure we see the latest changes.
+		this->remote_connect(*this->m_remote, true);
+		for (auto& bank : remote().memory.banks)
+		{
+			const VirtualMem vmem = bank.to_vmem();
+			if (this->memory.remote_bank_break < bank.addr) {
+				this->memory.remote_bank_break = bank.addr;
+				if constexpr (VERBOSE_REMOTE) {
+					fprintf(stderr, "Permanent remote pfault: mapped bank %u at 0x%lX-0x%lX\n",
+						bank.idx, bank.addr, bank.addr + bank.size());
+				}
+				const unsigned new_idx = memory.allocate_region_idx();
+				this->install_memory(new_idx, vmem, false);
+				memory.foreign_banks.push_back(new_idx);
+			}
+		}
+		this->prepare_vmresume(0, true); // Reload page tables
+	}
+
+	// Resume execution directly into remote VM
+	// Our execution timeout will interrupt the remote VM if needed.
+	this->run_in_usermode(0.0f);
+
+	// Now we return to the caller, _forcing_ usermode exit
+	caller.set_registers(this->registers());
+	// Emulate RET from the caller
+	caller.registers().rip = return_address;
+	caller.registers().rsp += 8;
+	caller.enter_usermode();
+}
 
 Machine::address_t Machine::remote_activate_now()
 {

@@ -251,6 +251,7 @@ struct Machine
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);
 	void set_remote_allow_page_faults(bool v) { m_remote_pfaults = v; }
+	void set_permanent_remote_connection(bool v) { m_permanent_remote_connection = v; }
 	void ipre_remote_resume_now(bool save_all_regs, std::function<void(Machine&)> before);
 	void ipre_permanent_remote_resume_now(bool store_fsbase_rdi = true);
 	address_t remote_disconnect();
@@ -317,6 +318,7 @@ private:
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
 	void smp_vcpu_broadcast(std::function<void(vCPU&)>);
 	address_t remote_activate_now();
+	void remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t return_address);
 	/* Prepare for resume with a pagetable reload */
 	void prepare_vmresume(address_t fsbase = 0, bool reload_pagetables = true);
 
@@ -326,6 +328,7 @@ private:
 	bool  m_forked = false;
 	bool  m_just_reset = false;
 	bool  m_remote_pfaults = false;
+	bool  m_permanent_remote_connection = false;
 	bool  m_relocate_fixed_mmap = false;
 	bool  m_verbose_system_calls = false;
 	bool  m_verbose_mmap_syscalls = false;

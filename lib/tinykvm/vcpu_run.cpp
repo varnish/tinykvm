@@ -309,6 +309,12 @@ long vCPU::run_once()
 						printf("Page fault in remote VM at 0x%lX return=0x%lX, connecting...\n", addr, retaddr);
 					}
 
+					if (machine().m_permanent_remote_connection) {
+						// Use the permanent IPRE mechanism to handle the page fault
+						machine().remote().remote_pfault_permanent_ipre(retstack, retaddr);
+						return KVM_EXIT_IO;
+					}
+
 					this->remote_return_address = retaddr;
 					regs.rax = machine().remote_activate_now();
 					this->set_registers(regs);
