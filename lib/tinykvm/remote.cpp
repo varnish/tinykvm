@@ -151,7 +151,7 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 	this->prepare_vmresume(our_fsbase, true);
 	vcpu.stopped = false;
 }
-void Machine::ipre_permanent_remote_resume_now()
+void Machine::ipre_permanent_remote_resume_now(bool store_fsbase_rdi)
 {
 	if (!has_remote())
 		throw MachineException("Remote not enabled. Did you call 'remote_connect()'?");
@@ -164,8 +164,13 @@ void Machine::ipre_permanent_remote_resume_now()
 	// the remote VM should always be able to access this VM. This mode is for
 	// when each calling VM has a permanent connection to a select remote VM.
 
-	this->registers().rdi = this->get_special_registers().fs.base;
-	this->set_registers(this->registers()); // Set dirty bit
+	if (store_fsbase_rdi) {
+		// Set RDI to FSBASE for the remote VM
+		// This is for compatibility with other remote methods that expect
+		// the FSBASE to be passed in RDI.
+		this->registers().rdi = this->get_special_registers().fs.base;
+		this->set_registers(this->registers()); // Set dirty bit
+	}
 
 	const auto remote_cow_counter = remote().memory.cow_written_pages.size();
 
