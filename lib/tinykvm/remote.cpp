@@ -235,29 +235,9 @@ void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t retur
 
 	auto& caller = remote();
 	caller.m_remote_connections++;
-	// Copy all registers (page fault handler may need them all)
-	this->set_registers(caller.registers());
-	// Find the clobbered RIP after IRETQ, set RFLAGS to something sane
-	// The PF handler also pushed RAX and RDI
-	auto& regs = this->registers();
-	struct StackStuff {
-		uint64_t rdi;
-		uint64_t rax;
-		uint64_t return_rip;
-	} stack;
-	caller.unsafe_copy_from_guest(&stack, regs.rsp + 8, sizeof(stack));
-	regs.rax = stack.rax;
-	regs.rdi = stack.rdi;
-	/* Set IOPL=3 to allow I/O instructions in usermode */
-	regs.rflags = 2 | (3 << 12);
-	regs.rip = stack.return_rip;
-	regs.rsp = return_stack;
-	// Redirect the return address to our usercode entry
-	const uint64_t leave_function = this->exit_address();
-	this->copy_to_guest(regs.rsp, &leave_function, sizeof(leave_function));
-	this->set_registers(regs); // Set dirty bit
 
 	const auto remote_cow_counter = caller.memory.cow_written_pages.size();
+	bool do_prepare_vmresume = false;
 
 	if (this->m_remote_cow_counter != remote_cow_counter) {
 		this->m_remote_cow_counter = remote_cow_counter;
@@ -278,9 +258,36 @@ void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t retur
 				memory.foreign_banks.push_back(new_idx);
 			}
 		}
-		this->prepare_vmresume(0, true); // Reload page tables
+		do_prepare_vmresume = true;
 	}
 
+	// Copy all registers (page fault handler may need them all)
+	this->set_registers(caller.registers());
+	// Find the clobbered RIP after IRETQ, set RFLAGS to something sane
+	// The PF handler also pushed RAX and RDI
+	auto& regs = this->registers();
+	struct StackStuff {
+		uint64_t rdi;
+		uint64_t rax;
+		uint64_t error_code;
+		uint64_t return_rip;
+	} stack;
+	caller.unsafe_copy_from_guest(&stack, regs.rsp, sizeof(stack));
+	regs.rax = stack.rax;
+	regs.rdi = stack.rdi;
+	/* Set IOPL=3 to allow I/O instructions in usermode */
+	regs.rflags = 2 | (3 << 12);
+	regs.rip = stack.return_rip;
+	regs.rsp = this->stack_address(); // New stack
+	this->set_registers(regs); // Set dirty bit
+	// Redirect the return address to our usercode entry
+	const uint64_t leave_function = this->exit_address();
+	this->copy_to_guest(regs.rsp, &leave_function, sizeof(leave_function));
+
+	if (do_prepare_vmresume)
+	{
+		this->prepare_vmresume(0, true); // Reload page tables
+	}
 	// Resume execution directly into remote VM
 	// Our execution timeout will interrupt the remote VM if needed.
 	this->run_in_usermode(0.0f);
@@ -290,6 +297,7 @@ void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t retur
 	// Emulate RET from the caller
 	// RSP has already been decremented
 	caller.registers().rip = return_address;
+	caller.registers().rsp = return_stack + 8;
 	caller.registers().rax = this->registers().rdi;
 	caller.enter_usermode();
 }

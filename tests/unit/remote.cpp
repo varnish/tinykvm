@@ -193,8 +193,11 @@ int main() {
 extern void remote_integer_set() {
 	remote_integer = 42;
 }
-extern int* remote_integer_get() {
+extern int* remote_integer_ptr() {
 	return &remote_integer;
+}
+extern int remote_integer_get() {
+	return remote_integer;
 }
 extern void remote_array_write(char* cp, unsigned len) {
 	for (unsigned i = 0; i < len; i++) {
@@ -212,24 +215,28 @@ extern void remote_array_write(char* cp, unsigned len) {
 	pclose(f);
 
 	const auto main_binary = build_and_load(R"M(
-extern int* remote_integer_get();
+#include <stdio.h>
+extern int* remote_integer_ptr();
+extern int remote_integer_get();
 extern void remote_integer_set();
 extern void remote_array_write(char*, unsigned);
 int main() {
 	remote_integer_set();
-	int* p = remote_integer_get();
+	int* p = remote_integer_ptr();
 	if ((long)p > 0x40400000 && (long)p < 0x40A00000) {
 		return 2345;
 	}
 	return (long)p;
 }
 extern void test_failing() {
-	int* p = remote_integer_get();
+	int* p = remote_integer_ptr();
 	*p = 123; // This should cause a fault
 }
 extern int test_remote_array()
 {
 	char arr[65536];
+	printf("Testing remote array write arr=%p\n", (void*)arr);
+	fflush(stdout);
 	remote_array_write(arr, sizeof(arr));
 	for (int i = 0; i < sizeof(arr); i++) {
 		// We should be able to read this
@@ -241,6 +248,15 @@ extern int test_remote_array()
 		arr[i] = 0;
 	}
 	return 0;
+}
+extern int test_many_calls()
+{
+	int sum = 0;
+	for (int i = 0; i < 1000; i++) {
+		int p = remote_integer_get();
+		sum += p;
+	}
+	return sum;
 }
 )M", "-Wl,--just-symbols=storage.syms");
 
@@ -270,14 +286,15 @@ extern int test_remote_array()
 		machine.vmcall("test_failing");
 	}());
 
-	// Create a fork
-	machine.prepare_copy_on_write(1UL << 20);
+	// Create a fork *without* permanent remote connection
+	machine.prepare_copy_on_write(1024*1024);
 	tinykvm::Machine fork(machine, {
 		.max_mem = MAX_MEMORY,
 		.max_cow_mem = MAX_COWMEM,
 		.split_hugepages = true
 	});
 	fork.set_remote_allow_page_faults(true);
+	REQUIRE(fork.has_remote());
 
 	REQUIRE_THROWS([&fork]() {
 		fork.vmcall("test_failing");
@@ -285,4 +302,21 @@ extern int test_remote_array()
 
 	fork.vmcall("test_remote_array");
 	REQUIRE(fork.return_value() == 0);
+
+	// Create a fork *with* permanent remote connection
+	tinykvm::Machine fork2(machine, {
+		.max_mem = MAX_MEMORY,
+		.max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
+	});
+	fork2.set_remote_allow_page_faults(true);
+	fork2.permanent_remote_connect(storage);
+	REQUIRE(fork2.has_remote());
+
+	REQUIRE_THROWS([&fork2]() {
+		fork2.vmcall("test_failing");
+	}());
+
+	fork2.vmcall("test_many_calls");
+	REQUIRE(fork2.return_value() == 42000);
 }
