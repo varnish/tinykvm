@@ -250,6 +250,7 @@ struct Machine
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);
+	void permanent_remote_connect(Machine& other);
 	void set_remote_allow_page_faults(bool v) { m_remote_pfaults = v; }
 	void set_permanent_remote_connection(bool v) { m_permanent_remote_connection = v; }
 	void ipre_remote_resume_now(bool save_all_regs, std::function<void(Machine&)> before);

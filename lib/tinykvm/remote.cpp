@@ -22,10 +22,20 @@ const Machine& Machine::remote() const
 	throw MachineException("Remote not enabled");
 }
 
+void Machine::permanent_remote_connect(Machine& other)
+{
+	this->set_permanent_remote_connection(true);
+
+	// A permanent remote connection is in reverse
+	other.remote_connect(*this, true);
+}
+
 void Machine::remote_connect(Machine& remote, bool connect_now)
 {
 	const auto remote_vmem = remote.main_memory().vmem();
 	if (&remote != this->m_remote) {
+		if (&remote == this)
+			throw MachineException("Cannot connect a VM to itself");
 		if (this->m_remote != nullptr) {
 			this->delete_memory(1);
 			this->memory.delete_foreign_mmap_ranges();
@@ -224,6 +234,7 @@ void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t retur
 	// when each calling VM has a permanent connection to a select remote VM.
 
 	auto& caller = remote();
+	caller.m_remote_connections++;
 	// Copy all registers (page fault handler may need them all)
 	this->set_registers(caller.registers());
 	// Find the clobbered RIP after IRETQ, set RFLAGS to something sane
@@ -277,8 +288,9 @@ void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t retur
 	// Now we return to the caller, _forcing_ usermode exit
 	caller.set_registers(this->registers());
 	// Emulate RET from the caller
+	// RSP has already been decremented
 	caller.registers().rip = return_address;
-	caller.registers().rsp += 8;
+	caller.registers().rax = this->registers().rdi;
 	caller.enter_usermode();
 }
 
