@@ -28,6 +28,11 @@ void MemoryBanks::init_from(const MemoryBanks& other)
 {
 	this->m_arena_begin = other.m_arena_begin;
 	this->m_arena_next = other.m_arena_next;
+	// Verify that there aren't any existing banks allocated
+	if (!this->m_mem.empty()) {
+		throw MemoryException("Cannot init_from() when banks are already allocated (arena_begin will be wrong)",
+			this->m_arena_begin, m_mem[0].addr);
+	}
 }
 void MemoryBanks::set_max_pages(size_t new_max, size_t new_hugepages)
 {

@@ -57,6 +57,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other
 	this->executable_heap = other.executable_heap;
 	this->mmap_physical_begin = other.mmap_physical_begin;
 	this->mmap_physical = other.mmap_physical;
+	this->remote_end = other.remote_end;
 	banks.init_from(other.banks);
 }
 vMemory::~vMemory()

@@ -283,6 +283,9 @@ long vCPU::run_once()
 				} else if (machine().is_foreign_address(addr)) {
 					/* Check that the error code is instruction fetch failed */
 					const uint32_t errcode = regs.rax;
+					if constexpr (VERBOSE_REMOTE) {
+						printf("Remote VM page fault at 0x%lX, errcode=0x%X\n", addr, errcode);
+					}
 					if ((errcode & 0x10) == 0) {
 						if (machine().remote().is_remote_connected()) {
 							// Not an instruction fetch, but a memory read or write
@@ -290,6 +293,8 @@ long vCPU::run_once()
 							WritablePageOptions zero_opts;
 							zero_opts.zeroes = false;
 							(void)writable_page_at(machine().remote().memory, addr, PDE64_USER | PDE64_RW, zero_opts);
+							regs.rax = 0; /* Indicate that it was local */
+							this->set_registers(regs);
 							return KVM_EXIT_IO;
 						} else {
 							// Not connected, so we can't handle it
@@ -326,7 +331,17 @@ long vCPU::run_once()
 
 				WritablePageOptions zero_opts;
 				zero_opts.zeroes = false;
-				(void)writable_page_at(memory, addr, PDE64_USER | PDE64_RW, zero_opts);
+				auto result = writable_page_at(memory, addr, PDE64_USER | PDE64_RW, zero_opts);
+				if constexpr (false) {
+					char buffer[256];
+					PRINTER(machine().m_printer, buffer,
+						"Page fault on 0x%lX handled, mapped to host page %p\n", addr, result.page);
+					PRINTER(machine().m_printer, buffer,
+						"  Entry value 0x%lX\n", result.entry);
+					PRINTER(machine().m_printer, buffer,
+						"  Our bank arena: begin=0x%lX\n",
+						memory.banks.arena_begin());
+				}
 				return KVM_EXIT_IO;
 			}
 			else if (intr == 1) /* Debug trap */

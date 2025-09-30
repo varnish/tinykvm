@@ -342,6 +342,7 @@ int main() {
 	while (1) {
 		void* p = NULL;
 		size_t len = storage_wait_paused(&p);
+		memset(p, 0, len);
 		strcpy((char*)p, "Data from storage");
 	}
 	return 1234;
@@ -369,7 +370,7 @@ extern long remote_resume(void* data, size_t len);
 long test_remote() {
 	for (int i = 0; i < 100; i++) {
 		char buffer[8192];
-		remote_resume(buffer, sizeof(buffer));
+		remote_resume(buffer, 8192);
 		if (strcmp(buffer, "Data from storage") == 0) {
 			continue;
 		}
@@ -380,8 +381,7 @@ long test_remote() {
 int main() {
 	return test_remote();
 }
-)M",
-											"-Wl,--just-symbols=storage.syms");
+)M", "-Wl,--just-symbols=storage.syms");
 
 	static bool is_waiting = false;
 	tinykvm::Machine::install_unhandled_syscall_handler(
@@ -438,8 +438,32 @@ int main() {
 	REQUIRE(fork.has_remote());
 
 	// Test remote resume
-	fork.vmcall("test_remote");
-	REQUIRE(fork.return_value() == 2345);
-	REQUIRE(!fork.is_remote_connected());
-	REQUIRE(fork.remote_connection_count() == 100);
+	for (int i = 0; i < 100; i++) {
+		is_waiting = false;
+		fork.vmcall("test_remote");
+		REQUIRE(fork.return_value() == 2345);
+		REQUIRE(!fork.is_remote_connected());
+		REQUIRE(fork.remote_connection_count() == (i + 1) * 100);
+		REQUIRE(is_waiting);
+	}
+
+	// Test remote resume against a forked storage VM
+	storage.prepare_copy_on_write();
+	tinykvm::Machine storage_fork(storage, {
+		.max_mem = 16ULL << 20, // MB
+		.max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
+	});
+	fork.remote_connect(storage_fork);
+
+	// Test remote resume against the forked storage VM
+	printf("Testing remote resume against forked storage VM\n");
+	for (int i = 0; i < 100; i++) {
+		is_waiting = false;
+		fork.vmcall("test_remote");
+		REQUIRE(fork.return_value() == 2345);
+		REQUIRE(!fork.is_remote_connected());
+		REQUIRE(fork.remote_connection_count() == 10000 + (i + 1) * 100);
+		REQUIRE(is_waiting);
+	}
 }
