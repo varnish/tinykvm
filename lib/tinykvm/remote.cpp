@@ -56,6 +56,25 @@ void Machine::remote_update_gigapage_mappings(Machine& remote)
 		}
 	}
 
+	if (this->memory.foreign_banks.size() < remote.memory.banks.size()) {
+		// New working memory pages have been created in the remote,
+		// so we need to make sure we see the latest changes.
+		const size_t start_idx = this->memory.foreign_banks.size();
+		for (size_t i = start_idx; i < remote.memory.banks.size(); i++)
+		{
+			const auto& bank = remote.memory.banks.at(i);
+			const VirtualMem vmem = bank.to_vmem();
+			if constexpr (VERBOSE_REMOTE) {
+				fprintf(stderr, "IPRE remote: mapped bank %u at 0x%lX-0x%lX\n",
+					bank.idx, bank.addr, bank.addr + bank.size());
+			}
+			const unsigned new_idx = memory.allocate_region_idx();
+			this->install_memory(new_idx, vmem, false);
+			memory.foreign_banks.push_back(new_idx);
+			printf("Remote: mapped bank %u at 0x%lX-0x%lX\n",
+				bank.idx, bank.addr, bank.addr + bank.size());
+		}
+	}
 }
 void Machine::remote_connect(Machine& remote, bool connect_now)
 {
@@ -67,7 +86,6 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 			this->delete_memory(1);
 			this->memory.delete_foreign_mmap_ranges();
 			this->memory.delete_foreign_banks();
-			this->m_remote_cow_counter = ~0u;
 		}
 		// Install the remote memory in this machine
 		this->install_memory(1, remote_vmem, false);
@@ -125,27 +143,24 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 	// 2. Connect to remote now
 	const auto remote_fsbase = this->remote_activate_now();
 
-	const auto remote_cow_counter = remote().memory.cow_written_pages.size();
 	bool do_prepare = false;
-	if (true || this->m_remote_cow_counter != remote_cow_counter) {
-		this->m_remote_cow_counter = remote_cow_counter;
+	if (this->memory.foreign_banks.size() < remote().memory.banks.size()) {
 		// New working memory pages have been created in the remote,
 		// so we need to make sure we see the latest changes.
-		for (auto& bank : remote().memory.banks)
+		const size_t start_idx = this->memory.foreign_banks.size();
+		for (size_t i = start_idx; i < remote().memory.banks.size(); i++)
 		{
+			const auto& bank = remote().memory.banks.at(i);
 			const VirtualMem vmem = bank.to_vmem();
-			if (this->memory.remote_bank_break < bank.addr) {
-				this->memory.remote_bank_break = bank.addr;
-				if constexpr (VERBOSE_REMOTE) {
-					fprintf(stderr, "IPRE remote: mapped bank %u at 0x%lX-0x%lX\n",
-						bank.idx, bank.addr, bank.addr + bank.size());
-				}
-				const unsigned new_idx = memory.allocate_region_idx();
-				this->install_memory(new_idx, vmem, false);
-				memory.foreign_banks.push_back(new_idx);
-				do_prepare = true;
+			if constexpr (VERBOSE_REMOTE) {
+				fprintf(stderr, "IPRE remote: mapped bank %u at 0x%lX-0x%lX\n",
+					bank.idx, bank.addr, bank.addr + bank.size());
 			}
+			const unsigned new_idx = memory.allocate_region_idx();
+			this->install_memory(new_idx, vmem, false);
+			memory.foreign_banks.push_back(new_idx);
 		}
+		do_prepare = true;
 	}
 
 	// 3. Copy remote registers into current state
@@ -217,26 +232,22 @@ void Machine::ipre_permanent_remote_resume_now(bool store_fsbase_rdi)
 		this->set_registers(this->registers()); // Set dirty bit
 	}
 
-	const auto remote_cow_counter = remote().memory.cow_written_pages.size();
-
-	if (this->m_remote_cow_counter != remote_cow_counter) {
-		this->m_remote_cow_counter = remote_cow_counter;
+	if (this->memory.foreign_banks.size() < remote().memory.banks.size()) {
 		// New working memory pages have been created in the remote,
 		// so we need to make sure we see the latest changes.
 		this->remote_connect(*this->m_remote, true);
-		for (auto& bank : remote().memory.banks)
+		const size_t start_idx = this->memory.foreign_banks.size();
+		for (size_t i = start_idx; i < remote().memory.banks.size(); i++)
 		{
+			const auto& bank = remote().memory.banks.at(i);
 			const VirtualMem vmem = bank.to_vmem();
-			if (this->memory.remote_bank_break < bank.addr) {
-				this->memory.remote_bank_break = bank.addr;
-				if constexpr (VERBOSE_REMOTE) {
-					fprintf(stderr, "Permanent remote: mapped bank %u at 0x%lX-0x%lX\n",
-						bank.idx, bank.addr, bank.addr + bank.size());
-				}
-				const unsigned new_idx = memory.allocate_region_idx();
-				this->install_memory(new_idx, vmem, false);
-				memory.foreign_banks.push_back(new_idx);
+			if constexpr (VERBOSE_REMOTE) {
+				fprintf(stderr, "Permanent remote: mapped bank %u at 0x%lX-0x%lX\n",
+					bank.idx, bank.addr, bank.addr + bank.size());
 			}
+			const unsigned new_idx = memory.allocate_region_idx();
+			this->install_memory(new_idx, vmem, false);
+			memory.foreign_banks.push_back(new_idx);
 		}
 		this->prepare_vmresume(0, true); // Reload page tables
 	}
@@ -245,14 +256,6 @@ void Machine::ipre_permanent_remote_resume_now(bool store_fsbase_rdi)
 	// Our execution timeout will interrupt the remote VM if needed.
 	this->run_in_usermode(0.0f);
 	this->registers().rip += 2; // Skip over OUT instruction
-
-	if (remote_cow_counter != remote().memory.cow_written_pages.size()) {
-		// New working memory pages have been created in the caller,
-		// so we need to make sure it sees the latest changes.
-		printf("Permanent remote: caller created new CoW pages, updating\n");
-		remote().registers().rip += 2; // Skip over OUT instruction
-		remote().prepare_vmresume(0, true); // Reload page tables
-	}
 }
 void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t return_address)
 {
@@ -271,27 +274,23 @@ void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t retur
 	auto& caller = remote();
 	caller.m_remote_connections++;
 
-	const auto remote_cow_counter = caller.memory.cow_written_pages.size();
 	bool do_prepare_vmresume = false;
-
-	if (this->m_remote_cow_counter != remote_cow_counter) {
-		this->m_remote_cow_counter = remote_cow_counter;
+	if (this->memory.foreign_banks.size() < remote().memory.banks.size()) {
 		// New working memory pages have been created in the remote,
 		// so we need to make sure we see the latest changes.
 		this->remote_connect(*this->m_remote, true);
-		for (auto& bank : remote().memory.banks)
+		const size_t start_idx = this->memory.foreign_banks.size();
+		for (size_t i = start_idx; i < remote().memory.banks.size(); i++)
 		{
+			const auto& bank = remote().memory.banks.at(i);
 			const VirtualMem vmem = bank.to_vmem();
-			if (this->memory.remote_bank_break < bank.addr) {
-				this->memory.remote_bank_break = bank.addr;
-				if constexpr (VERBOSE_REMOTE) {
-					fprintf(stderr, "Permanent remote pfault: mapped bank %u at 0x%lX-0x%lX\n",
-						bank.idx, bank.addr, bank.addr + bank.size());
-				}
-				const unsigned new_idx = memory.allocate_region_idx();
-				this->install_memory(new_idx, vmem, false);
-				memory.foreign_banks.push_back(new_idx);
+			if constexpr (VERBOSE_REMOTE) {
+				fprintf(stderr, "Permanent remote: mapped bank %u at 0x%lX-0x%lX\n",
+					bank.idx, bank.addr, bank.addr + bank.size());
 			}
+			const unsigned new_idx = memory.allocate_region_idx();
+			this->install_memory(new_idx, vmem, false);
+			memory.foreign_banks.push_back(new_idx);
 		}
 		do_prepare_vmresume = true;
 	}

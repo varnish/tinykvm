@@ -140,7 +140,6 @@ void vMemory::delete_foreign_banks()
 		}
 	}
 	this->foreign_banks.clear();
-	this->remote_bank_break = 0x0;
 }
 
 bool vMemory::compare(const vMemory& other)

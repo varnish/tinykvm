@@ -357,7 +357,6 @@ private:
 	mutable std::unique_ptr<FileDescriptors> m_fds = nullptr;
 
 	Machine* m_remote = nullptr;
-	uint32_t m_remote_cow_counter = ~0u;
 	uint32_t m_remote_connections = 0;
 
 	std::unique_ptr<MachineProfiling> m_profiling = nullptr;

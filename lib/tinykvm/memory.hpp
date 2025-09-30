@@ -30,7 +30,6 @@ struct vMemory {
 	bool   owned = true;
 	/* Remote end pointer for this memory */
 	uint64_t remote_end = 0;
-	uint64_t remote_bank_break = 0x0;
 	/* Use memory banks only for page tables, write directly
 	   to main memory. Used with is_forkable_master(). */
 	bool   main_memory_writes = false;

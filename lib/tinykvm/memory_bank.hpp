@@ -71,6 +71,8 @@ struct MemoryBanks {
 	auto end()   { return m_mem.end(); }
 	auto begin() const { return m_mem.cbegin(); }
 	auto end() const   { return m_mem.cend(); }
+	size_t size() const noexcept { return m_mem.size(); }
+	const MemoryBank& at(size_t i) const { return m_mem.at(i); }
 
 private:
 	MemoryBank& allocate_new_bank(uint64_t addr, unsigned pages);
