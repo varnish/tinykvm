@@ -30,6 +30,33 @@ void Machine::permanent_remote_connect(Machine& other)
 	other.remote_connect(*this, true);
 }
 
+void Machine::remote_update_gigapage_mappings(Machine& remote)
+{
+	auto& caller = *this;
+	const auto remote_vmem = remote.main_memory().vmem();
+	static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
+	auto* main_pml4 = caller.main_memory().page_at(caller.main_memory().page_tables);
+	auto* main_pdpt = caller.main_memory().page_at(main_pml4[0] & PDE64_ADDR_MASK);
+
+	auto* remote_pml4 = remote.main_memory().page_at(remote.main_memory().page_tables);
+	auto* remote_pdpt = remote.main_memory().page_at(remote_pml4[0] & PDE64_ADDR_MASK);
+
+	// Gigabyte starting index and end index (rounded up)
+	const auto begin = remote_vmem.physbase >> 30;
+	const auto end   = (remote_vmem.remote_end + 0x3FFFFFFF) >> 30;
+
+	for (size_t i = begin; i < end; i++)
+	{
+		if (main_pdpt[i] != remote_pdpt[i]) {
+			if constexpr (VERBOSE_REMOTE) {
+				fprintf(stderr, "Updating remote PDPT entry %zu from 0x%lX to 0x%lX\n",
+					i, main_pdpt[i], remote_pdpt[i]);
+			}
+			main_pdpt[i] = remote_pdpt[i];
+		}
+	}
+
+}
 void Machine::remote_connect(Machine& remote, bool connect_now)
 {
 	const auto remote_vmem = remote.main_memory().vmem();
@@ -50,25 +77,7 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 	if (connect_now)
 	{
 		// Copy gigabyte entries covered by remote memory into these page tables
-		static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
-		auto* main_pml4 = this->main_memory().page_at(this->main_memory().page_tables);
-		auto* main_pdpt = this->main_memory().page_at(main_pml4[0] & PDE64_ADDR_MASK);
-
-		auto* remote_pml4 = remote.main_memory().page_at(remote.main_memory().page_tables);
-		auto* remote_pdpt = remote.main_memory().page_at(remote_pml4[0] & PDE64_ADDR_MASK);
-
-		// Gigabyte starting index and end index (rounded up)
-		const auto begin = remote_vmem.physbase >> 30;
-		const auto end   = (remote_vmem.remote_end + 0x3FFFFFFF) >> 30;
-		if (UNLIKELY(begin >= 512 || end > 512 || begin >= end))
-			throw MachineException("Remote memory produced invalid indexes (>512GB?)");
-
-		// Install gigabyte entries from remote VM into this VM
-		// The VM and page tables technically support 2MB region alignments.
-		for (size_t i = begin; i < end; i++)
-		{
-			main_pdpt[i] = remote_pdpt[i]; // GB-page
-		}
+		this->remote_update_gigapage_mappings(remote);
 	}
 
 	// Finalize
@@ -118,7 +127,7 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 
 	const auto remote_cow_counter = remote().memory.cow_written_pages.size();
 	bool do_prepare = false;
-	if (this->m_remote_cow_counter != remote_cow_counter) {
+	if (true || this->m_remote_cow_counter != remote_cow_counter) {
 		this->m_remote_cow_counter = remote_cow_counter;
 		// New working memory pages have been created in the remote,
 		// so we need to make sure we see the latest changes.

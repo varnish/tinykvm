@@ -332,6 +332,11 @@ long vCPU::run_once()
 				WritablePageOptions zero_opts;
 				zero_opts.zeroes = false;
 				auto result = writable_page_at(memory, addr, PDE64_USER | PDE64_RW, zero_opts);
+				if (machine().has_remote() && machine().remote().is_foreign_address(addr) && machine().remote().is_remote_connected()) {
+					// If a new gigapage was created, we need to update the
+					// PML4[0] 512GB page table entry in the caller VM too
+					machine().remote().remote_update_gigapage_mappings(machine());
+				}
 				if constexpr (false) {
 					char buffer[256];
 					PRINTER(machine().m_printer, buffer,
@@ -341,6 +346,22 @@ long vCPU::run_once()
 					PRINTER(machine().m_printer, buffer,
 						"  Our bank arena: begin=0x%lX\n",
 						memory.banks.arena_begin());
+					static uint64_t last_reported = 0;
+					static int count = 0;
+					if (last_reported == addr) {
+						count++;
+						PRINTER(machine().m_printer, buffer,
+							"  Page fault repeats %d times, address=0x%lX\n",
+							count, last_reported);
+						if (count > 2) {
+							//this->handle_exception(intr);
+							print_pagetables(memory);
+							Machine::machine_exception("Too many page faults", intr);
+						}
+					} else {
+						last_reported = addr;
+						count = 0;
+					}
 				}
 				return KVM_EXIT_IO;
 			}
