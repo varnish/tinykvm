@@ -320,3 +320,126 @@ extern int test_many_calls()
 	fork2.vmcall("test_many_calls");
 	REQUIRE(fork2.return_value() == 42000);
 }
+
+TEST_CASE("Remote resume", "[Remote]")
+{
+	const auto storage_binary = build_and_load(R"M(
+extern long write(int, const void*, unsigned long);
+#include <stdio.h>
+#include <string.h>
+__asm__(".global storage_wait_paused\n"
+	".type storage_wait_paused, @function\n"
+	"storage_wait_paused:\n"
+	".cfi_startproc\n"
+	"	mov $0x10002, %eax\n"
+	"	out %eax, $0\n"
+	"   wrfsbase %rdi\n"
+	"	ret\n"
+	".cfi_endproc\n");
+extern size_t storage_wait_paused(void** ptr);
+
+int main() {
+	while (1) {
+		void* p = NULL;
+		size_t len = storage_wait_paused(&p);
+		strcpy((char*)p, "Data from storage");
+	}
+	return 1234;
+}
+)M", "-Wl,-Ttext-segment=0x40400000");
+
+	// Extract storage remote symbols
+	const std::string command = "objcopy -w --extract-symbol --strip-symbol=!remote* --strip-symbol=* " + storage_binary.first + " storage.syms";
+	FILE* f = popen(command.c_str(), "r");
+	if (f == nullptr) {
+		throw std::runtime_error("Unable to extract remote symbols");
+	}
+	pclose(f);
+
+	const auto main_binary = build_and_load(R"M(
+#include <stdio.h>
+#include <string.h>
+__asm__(".global remote_resume\n"
+	".type remote_resume, @function\n"
+	"remote_resume:\n"
+	"	mov $0x10001, %eax\n"
+	"	out %eax, $0\n"
+	"   ret\n");
+extern long remote_resume(void* data, size_t len);
+long test_remote() {
+	for (int i = 0; i < 100; i++) {
+		char buffer[8192];
+		remote_resume(buffer, sizeof(buffer));
+		if (strcmp(buffer, "Data from storage") == 0) {
+			continue;
+		}
+		return 1;
+	}
+	return 2345;
+}
+int main() {
+	return test_remote();
+}
+)M",
+											"-Wl,--just-symbols=storage.syms");
+
+	static bool is_waiting = false;
+	tinykvm::Machine::install_unhandled_syscall_handler(
+	[] (tinykvm::vCPU& cpu, unsigned syscall_number) {
+		switch (syscall_number) {
+		case 0x10001: { // remote_resume
+			// Remember buffer address and length values
+			const uint64_t src = cpu.registers().rdi;
+			const uint64_t len = cpu.registers().rsi;
+
+			cpu.machine().ipre_remote_resume_now(false,
+			[src, len] (tinykvm::Machine& m) {
+				m.copy_to_guest(m.registers().rdi, &src, sizeof(src));
+				m.registers().rax = len;
+			});
+			return;
+		}
+		case 0x10002: // wait_for_storage_task_paused
+			cpu.stop();
+			is_waiting = true;
+			return;
+		}
+		throw std::runtime_error("Unhandled syscall in remote resume test: " + std::to_string(syscall_number));
+	});
+	tinykvm::Machine storage { storage_binary.second, {
+		.max_mem = 16ULL << 20, // MB
+		.vmem_base_address = 1ULL << 30, // 1GB
+	} };
+	storage.setup_linux({"storage"}, env);
+	storage.run(4.0f);
+	storage.registers().rip += 2; // Skip OUT instruction
+	REQUIRE(is_waiting);
+
+	tinykvm::Machine machine { main_binary.second, {
+		.max_mem = MAX_MEMORY
+	} };
+	machine.setup_linux({"main"}, env);
+
+	machine.remote_connect(storage);
+	REQUIRE(machine.has_remote());
+
+	machine.run(4.0f);
+	REQUIRE(machine.return_value() == 2345);
+	REQUIRE(!machine.is_remote_connected());
+	REQUIRE(machine.remote_connection_count() == 100);
+
+	// Create a fork
+	machine.prepare_copy_on_write();
+	tinykvm::Machine fork(machine, {
+		.max_mem = MAX_MEMORY,
+		.max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
+	});
+	REQUIRE(fork.has_remote());
+
+	// Test remote resume
+	fork.vmcall("test_remote");
+	REQUIRE(fork.return_value() == 2345);
+	REQUIRE(!fork.is_remote_connected());
+	REQUIRE(fork.remote_connection_count() == 100);
+}
