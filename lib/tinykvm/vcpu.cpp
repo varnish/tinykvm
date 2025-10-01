@@ -115,12 +115,13 @@ void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 		struct kvm_sregs master_sregs {};
 		const auto physbase = machine.main_memory().physbase;
 
-		// Check for SMEP and SMAP support
+		// Check for UMIP, SMEP and SMAP support
 		// https://www.felixcloutier.com/x86/cpuid
 		int eax, ebx = 0, ecx = 0, edx = 0;
 		__cpuid(0, eax, ebx, ecx, edx);
 		__cpuid_count(7, 0, eax, ebx, ecx, edx);
 		bool has_fsgsbase = (ebx & (1 <<  0)) != 0; // EBX bit 0
+		bool has_umip = (ecx & (1 <<  2)) != 0; // ECX bit 2
 		bool has_smep = (ebx & (1 <<  7)) != 0; // EBX bit 7
 		bool has_smap = (ebx & (1 << 20)) != 0; // EBX bit 20
 		if (!has_fsgsbase) {
@@ -131,6 +132,9 @@ void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 		master_sregs.cr4 =
 			CR4_PAE | CR4_OSFXSR | CR4_OSXMMEXCPT | CR4_OSXSAVE |
 			CR4_FSGSBASE;
+		if (has_umip) {
+			master_sregs.cr4 |= CR4_UMIP;
+		}
 		if (has_smep) {
 			master_sregs.cr4 |= CR4_SMEP;
 		}
