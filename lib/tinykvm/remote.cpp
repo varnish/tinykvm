@@ -144,26 +144,6 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 	// 2. Connect to remote now
 	const auto remote_fsbase = this->remote_activate_now();
 
-	bool do_prepare = false;
-	if (this->memory.foreign_banks.size() < remote().memory.banks.size()) {
-		// New working memory pages have been created in the remote,
-		// so we need to make sure we see the latest changes.
-		const size_t start_idx = this->memory.foreign_banks.size();
-		for (size_t i = start_idx; i < remote().memory.banks.size(); i++)
-		{
-			const auto& bank = remote().memory.banks.at(i);
-			const VirtualMem vmem = bank.to_vmem();
-			if constexpr (VERBOSE_REMOTE) {
-				fprintf(stderr, "IPRE remote: mapped bank %u at 0x%lX-0x%lX\n",
-					bank.idx, bank.addr, bank.addr + bank.size());
-			}
-			const unsigned new_idx = memory.allocate_region_idx();
-			this->install_memory(new_idx, vmem, false);
-			memory.foreign_banks.push_back(new_idx);
-		}
-		do_prepare = true;
-	}
-
 	// 3. Copy remote registers into current state
 	tinykvm::Machine& remote_vm = remote();
 	copy_callee_saved_registers(save_all, this->registers(), remote_vm.registers());
@@ -179,8 +159,6 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 		// 4. Resume execution
 		// Set RDI to our FSBASE for the remote VM
 		this->registers().rdi = remote_fsbase;
-		if (do_prepare)
-			this->prepare_vmresume(remote_fsbase, true);
 		this->run(0.0f);
 	} catch (const std::exception& e) {
 		// If an exception occurred, disconnect and restore FSBASE
