@@ -228,22 +228,7 @@ void Machine::ipre_permanent_remote_resume_now(bool store_fsbase_rdi)
 		this->set_registers(this->registers()); // Set dirty bit
 	}
 
-	if (this->memory.foreign_banks.size() < remote().memory.banks.size()) {
-		const size_t start_idx = this->memory.foreign_banks.size();
-		for (size_t i = start_idx; i < remote().memory.banks.size(); i++)
-		{
-			const auto& bank = remote().memory.banks.at(i);
-			const VirtualMem vmem = bank.to_vmem();
-			if constexpr (VERBOSE_REMOTE) {
-				fprintf(stderr, "Permanent remote: mapped bank %u at 0x%lX-0x%lX\n",
-					bank.idx, bank.addr, bank.addr + bank.size());
-			}
-			const unsigned new_idx = memory.allocate_region_idx();
-			this->install_memory(new_idx, vmem, false);
-			memory.foreign_banks.push_back(new_idx);
-		}
-		this->prepare_vmresume(0, true); // Reload page tables
-	}
+	this->remote_update_gigapage_mappings(remote());
 
 	// Resume execution directly into remote VM
 	// Our execution timeout will interrupt the remote VM if needed.
