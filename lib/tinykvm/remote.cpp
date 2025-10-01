@@ -71,8 +71,6 @@ void Machine::remote_update_gigapage_mappings(Machine& remote)
 			const unsigned new_idx = memory.allocate_region_idx();
 			this->install_memory(new_idx, vmem, false);
 			memory.foreign_banks.push_back(new_idx);
-			printf("Remote: mapped bank %u at 0x%lX-0x%lX\n",
-				bank.idx, bank.addr, bank.addr + bank.size());
 		}
 	}
 }
@@ -233,9 +231,6 @@ void Machine::ipre_permanent_remote_resume_now(bool store_fsbase_rdi)
 	}
 
 	if (this->memory.foreign_banks.size() < remote().memory.banks.size()) {
-		// New working memory pages have been created in the remote,
-		// so we need to make sure we see the latest changes.
-		this->remote_connect(*this->m_remote, true);
 		const size_t start_idx = this->memory.foreign_banks.size();
 		for (size_t i = start_idx; i < remote().memory.banks.size(); i++)
 		{
