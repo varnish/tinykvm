@@ -320,7 +320,7 @@ private:
 	void smp_vcpu_broadcast(std::function<void(vCPU&)>);
 	address_t remote_activate_now();
 	void remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t return_address);
-	void remote_update_gigapage_mappings(Machine& other);
+	void remote_update_gigapage_mappings(Machine& other, bool forced = false);
 	/* Prepare for resume with a pagetable reload */
 	void prepare_vmresume(address_t fsbase = 0, bool reload_pagetables = true);
 

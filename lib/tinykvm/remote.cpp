@@ -30,29 +30,34 @@ void Machine::permanent_remote_connect(Machine& other)
 	other.remote_connect(*this, true);
 }
 
-void Machine::remote_update_gigapage_mappings(Machine& remote)
+void Machine::remote_update_gigapage_mappings(Machine& remote, bool forced)
 {
-	auto& caller = *this;
-	const auto remote_vmem = remote.main_memory().vmem();
-	static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
-	auto* main_pml4 = caller.main_memory().page_at(caller.main_memory().page_tables);
-	auto* main_pdpt = caller.main_memory().page_at(main_pml4[0] & PDE64_ADDR_MASK);
+	if (remote.memory.remote_must_update_gigapages || forced)
+	{
+		remote.memory.remote_must_update_gigapages = false;
 
-	auto* remote_pml4 = remote.main_memory().page_at(remote.main_memory().page_tables);
-	auto* remote_pdpt = remote.main_memory().page_at(remote_pml4[0] & PDE64_ADDR_MASK);
+		auto& caller = *this;
+		const auto remote_vmem = remote.main_memory().vmem();
+		static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
+		auto* main_pml4 = caller.main_memory().page_at(caller.main_memory().page_tables);
+		auto* main_pdpt = caller.main_memory().page_at(main_pml4[0] & PDE64_ADDR_MASK);
 
-	// Gigabyte starting index and end index (rounded up)
-	const auto begin = remote_vmem.physbase >> 30;
-	const auto end   = (remote_vmem.remote_end + 0x3FFFFFFF) >> 30;
+		auto* remote_pml4 = remote.main_memory().page_at(remote.main_memory().page_tables);
+		auto* remote_pdpt = remote.main_memory().page_at(remote_pml4[0] & PDE64_ADDR_MASK);
 
-	for (size_t i = begin; i < end; i++) {
-		if constexpr (VERBOSE_REMOTE) {
-			if (main_pdpt[i] != remote_pdpt[i]) {
-				fprintf(stderr, "Updating remote PDPT entry %zu from 0x%lX to 0x%lX\n",
-					i, main_pdpt[i], remote_pdpt[i]);
+		// Gigabyte starting index and end index (rounded up)
+		const auto begin = remote_vmem.physbase >> 30;
+		const auto end   = (remote_vmem.remote_end + 0x3FFFFFFF) >> 30;
+
+		for (size_t i = begin; i < end; i++) {
+			if constexpr (VERBOSE_REMOTE) {
+				if (main_pdpt[i] != remote_pdpt[i]) {
+					fprintf(stderr, "Updating remote PDPT entry %zu from 0x%lX to 0x%lX\n",
+						i, main_pdpt[i], remote_pdpt[i]);
+				}
 			}
+			main_pdpt[i] = remote_pdpt[i];
 		}
-		main_pdpt[i] = remote_pdpt[i];
 	}
 
 	if (this->memory.foreign_banks.size() < remote.memory.banks.size()) {
@@ -92,7 +97,7 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 	if (connect_now)
 	{
 		// Copy gigabyte entries covered by remote memory into these page tables
-		this->remote_update_gigapage_mappings(remote);
+		this->remote_update_gigapage_mappings(remote, true);
 		remote.m_remote = this; // Mutual
 	}
 

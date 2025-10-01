@@ -646,6 +646,7 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 					unlock_identity_mapped_entry(pdpt[j]);
 				} else {
 					clone_and_update_entry(memory, pdpt[j], pd, PDE64_RW);
+					memory.remote_must_update_gigapages = true;
 					CLPRINT("-> Cloning a PDPT entry: 0x%lX\n", pdpt[j]);
 				}
 			}
