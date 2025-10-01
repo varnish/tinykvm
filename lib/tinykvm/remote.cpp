@@ -45,15 +45,14 @@ void Machine::remote_update_gigapage_mappings(Machine& remote)
 	const auto begin = remote_vmem.physbase >> 30;
 	const auto end   = (remote_vmem.remote_end + 0x3FFFFFFF) >> 30;
 
-	for (size_t i = begin; i < end; i++)
-	{
-		if (main_pdpt[i] != remote_pdpt[i]) {
-			if constexpr (VERBOSE_REMOTE) {
+	for (size_t i = begin; i < end; i++) {
+		if constexpr (VERBOSE_REMOTE) {
+			if (main_pdpt[i] != remote_pdpt[i]) {
 				fprintf(stderr, "Updating remote PDPT entry %zu from 0x%lX to 0x%lX\n",
 					i, main_pdpt[i], remote_pdpt[i]);
 			}
-			main_pdpt[i] = remote_pdpt[i];
 		}
+		main_pdpt[i] = remote_pdpt[i];
 	}
 
 	if (this->memory.foreign_banks.size() < remote.memory.banks.size()) {
@@ -94,11 +93,11 @@ void Machine::remote_connect(Machine& remote, bool connect_now)
 	{
 		// Copy gigabyte entries covered by remote memory into these page tables
 		this->remote_update_gigapage_mappings(remote);
+		remote.m_remote = this; // Mutual
 	}
 
 	// Finalize
 	this->m_remote = &remote;
-	remote.m_remote = this; // Mutual
 	if constexpr (VERBOSE_REMOTE) {
 		fprintf(stderr, "Remote connected: this VM %p remote VM %p (%s)\n",
 			this, &remote, connect_now ? "just-in-time" : "setup");
@@ -110,7 +109,6 @@ static void copy_callee_saved_registers(bool save_all, tinykvm_regs& dest, const
 		// Callee-saved registers: RBX, RBP, R12-R15 + arguments in RDI, RSI
 		dest.rbx = src.rbx;
 		dest.rdi = src.rdi;
-		dest.rsi = src.rsi;
 		dest.rsp = src.rsp;
 		dest.rbp = src.rbp;
 		dest.r12 = src.r12;
