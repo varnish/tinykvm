@@ -39,3 +39,8 @@ add_executable(storagekvm
 	src/storage.cpp
 )
 target_link_libraries(storagekvm tinykvm)
+
+add_executable(pipekvm
+	src/pipe.cpp
+)
+target_link_libraries(pipekvm tinykvm)
