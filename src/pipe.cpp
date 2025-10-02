@@ -17,7 +17,8 @@ static void do_benchmark(tinykvm::Machine& sender_vm, tinykvm::Machine& receiver
 		int pipefd[2],
 		uint64_t& vmsplice_addr, uint64_t& vmsplice_size,
 		uint64_t& input_addr, uint64_t& input_size,
-		uint64_t receiver_addr, uint64_t sender_addr)
+		uint64_t receiver_addr, uint64_t sender_addr,
+		bool with_vmsplice = true)
 {
 	// Receiver VM will do a "blocking" syscall (pause)
 	receiver_vm.vmcall(receiver_addr);
@@ -35,20 +36,56 @@ static void do_benchmark(tinykvm::Machine& sender_vm, tinykvm::Machine& receiver
 	// Map the pipe from source data
 	std::vector<tinykvm::Machine::Buffer> bufs;
 	sender_vm.gather_buffers_from_range(bufs, vmsplice_addr, vmsplice_size);
-	if (vmsplice(pipefd[1], (const struct iovec *)bufs.data(), bufs.size(), SPLICE_F_MOVE) == -1) {
-		perror("vmsplice");
-		exit(1);
+	if (with_vmsplice) {
+		if (vmsplice(pipefd[1], (const struct iovec *)bufs.data(), bufs.size(), SPLICE_F_MOVE) == -1) {
+			perror("vmsplice");
+			exit(1);
+		}
 	}
 
 	// Resume receiver_vm which now has data
 	std::vector<tinykvm::Machine::WrBuffer> wbufs;
 	receiver_vm.writable_buffers_from_range(wbufs, input_addr, input_size);
-	// Do the actual vmsplice() into the pipe
-	if (readv(pipefd[0], (const struct iovec *)wbufs.data(), wbufs.size()) == -1) {
-		perror("readv");
-		exit(1);
+	// Do the final readv() into the VM memory
+	if (with_vmsplice) {
+		if (readv(pipefd[0], (const struct iovec *)wbufs.data(), wbufs.size()) == -1) {
+			perror("readv");
+			exit(1);
+		}
 	}
 	receiver_vm.vmresume();
+}
+static double benchmark(bool with_vmsplice,
+	tinykvm::Machine& vm1, tinykvm::Machine& vm2,
+	int pipefd[2],
+	uint64_t& vmsplice_addr, uint64_t& vmsplice_size,
+	uint64_t& input_addr, uint64_t& input_size,
+	uint64_t receiver_addr, uint64_t sender_addr)
+{
+	asm("" ::: "memory");
+	timespec t0 = time_now();
+	asm("" ::: "memory");
+
+	// Benchmark the two VMs
+	for (int i = 0; i < 1000; i++) {
+		do_benchmark(vm1, vm2, pipefd,
+			vmsplice_addr, vmsplice_size,
+			input_addr, input_size,
+			receiver_addr, sender_addr,
+			with_vmsplice);
+	}
+
+	asm("" ::: "memory");
+	timespec t1 = time_now();
+	asm("" ::: "memory");
+
+	// Results
+	const double total_us = nanodiff(t0, t1) * 1e-3;
+	const double avg_us = (double)total_us / 1000.0;
+	printf("Average time for %s between two VMs: %.3f us\n",
+		with_vmsplice ? "vmsplice()" : "(no vmsplice)",
+		avg_us);
+	return avg_us;
 }
 
 int main(int argc, char** argv)
@@ -151,6 +188,8 @@ int main(int argc, char** argv)
 				vmsplice_addr = cpu.registers().rdi;
 				vmsplice_size = cpu.registers().rsi;
 				cpu.stop();
+				cpu.registers().rip += 2; // Skip OUT instruction
+				cpu.set_registers(cpu.registers());
 				break;
 			case 0x10001:
 				// The input buffer address
@@ -158,6 +197,8 @@ int main(int argc, char** argv)
 				input_addr = cpu.registers().rdi;
 				input_size = cpu.registers().rsi;
 				cpu.stop();
+				cpu.registers().rip += 2; // Skip OUT instruction
+				cpu.set_registers(cpu.registers());
 				break;
 			case 0x10707:
 				throw "Unimplemented";
@@ -176,34 +217,31 @@ int main(int argc, char** argv)
 	tinykvm::Machine vm2{master_vm, options};
 
 	// Warmup run
-	do_benchmark(vm1, vm2, pipefd,
-		vmsplice_addr, vmsplice_size,
-		input_addr, input_size,
-		receiver_addr, sender_addr);
-
-	asm("" ::: "memory");
-	auto t0 = time_now();
-	asm("" ::: "memory");
-
-	// Benchmark the two VMs
-	for (int i = 0; i < 1000; i++) {
+	for (int i = 0; i < 10; i++) {
 		do_benchmark(vm1, vm2, pipefd,
 			vmsplice_addr, vmsplice_size,
 			input_addr, input_size,
 			receiver_addr, sender_addr);
 	}
 
-	asm("" ::: "memory");
-	auto t1 = time_now();
-	asm("" ::: "memory");
-
-	close(pipefd[0]);
-	close(pipefd[1]);
+	// Benchmark with vmsplice()
+	double vmsplice_time = benchmark(true, vm1, vm2, pipefd,
+		vmsplice_addr, vmsplice_size,
+		input_addr, input_size,
+		receiver_addr, sender_addr);
+	
+	// Benchmark without vmsplice()
+	double no_vmsplice_time = benchmark(false, vm1, vm2, pipefd,
+		vmsplice_addr, vmsplice_size,
+		input_addr, input_size,
+		receiver_addr, sender_addr);
 
 	// Results
-	const double total_us = nanodiff(t0, t1) * 1e-3;
-	const double avg_us = (double)total_us / 1000.0;
-	printf("Average time for vmsplice() between two VMs: %.3f us\n", avg_us);
+	printf("vmsplice() overhead: %.3f us\n", vmsplice_time - no_vmsplice_time);
+
+	// Cleanup
+	close(pipefd[0]);
+	close(pipefd[1]);
 }
 
 timespec time_now()
