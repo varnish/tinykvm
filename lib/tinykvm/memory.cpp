@@ -261,8 +261,7 @@ uint64_t* vMemory::page_at(uint64_t addr) const
 		}
 	}
 	/* Remote machine always last resort */
-	if (machine.has_remote())
-	{
+	if (machine.has_remote()) {
 		return machine.remote().main_memory().page_at(addr);
 	}
 	memory_exception("Memory::page_at() invalid region", addr, 4096);
@@ -278,19 +277,10 @@ char* vMemory::safely_at(uint64_t addr, size_t asize)
 
 	if (safely_within(addr, asize))
 		return &ptr[addr - physbase];
-	/* Remote machine always last resort */
-	if (machine.has_remote())
-	{
-		return machine.remote().main_memory().safely_at(addr, asize);
-	}
 
-	/* Slow-path page walk */
-	const auto pagebase = addr & ~PageMask();
-	const auto offset   = addr & PageMask();
-	if (offset + asize <= vMemory::PageSize())
-	{
-		auto* page = this->get_writable_page(pagebase, expectedUsermodeFlags(), false, false);
-		return &page[offset];
+	/* Remote machine always last resort */
+	if (machine.has_remote()) {
+		return machine.remote().main_memory().safely_at(addr, asize);
 	}
 
 	memory_exception("Memory::safely_at() invalid region", addr, asize);
@@ -306,20 +296,9 @@ const char* vMemory::safely_at(uint64_t addr, size_t asize) const
 		}
 	}
 	/* Remote machine always last resort */
-	if (machine.has_remote())
-	{
+	if (machine.has_remote()) {
 		return machine.remote().main_memory().safely_at(addr, asize);
 	}
-
-	/* Slow-path page walk */
-	const auto pagebase = addr & ~PageMask();
-	const auto offset   = addr & PageMask();
-	if (offset + asize <= vMemory::PageSize())
-	{
-		auto* page = this->get_userpage_at(pagebase);
-		return &page[offset];
-	}
-
 	memory_exception("Memory::safely_at() invalid region", addr, asize);
 }
 std::string_view vMemory::view(uint64_t addr, size_t asize) const {

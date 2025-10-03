@@ -215,11 +215,6 @@ inline std::string_view Machine::memory_at(uint64_t a, size_t s) const
 {
 	return memory.view(a, s);
 }
-template <typename T>
-inline T* Machine::rw_memory_at(uint64_t a, size_t s)
-{
-	return (T*) memory.safely_at(a, s);
-}
 inline bool Machine::memory_safe_at(uint64_t a, size_t s) const
 {
 	return memory.safely_within(a, s);

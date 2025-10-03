@@ -637,7 +637,7 @@ std::string Machine::memcstring(address_t src, size_t maxlen) const
 	return result;
 }
 
-void MachineProfiling::print(const char* user_defined) {
+void MachineProfiling::print(const char* user_defined) const {
 	std::array<std::string, 7> locnames = {
 		"vCPU Run",
 		"Reset",
@@ -651,7 +651,7 @@ void MachineProfiling::print(const char* user_defined) {
 		locnames[UserDefined] = user_defined;
 	}
 	for (size_t i = 0; i < locnames.size(); i++) {
-		auto& vec = this->times[i];
+		auto vec = this->times[i];
 		if (vec.empty()) continue;
 		// Sort the times to find min/max and median
 		std::sort(vec.begin(), vec.end());

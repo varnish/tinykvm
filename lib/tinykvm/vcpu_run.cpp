@@ -293,6 +293,13 @@ long vCPU::run_once()
 							WritablePageOptions zero_opts;
 							zero_opts.zeroes = false;
 							(void)writable_page_at(machine().remote().memory, addr, PDE64_USER | PDE64_RW, zero_opts);
+							// Remember that this address caused a fault, so that we don't loop infinitely
+							if (this->remote_fault_address == addr) {
+								// This address already caused a fault
+								this->handle_exception(intr);
+								Machine::machine_exception("Remote VM page fault repeat on same address", intr);
+							}
+							this->remote_fault_address = addr;
 							regs.rax = 0; /* Indicate that it was local */
 							this->set_registers(regs);
 							return KVM_EXIT_IO;

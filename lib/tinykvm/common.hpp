@@ -47,7 +47,7 @@ namespace tinykvm
 		// Print profiling results. Side effect: *sorts vectors*
 		// when user_defined is non-empty, it will use that label
 		// instead of "UserDefined"
-		void print(const char* user_defined = "");
+		void print(const char* user_defined = "") const;
 		// Clear all profiling samples
 		void reset() {
 			for (auto& vec : times)

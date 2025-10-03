@@ -149,8 +149,6 @@ struct Machine
 	template <typename T> T* get_userdata() { return static_cast<T*> (m_userdata); }
 
 	std::string_view memory_at(uint64_t a, size_t s) const;
-	template <typename T = char>
-	T* rw_memory_at(uint64_t a, size_t s);
 	bool memory_safe_at(uint64_t a, size_t s) const;
 	char* unsafe_memory_at(uint64_t a, size_t s) { return memory.at(a, s); }
 	uint64_t translate(uint64_t virt) const;
