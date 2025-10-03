@@ -287,7 +287,7 @@ long vCPU::run_once()
 						printf("Remote VM page fault at 0x%lX, errcode=0x%X\n", addr, errcode);
 					}
 					if ((errcode & 0x10) == 0) {
-						if (machine().remote().is_remote_connected() || machine().m_permanent_remote_connection) {
+						if (machine().remote().is_remote_connected() || this->m_permanent_remote_connected) {
 							// Not an instruction fetch, but a memory read or write
 							// Since it's foreign memory, we try to handle it in the remote VM
 							WritablePageOptions zero_opts;

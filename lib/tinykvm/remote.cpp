@@ -212,11 +212,14 @@ void Machine::ipre_permanent_remote_resume_now(bool store_fsbase_rdi)
 	}
 
 	this->remote_update_gigapage_mappings(remote());
+	vcpu.m_permanent_remote_connected = true;
 
 	// Resume execution directly into remote VM
 	// Our execution timeout will interrupt the remote VM if needed.
 	this->run_in_usermode(0.0f);
 	this->registers().rip += 2; // Skip over OUT instruction
+
+	vcpu.m_permanent_remote_connected = false;
 }
 void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t return_address)
 {
@@ -285,7 +288,9 @@ void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t retur
 	}
 	// Resume execution directly into remote VM
 	// Our execution timeout will interrupt the remote VM if needed.
+	vcpu.m_permanent_remote_connected = true;
 	this->run_in_usermode(0.0f);
+	vcpu.m_permanent_remote_connected = false;
 
 	// Now we return to the caller, _forcing_ usermode exit
 	caller.set_registers(this->registers());
