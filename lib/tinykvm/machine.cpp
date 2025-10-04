@@ -214,6 +214,7 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 
 	this->m_just_reset = full_reset;
 	this->m_mmap_cache = other.m_mmap_cache;
+	this->vcpu.last_fault_address = 0;
 
 	if (other.has_threads() && has_threads()) {
 		this->m_mt->reset_to(*other.m_mt);

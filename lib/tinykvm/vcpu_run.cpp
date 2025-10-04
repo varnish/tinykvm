@@ -294,12 +294,12 @@ long vCPU::run_once()
 							zero_opts.zeroes = false;
 							(void)writable_page_at(machine().remote().memory, addr, PDE64_USER | PDE64_RW, zero_opts);
 							// Remember that this address caused a fault, so that we don't loop infinitely
-							if (this->remote_fault_address == addr) {
+							if (this->last_fault_address == addr) {
 								// This address already caused a fault
 								this->handle_exception(intr);
 								Machine::machine_exception("Remote VM page fault repeat on same address", intr);
 							}
-							this->remote_fault_address = addr;
+							this->last_fault_address = addr;
 							regs.rax = 0; /* Indicate that it was local */
 							this->set_registers(regs);
 							return KVM_EXIT_IO;
@@ -344,6 +344,12 @@ long vCPU::run_once()
 					// PML4[0] 512GB page table entry in the caller VM too
 					machine().remote().remote_update_gigapage_mappings(machine());
 				}
+				if (this->last_fault_address == addr) {
+					// This address already caused a fault
+					this->handle_exception(intr);
+					Machine::machine_exception("Page fault repeat on same address", intr);
+				}
+				this->last_fault_address = addr;
 				if constexpr (false) {
 					char buffer[256];
 					PRINTER(machine().m_printer, buffer,
@@ -361,8 +367,8 @@ long vCPU::run_once()
 							"  Page fault repeats %d times, address=0x%lX\n",
 							count, last_reported);
 						if (count > 2) {
-							//this->handle_exception(intr);
 							print_pagetables(memory);
+							this->handle_exception(intr);
 							Machine::machine_exception("Too many page faults", intr);
 						}
 					} else {

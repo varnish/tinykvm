@@ -78,6 +78,7 @@ void* Machine::create_vcpu_timer()
 void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 {
 	this->cpu_id = id;
+	this->last_fault_address = 0;
 	this->m_machine = &machine;
 	if (this->fd < 0) {
 		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
