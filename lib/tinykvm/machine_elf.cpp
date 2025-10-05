@@ -166,6 +166,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	this->m_stack_address = this->m_heap_address + STACK_SIZE;
 	this->m_brk_address   = this->m_stack_address;
 	this->m_brk_end_address = this->m_stack_address + BRK_MAX;
+	this->m_brk_end_address = (this->m_brk_end_address + 0x1FFFFF) & ~0x1FFFFF; // 2MB align
 	this->m_heap_address = this->m_brk_end_address;
 
 	/* Make sure mmap starts at a sane offset */
@@ -182,6 +183,7 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 		(void*) m_brk_end_address);
 	printf("* Stack is at %p -> %p\n", (void*) (m_stack_address - STACK_SIZE),
 		(void*) (m_stack_address));
+	printf("* Heap starts at %p\n", (void*) m_heap_address);
 	this->fds().set_verbose(options.verbose_loader);
 	}
 }
