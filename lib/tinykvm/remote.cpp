@@ -184,7 +184,7 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 
 	// 6. When returning, restore original register state
 	copy_callee_saved_registers(save_all, this->registers(), saved_gprs);
-	this->registers().rax = remote_vm.registers().rsi; // RAX is return value
+	this->registers().rax = this->registers().rsi; // RAX is return value
 	this->registers().rip += 2; // Skip over OUT instruction
 	if (save_all)
 		this->set_fpu_registers(saved_fprs);
@@ -222,6 +222,7 @@ void Machine::ipre_permanent_remote_resume_now(bool store_fsbase_rdi)
 
 	vcpu.m_permanent_remote_connected = false;
 	remote().registers().rax = this->registers().rsi; // RAX is return value
+	remote().set_registers(remote().registers()); // Set dirty bit
 }
 void Machine::remote_pfault_permanent_ipre(uint64_t return_stack, uint64_t return_address)
 {
