@@ -370,7 +370,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				// Readv into the area
 				regs.rax = ~0ULL;
 
-				if (cpu.machine().memory.mmap_backed_files && dst >= cpu.machine().mmap_start() && !cpu.machine().is_forked())
+				if (cpu.machine().memory.mmap_backed_files && dst >= cpu.machine().mmap_start() && is_somewhat_large && !cpu.machine().is_forked())
 				{
 					// Use mmap area for large reads
 					if (cpu.machine().mmap_backed_area(real_fd, voff, prot, dst, read_length)) {

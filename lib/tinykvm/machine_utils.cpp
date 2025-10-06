@@ -227,22 +227,6 @@ bool Machine::mmap_backed_area(
 	}
 	size_bytes = std::min(size_bytes, file_size - off);
 
-	// Discover the filename of the fd
-	char fd_path[64];
-	snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
-	std::string filename(PATH_MAX, '\0');
-	const ssize_t r = readlink(fd_path, filename.data(), filename.size() - 1);
-	if (r > 0) {
-		filename[r] = '\0';
-		filename.resize(r);
-	} else {
-		int len = snprintf(filename.data(), filename.size(), "fd%d", fd);
-		filename.resize(len);
-	}
-	if constexpr (VERBOSE_FILE_BACKED_MMAP) {
-		printf("mmap: fd %d is file '%s'\n", fd, filename.c_str());
-	}
-
 	address_t size = size_bytes;
 	if (virt_base & 0x1FFFFF) {
 		// Manual preadv until 2MB aligned
@@ -278,10 +262,6 @@ bool Machine::mmap_backed_area(
 			virt_base = aligned_base; // Update the base to the aligned one
 			size -= prealigned_size;  // Reduce the size by the prealigned area
 			off += prealigned_size;   // Update the offset
-
-			// Record the mmap range start (no bank)
-			this->memory.mmap_ranges.emplace_back(mmap_phys_base, nullptr, virt_base, prealigned_size, filename);
-
 			if (size == 0) {
 				if constexpr (VERBOSE_FILE_BACKED_MMAP) {
 					printf("mmap: finished reading %zu bytes from fd %d at offset %d into 0x%lX\n",
@@ -318,8 +298,23 @@ bool Machine::mmap_backed_area(
 		}
 		// Now we need to install this memory region as guest physical memory
 		this->install_memory(region_idx, VirtualMem(mmap_phys_base, (char*)real_addr, size_memory), false);
+		// Discover the filename of the fd
+		char fd_path[64];
+		snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
+		std::string filename(PATH_MAX, '\0');
+		const ssize_t r = readlink(fd_path, filename.data(), filename.size() - 1);
+		if (r > 0) {
+			filename[r] = '\0';
+			filename.resize(r);
+		} else {
+			int len = snprintf(filename.data(), filename.size(), "fd%d", fd);
+			filename.resize(len);
+		}
+		if constexpr (VERBOSE_FILE_BACKED_MMAP) {
+			printf("mmap: fd %d is file '%s'\n", fd, filename.c_str());
+		}
 		// Record the mmap range
-		this->memory.mmap_ranges.emplace_back(mmap_phys_base, (char*)real_addr, virt_base, size_memory, filename);
+		this->memory.mmap_ranges.emplace_back(mmap_phys_base, (char*)real_addr, virt_base, size_memory, std::move(filename));
 		// Set the bank index for the new mmap range
 		this->memory.mmap_ranges.back().bank_idx = region_idx;
 		// XXX: TODO: madvise(MADV_DONTNEED) on the old pages using gather_buffers_from_range
@@ -382,8 +377,6 @@ bool Machine::mmap_backed_area(
 				this->writable_buffers_from_range(buffers, virt_base + size_memory, remaining);
 			syscall(SYS_preadv, fd, (const iovec*)buffers.data(), cnt, off + size_memory);
 		}
-		// Record the mmap range end (no bank)
-		this->memory.mmap_ranges.emplace_back(mmap_phys_base, nullptr, virt_base, size_memory, filename);
 	}
 
 	if constexpr (VERBOSE_FILE_BACKED_MMAP) {

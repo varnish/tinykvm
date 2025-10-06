@@ -66,9 +66,6 @@ vMemory::~vMemory()
 		munmap(this->ptr, this->size);
 
 		for (auto& mmap_files : this->mmap_ranges) {
-			if (mmap_files.bank_idx != 0) {
-				machine.delete_memory(mmap_files.bank_idx);
-			}
 			if (mmap_files.ptr != nullptr) {
 				munmap(mmap_files.ptr, mmap_files.size);
 			}
@@ -90,9 +87,6 @@ void vMemory::install_mmap_ranges(const Machine &other)
 {
 	for (auto& range : other.main_memory().mmap_ranges)
 	{
-		if (range.bank_idx == 0)
-			continue; // Not unique physical memory
-
 		for (const auto& existing : this->mmap_ranges) {
 			if (existing.overlaps_physical(range.physbase, range.size)) {
 				// Already installed
@@ -123,7 +117,7 @@ void vMemory::delete_foreign_mmap_ranges()
 	for (auto it = this->mmap_ranges.begin(); it != this->mmap_ranges.end(); ){
 		// Only delete ranges that are not part of this VM's memory
 		const auto& range = *it;
-		if (range.bank_idx != 0 && (range.physbase >= this->mmap_physical || range.physbase < this->mmap_physical_begin)) {
+		if (range.physbase >= this->mmap_physical || range.physbase < this->mmap_physical_begin) {
 			machine.delete_memory(range.bank_idx);
 			this->m_bank_idx_free_list.push_back(range.bank_idx);
 			if constexpr (VERBOSE_MMAP) {
