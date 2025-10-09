@@ -169,6 +169,7 @@ int main(int argc, char** argv)
 	storage_vm.run(5.0f);
 
 	master_vm.remote_connect(storage_vm);
+	master_vm.set_remote_allow_page_faults(true);
 
 	static std::map<std::string, uint64_t> callback_address;
 	master_vm.install_unhandled_syscall_handler(
@@ -213,6 +214,7 @@ int main(int argc, char** argv)
 	/* Fork the master VM, and install remote memory */
 	tinykvm::Machine vm{master_vm, options};
 	assert(vm.has_remote());
+	vm.set_remote_allow_page_faults(true);
 
 	/* Measure call overhead */
 	uint64_t do_nothing_addr = 0x0;
