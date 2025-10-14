@@ -51,6 +51,9 @@ namespace tinykvm
 		void set_vfd_start(int vfd_start) noexcept {
 			m_next_fd = vfd_start;
 		}
+		int vfd_start() const noexcept {
+			return m_next_fd;
+		}
 
 		/// @brief Add a file descriptor to the list of managed FDs.
 		/// @param fd The real file descriptor.
@@ -282,6 +285,7 @@ namespace tinykvm
 			std::unordered_set<int> shared_epoll_fds;
 		};
 		EpollEntry& get_epoll_entry_for_vfd(int vfd);
+		const auto& get_epoll_entries() const { return m_epoll_fds; }
 		auto& get_epoll_entries() { return m_epoll_fds; }
 		enum SocketType : int {
 			INVALID,
@@ -298,8 +302,11 @@ namespace tinykvm
 			SocketType type = INVALID;
 		};
 		void add_socket_pair(const SocketPair&);
+		const auto& get_socket_pairs() const { return m_sockets; }
+		auto& get_socket_pairs() { return m_sockets; }
 
 		std::string sockaddr_to_string(const struct sockaddr_storage& addr) const;
+
 	private:
 		Machine& m_machine;
 		std::map<int, Entry> m_fds;

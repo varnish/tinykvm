@@ -1,7 +1,9 @@
 #include "machine.hpp"
 #include <algorithm>
 #include <cstring>
+#include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -24,6 +26,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	: machine(m), physbase(ph), safebase(sf),
 	  // Over-allocate in order to avoid trouble with 2MB-aligned operations
 	  ptr(p), size(overaligned_memsize(s)), owned(own),
+	  has_cold_start_area(own && !options.fast_cold_start_file.empty()),
 	  main_memory_writes(options.master_direct_memory_writes),
 	  split_hugepages(options.split_hugepages),
 	  executable_heap(options.executable_heap),
@@ -378,6 +381,50 @@ vMemory::AllocationResult vMemory::allocate_mapped_memory(
 	}
 	return AllocationResult{ptr, size};
 }
+vMemory::AllocationResult
+	vMemory::allocate_filebacked_memory(const MachineOptions& options, size_t size)
+{
+	if (options.mmap_backed_files) {
+		throw std::runtime_error("Incompatible options: mmap_backed_files and allocate_file_backed_memory()");
+	}
+	if (size < 0x1000L) {
+		memory_exception("Not enough guest memory", 0, size);
+	}
+	// Add the cold start state area
+	size += ColdStartStateSize();
+	// Open the to-be memory-mapped file
+	const std::string& filename = options.fast_cold_start_file;
+	if (filename.empty()) {
+		throw std::runtime_error("No fast cold start file specified");
+	}
+	const int fd = open(filename.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+	if (fd < 0) {
+		throw std::runtime_error("Failed to open fast cold start file: " + filename);
+	}
+	struct stat st;
+	if (fstat(fd, &st) != 0) {
+		close(fd);
+		throw std::runtime_error("Failed to stat fast cold start file: " + filename);
+	}
+	if (st.st_size != off_t(size)) {
+		if (st.st_size != 0) {
+			close(fd);
+			throw std::runtime_error("Fast cold start file has incorrect size: " + filename);
+		}
+		// Create the file with the correct size
+		if (ftruncate(fd, size) != 0) {
+			close(fd);
+			throw std::runtime_error("Failed to set size of fast cold start file: " + filename);
+		}
+	}
+	char* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
+		MAP_SHARED | MAP_NORESERVE, fd, 0);
+	close(fd);
+	if (ptr == MAP_FAILED) {
+		memory_exception("Failed to mmap fast cold start file", 0, size);
+	}
+	return AllocationResult{ptr, size - ColdStartStateSize()};
+}
 
 vMemory vMemory::New(Machine& m, const MachineOptions& options,
 	uint64_t phys, uint64_t safe, size_t size)
@@ -386,6 +433,12 @@ vMemory vMemory::New(Machine& m, const MachineOptions& options,
 		throw MachineException("Invalid physical memory alignment. Must be at least 2MB aligned.", phys);
 	// Over-allocate in order to avoid trouble with 2MB-aligned operations
 	size = vMemory::overaligned_memsize(size);
+	// Use file-backed memory if requested
+	if (!options.fast_cold_start_file.empty()) {
+		const auto [res_ptr, res_size] = allocate_filebacked_memory(options, size);
+		return vMemory(m, options, phys, safe, res_ptr, res_size);
+	}
+	// Normal 2MB main memory allocation
 	const auto [res_ptr, res_size] = allocate_mapped_memory(options, size);
 	return vMemory(m, options, phys, safe, res_ptr, res_size);
 }

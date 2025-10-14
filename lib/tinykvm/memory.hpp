@@ -28,6 +28,7 @@ struct vMemory {
 	char*  ptr;
 	size_t size;
 	bool   owned = true;
+	bool   has_cold_start_area = false;
 	/* Remote end pointer for this memory */
 	uint64_t remote_end = 0;
 	bool     remote_must_update_gigapages = true;
@@ -109,9 +110,15 @@ struct vMemory {
 		static constexpr uint64_t ALIGN = 1ULL << 21;
 		return (size + (ALIGN - 1)) & ~(ALIGN - 1);
 	}
+	static size_t ColdStartStateSize() {
+		return 2UL << 20; // 2MB
+	}
+	bool has_loadable_cold_start_state() const noexcept;
+	void* get_cold_start_state_area() const;
 private:
 	using AllocationResult = std::tuple<char*, size_t>;
 	static AllocationResult allocate_mapped_memory(const MachineOptions&, size_t size);
+	static AllocationResult allocate_filebacked_memory(const MachineOptions&, size_t size);
 	std::vector<unsigned> m_bank_idx_free_list;
 };
 

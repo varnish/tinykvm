@@ -162,6 +162,9 @@ namespace tinykvm
 					}
 					break;
 				}
+				case SocketType::INVALID:
+					// Ignore invalid socket types (they cannot be reconstructed)
+					break;
 				default:
 					fprintf(stderr, "TinyKVM: Unknown socket type %d\n", sp.type);
 					throw std::runtime_error("TinyKVM: Unknown socket type");
