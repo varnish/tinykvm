@@ -295,6 +295,11 @@ struct Machine
 	/* Migrates the VM to the current thread. Allows creating in
 	   one thread, and using it in another. */
 	void migrate_to_this_thread();
+	/* Store non-memory VM state to the already existing cold
+	   start state area in memory. Any failure will throw an
+	   exception. The memory must have been pre-allocated. */
+	void save_cold_start_state_now() const;
+
 	static void init();
 	static void setup_linux_system_calls(bool unsafe_syscalls = false);
 	Machine(const std::vector<uint8_t>& binary, const MachineOptions&);
@@ -321,6 +326,7 @@ private:
 	void remote_update_gigapage_mappings(Machine& other, bool forced = false);
 	/* Prepare for resume with a pagetable reload */
 	void prepare_vmresume(address_t fsbase = 0, bool reload_pagetables = true);
+	bool load_cold_start_state();
 
 	vCPU  vcpu;
 	int   fd = 0;

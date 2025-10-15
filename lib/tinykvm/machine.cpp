@@ -38,16 +38,29 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	  m_mt   {nullptr} /* Explicitly */
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
+	if (options.mmap_backed_files && !options.fast_cold_start_file.empty()) {
+		throw MachineException("Cannot have fast cold start with mmap-backed files at the same time");
+	}
 
 	this->fd = create_kvm_vm();
 
 	install_memory(0, memory.vmem(), false);
 
+	this->vcpu.init(0, *this, options);
+
+	if (memory.has_loadable_cold_start_state()) {
+		if (this->load_cold_start_state()) {
+			printf("Loaded fast cold start state\n");
+			return;
+		}
+		// If the file does not exist, or anything else failed, we continue
+		// to do a normal cold start.
+	}
+
 	if (!binary.empty()) {
 		this->elf_loader(binary, options);
 	}
 
-	this->vcpu.init(0, *this, options);
 	this->setup_long_mode(options);
 
 	/* We need to adjust BRK if the kernel end address is
