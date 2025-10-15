@@ -111,6 +111,16 @@ void MultiThreading::reset_to(const MultiThreading& other)
 
 	thread_counter = other.thread_counter;
 }
+void MultiThreading::set_to_and_suspend_others(int tid)
+{
+	this->m_suspended.clear();
+	for (auto& [otid, thread] : m_threads) {
+		if (otid != tid) {
+			m_suspended.push_back(&thread);
+		}
+	}
+	this->m_current = get_thread(tid);
+}
 
 Thread& MultiThreading::get_thread()
 {

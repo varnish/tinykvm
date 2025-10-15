@@ -22,6 +22,7 @@ struct ColdStartThreadState {
 };
 struct ColdStartThreads {
 	size_t count;
+	int current_tid;
 };
 
 struct ColdStartFds {
@@ -141,6 +142,7 @@ bool Machine::load_cold_start_state()
 				thread.fsbase = tstate->fsbase;
 				thread.clear_tid = tstate->clear_tid;
 			}
+			mt.set_to_and_suspend_others(threads->current_tid);
 		}
 		// Load the file descriptor states
 		ColdStartFds* fds = state.next<ColdStartFds>(current);
@@ -205,10 +207,12 @@ void Machine::save_cold_start_state_now() const
 		state.m_page_tables = this->memory.page_tables;
 
 		void* current = reinterpret_cast<char*>(&state) + sizeof(ColdStartState);
-		// Save the thread states
+		// Save the multi-threading state
 		ColdStartThreads* threads = state.next<ColdStartThreads>(current);
 		if (this->has_threads()) {
 			threads->count = this->m_mt->size();
+			threads->current_tid = this->m_mt->gettid();
+			// Save each thread's state
 			for (const auto& [tid, thread] : this->m_mt->threads()) {
 				ColdStartThreadState* tstate = state.next<ColdStartThreadState>(current);
 				tstate->tid = tid;
