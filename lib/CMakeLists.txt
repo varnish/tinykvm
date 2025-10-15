@@ -18,6 +18,7 @@ set (SOURCES
 	tinykvm/machine_debug.cpp
 	tinykvm/machine_elf.cpp
 	tinykvm/machine_env.cpp
+	tinykvm/machine_state.cpp
 	tinykvm/machine_utils.cpp
 	tinykvm/memory.cpp
 	tinykvm/memory_bank.cpp

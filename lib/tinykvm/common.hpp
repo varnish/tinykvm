@@ -96,6 +96,10 @@ namespace tinykvm
 		bool executable_heap = false;
 		/* Enable file-backed memory mappings for large files */
 		bool mmap_backed_files = false;
+		/* Enable fast cold start by file-mapping all physical memory
+		   to the given file. The file is created if it does not exist,
+		   and must be of the correct size if it does exist. */
+		std::string fast_cold_start_file;
 		/* When using hugepages, cover the given size with
 		   hugepages, unless 0, in which case the entire
 		   main memory will be covered. */

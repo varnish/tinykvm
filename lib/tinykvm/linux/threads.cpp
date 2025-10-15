@@ -123,6 +123,12 @@ Thread* MultiThreading::get_thread(int tid) /* or nullptr */
 	return &it->second;
 }
 
+Thread& MultiThreading::create(int tid)
+{
+	auto it = m_threads.try_emplace(tid, *this, tid, 0, 0);
+	return it.first->second;
+}
+
 Thread& MultiThreading::create(
 	int flags, uint64_t ctid, uint64_t ptid, uint64_t stack, uint64_t tls)
 {
