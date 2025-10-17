@@ -147,6 +147,18 @@ bool Machine::load_snapshot_state()
 		ColdStartFds* fds = state.next<ColdStartFds>(current);
 		auto& fdm = this->fds();
 		fdm.set_vfd_start(fds->next_vfd);
+		// Create socket pairs first
+		for (size_t i = 0; i < fds->socket_pairs; i++) {
+			ColdStartSocketPair* csp = state.next<ColdStartSocketPair>(current);
+			FileDescriptors::SocketPair sp;
+			sp.vfd1 = csp->vfd1;
+			sp.vfd2 = csp->vfd2;
+			sp.type = FileDescriptors::SocketType(csp->type);
+			fdm.add_socket_pair(sp);
+			// Create the (real) socket pairs and manage them
+			fdm.create_socket_pairs_from(sp);
+		}
+		// Create epoll entries
 		for (size_t i = 0; i < fds->epoll_entries; i++) {
 			ColdStartEpollEntry* centry = state.next<ColdStartEpollEntry>(current);
 			auto& entry = fdm.get_epoll_entry_for_vfd(centry->vfd);
@@ -158,14 +170,8 @@ bool Machine::load_snapshot_state()
 				ColdStartSharedEpollFd* csefd = state.next<ColdStartSharedEpollFd>(current);
 				entry.shared_epoll_fds.insert(csefd->vfd);
 			}
-		}
-		for (size_t i = 0; i < fds->socket_pairs; i++) {
-			ColdStartSocketPair* csp = state.next<ColdStartSocketPair>(current);
-			FileDescriptors::SocketPair sp;
-			sp.vfd1 = csp->vfd1;
-			sp.vfd2 = csp->vfd2;
-			sp.type = FileDescriptors::SocketType(csp->type);
-			fdm.add_socket_pair(sp);
+			// Create the (real) epoll system and manage it
+			fdm.create_epoll_entry_from(centry->vfd, entry);
 		}
 
 	} catch (const MachineException& me) {
@@ -228,6 +234,21 @@ void Machine::save_snapshot_state_now() const
 		const auto& epoll_entries = fdm.get_epoll_entries();
 		fds->epoll_entries = epoll_entries.size();
 		fds->socket_pairs = fdm.get_socket_pairs().size();
+		// Socket pair reconstruction entries
+		for (const auto& sp : fdm.get_socket_pairs()) {
+			ColdStartSocketPair* csp = state.next<ColdStartSocketPair>(current);
+			if (sp.type == FileDescriptors::INVALID || sp.type == FileDescriptors::DUPFD) {
+				// Silently ignore invalid or dupfd socket pairs that cannot be reconstructed
+				// when re-loading the state anyway
+				csp->vfd1 = -1;
+				csp->vfd2 = -1;
+				csp->type = int(FileDescriptors::INVALID);
+				continue;
+			}
+			csp->vfd1 = sp.vfd1;
+			csp->vfd2 = sp.vfd2;
+			csp->type = int(sp.type);
+		}
 		// Epoll reconstruction entries
 		for (const auto& [vfd, entry] : epoll_entries) {
 			ColdStartEpollEntry* centry = state.next<ColdStartEpollEntry>(current);
@@ -243,21 +264,6 @@ void Machine::save_snapshot_state_now() const
 				ColdStartSharedEpollFd* csefd = state.next<ColdStartSharedEpollFd>(current);
 				csefd->vfd = sevfd;
 			}
-		}
-		// Socket pair reconstruction entries
-		for (const auto& sp : fdm.get_socket_pairs()) {
-			ColdStartSocketPair* csp = state.next<ColdStartSocketPair>(current);
-			if (sp.type == FileDescriptors::INVALID || sp.type == FileDescriptors::DUPFD) {
-				// Silently ignore invalid or dupfd socket pairs that cannot be reconstructed
-				// when re-loading the state anyway
-				csp->vfd1 = -1;
-				csp->vfd2 = -1;
-				csp->type = int(FileDescriptors::INVALID);
-				continue;
-			}
-			csp->vfd1 = sp.vfd1;
-			csp->vfd2 = sp.vfd2;
-			csp->type = int(sp.type);
 		}
 
 		// Finally, set the size

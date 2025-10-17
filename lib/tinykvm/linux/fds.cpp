@@ -70,104 +70,49 @@ namespace tinykvm
 		// Deep copy the master epoll FDs
 		this->m_epoll_fds.clear();
 		for (auto [vfd, entry] : other.m_epoll_fds) {
-			// Check if it's a shared epoll fd
-			if (!entry->shared_epoll_fds.empty())
-			{
-				// Check if one of the shared epoll fds is already in the list
-				bool found = false;
-				for (auto shared_vfd : entry->shared_epoll_fds) {
-					auto it = this->m_epoll_fds.find(shared_vfd);
-					if (it != this->m_epoll_fds.end()) {
-						// Found a shared epoll fd, so we can *share* the entry
-						this->m_epoll_fds.insert_or_assign(vfd, it->second);
-						if (UNLIKELY(this->m_verbose)) {
-							fprintf(stderr, "TinyKVM: Sharing epoll fd %d with %d\n", vfd, shared_vfd);
-						}
-						found = true;
-						break;
+			// Check if one of the shared epoll fds is already in the list
+			bool found = false;
+			for (auto shared_vfd : entry->shared_epoll_fds) {
+				auto it = this->m_epoll_fds.find(shared_vfd);
+				if (it != this->m_epoll_fds.end()) {
+					// Found a shared epoll fd, so we can *share* the entry
+					this->m_epoll_fds.insert_or_assign(vfd, it->second);
+					if (UNLIKELY(this->m_verbose)) {
+						fprintf(stderr, "TinyKVM: Sharing epoll fd %d with %d\n", vfd, shared_vfd);
 					}
-				}
-				if (found) {
-					// Continue to the next entry
-					continue;
+					found = true;
+					break;
 				}
 			}
-			auto cloned_entry = std::make_shared<EpollEntry>();
-			*cloned_entry = *entry;
-			this->m_epoll_fds.insert_or_assign(vfd, std::move(cloned_entry));
+			if (!found) {
+				auto cloned_entry = std::make_shared<EpollEntry>();
+				*cloned_entry = *entry;
+				this->m_epoll_fds.insert_or_assign(vfd, std::move(cloned_entry));
+			}
 		}
 		// For each socketpair and pipe2 pair, we need to create a new pair
 		// and add them to the list of managed file descriptors.
 		for (auto sp : other.m_sockets) {
-			// Create a new socketpair or pipe2 pair
-			int pair[2] = {-1, -1};
-			switch (sp.type) {
-				case SocketType::PIPE2:
-					if (pipe2(pair, 0) < 0) {
-						fprintf(stderr, "TinyKVM: Failed to create pipe2\n");
-						throw std::runtime_error("TinyKVM: Failed to create pipe2");
-					}
-					// Manage the new pair using *the same* vfd as the original pair
-					this->manage_as(sp.vfd1, pair[0], false, true);
-					this->manage_as(sp.vfd2, pair[1], false, true);
-					if (UNLIKELY(this->m_verbose)) {
-						fprintf(stderr, "TinyKVM: Created new pipe2 pair %d %d\n", sp.vfd1, sp.vfd2);
-					}
-					break;
-				case SocketType::SOCKETPAIR:
-					if (socketpair(AF_UNIX, SOCK_STREAM|SOCK_NONBLOCK, 0, pair) < 0) {
-						fprintf(stderr, "TinyKVM: Failed to create socketpair\n");
-						throw std::runtime_error("TinyKVM: Failed to create socketpair");
-					}
-					this->manage_as(sp.vfd1, pair[0], true, true);
-					this->manage_as(sp.vfd2, pair[1], true, true);
-					if (UNLIKELY(this->m_verbose)) {
-						fprintf(stderr, "TinyKVM: Created new socketpair %d %d\n", sp.vfd1, sp.vfd2);
-					}
-					break;
-				case SocketType::EVENTFD: {
-					const int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-					if (fd < 0) {
-						fprintf(stderr, "TinyKVM: Failed to create eventfd2\n");
-						throw std::runtime_error("TinyKVM: Failed to create eventfd2");
-					}
-					this->manage_as(sp.vfd1, fd, false, true);
-					if (UNLIKELY(this->m_verbose)) {
-						fprintf(stderr, "TinyKVM: Created new eventfd2 %d (%d)\n", sp.vfd1, fd);
-					}
-					break;
+			this->create_socket_pairs_from(sp);
+		}
+	}
+	void FileDescriptors::create_epoll_entry_from(int vfd, EpollEntry& entry)
+	{
+		int real_fd = epoll_create1(0);
+		if (real_fd < 0) {
+			throw std::runtime_error("TinyKVM: Failed to create epoll fd in create_epoll_entry_from()");
+		}
+		this->manage_as(vfd, real_fd, true, true);
+
+		for (auto it = entry.epoll_fds.begin(); it != entry.epoll_fds.end(); ++it) {
+			const int efd_vfd = it->first;
+			struct epoll_event& ev = it->second;
+			const int efd_real_fd = this->translate(efd_vfd);
+			if (efd_real_fd >= 0) {
+				// Automatically add the fd to the epoll instance (when possible)
+				if (epoll_ctl(real_fd, EPOLL_CTL_ADD, efd_real_fd, &ev) < 0) {
+					throw std::runtime_error("TinyKVM: Failed to add fd to epoll in create_epoll_entry_from()");
 				}
-				case SocketType::DUPFD: {
-					// This is a duplicated fd, so we need to create a new one
-					// and manage it as a duplicate of the original fd.
-					const int ret = dup(sp.vfd1);
-					if (ret < 0) {
-						fprintf(stderr, "TinyKVM: Failed to duplicate a DUPFD during reset\n");
-						throw std::runtime_error("TinyKVM: Failed to duplicate a DUPFD during reset");
-					}
-					this->manage_as(sp.vfd2, ret, false, true);
-					if (UNLIKELY(this->m_verbose)) {
-						fprintf(stderr, "TinyKVM: Created new dupfd %d (%d)\n", sp.vfd2, ret);
-					}
-					break;
-				}
-				case SocketType::LISTEN: {
-					// This is a listening socket, however it already exists
-					// as it is shared between the main VM and the forked VMs.
-					// Instead of re-creating the socket we will just manage it.
-					Entry& entry = this->manage_as(sp.vfd1, sp.vfd2, true, true);
-					entry.is_forked = true;
-					if (UNLIKELY(this->m_verbose)) {
-						fprintf(stderr, "TinyKVM: Created new listen socket %d (%d)\n", sp.vfd1, sp.vfd2);
-					}
-					break;
-				}
-				case SocketType::INVALID:
-					// Ignore invalid socket types (they cannot be reconstructed)
-					break;
-				default:
-					fprintf(stderr, "TinyKVM: Unknown socket type %d\n", sp.type);
-					throw std::runtime_error("TinyKVM: Unknown socket type");
 			}
 		}
 	}
@@ -612,6 +557,79 @@ namespace tinykvm
 			}
 			fprintf(stderr, "TinyKVM: Recorded socket pair %d %d (%s)\n",
 				pair.vfd1, pair.vfd2, type.c_str());
+		}
+	}
+	void FileDescriptors::create_socket_pairs_from(const SocketPair& sp)
+	{
+		// Create a new socketpair or pipe2 pair
+		int pair[2] = {-1, -1};
+		switch (sp.type) {
+			case SocketType::PIPE2:
+				if (pipe2(pair, 0) < 0) {
+					fprintf(stderr, "TinyKVM: Failed to create pipe2\n");
+					throw std::runtime_error("TinyKVM: Failed to create pipe2");
+				}
+				// Manage the new pair using *the same* vfd as the original pair
+				this->manage_as(sp.vfd1, pair[0], false, true);
+				this->manage_as(sp.vfd2, pair[1], false, true);
+				if (UNLIKELY(this->m_verbose)) {
+					fprintf(stderr, "TinyKVM: Created new pipe2 pair %d %d\n", sp.vfd1, sp.vfd2);
+				}
+				break;
+			case SocketType::SOCKETPAIR:
+				if (socketpair(AF_UNIX, SOCK_STREAM|SOCK_NONBLOCK, 0, pair) < 0) {
+					fprintf(stderr, "TinyKVM: Failed to create socketpair\n");
+					throw std::runtime_error("TinyKVM: Failed to create socketpair");
+				}
+				this->manage_as(sp.vfd1, pair[0], true, true);
+				this->manage_as(sp.vfd2, pair[1], true, true);
+				if (UNLIKELY(this->m_verbose)) {
+					fprintf(stderr, "TinyKVM: Created new socketpair %d %d\n", sp.vfd1, sp.vfd2);
+				}
+				break;
+			case SocketType::EVENTFD: {
+				const int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+				if (fd < 0) {
+					fprintf(stderr, "TinyKVM: Failed to create eventfd2\n");
+					throw std::runtime_error("TinyKVM: Failed to create eventfd2");
+				}
+				this->manage_as(sp.vfd1, fd, false, true);
+				if (UNLIKELY(this->m_verbose)) {
+					fprintf(stderr, "TinyKVM: Created new eventfd2 %d (%d)\n", sp.vfd1, fd);
+				}
+				break;
+			}
+			case SocketType::DUPFD: {
+				// This is a duplicated fd, so we need to create a new one
+				// and manage it as a duplicate of the original fd.
+				const int ret = dup(sp.vfd1);
+				if (ret < 0) {
+					fprintf(stderr, "TinyKVM: Failed to duplicate a DUPFD during reset\n");
+					throw std::runtime_error("TinyKVM: Failed to duplicate a DUPFD during reset");
+				}
+				this->manage_as(sp.vfd2, ret, false, true);
+				if (UNLIKELY(this->m_verbose)) {
+					fprintf(stderr, "TinyKVM: Created new dupfd %d (%d)\n", sp.vfd2, ret);
+				}
+				break;
+			}
+			case SocketType::LISTEN: {
+				// This is a listening socket, however it already exists
+				// as it is shared between the main VM and the forked VMs.
+				// Instead of re-creating the socket we will just manage it.
+				Entry& entry = this->manage_as(sp.vfd1, sp.vfd2, true, true);
+				entry.is_forked = true;
+				if (UNLIKELY(this->m_verbose)) {
+					fprintf(stderr, "TinyKVM: Created new listen socket %d (%d)\n", sp.vfd1, sp.vfd2);
+				}
+				break;
+			}
+			case SocketType::INVALID:
+				// Ignore invalid socket types (they cannot be reconstructed)
+				break;
+			default:
+				fprintf(stderr, "TinyKVM: Unknown socket type %d\n", sp.type);
+				throw std::runtime_error("TinyKVM: Unknown socket type");
 		}
 	}
 

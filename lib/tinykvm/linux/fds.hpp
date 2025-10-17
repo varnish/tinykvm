@@ -287,6 +287,7 @@ namespace tinykvm
 		EpollEntry& get_epoll_entry_for_vfd(int vfd);
 		const auto& get_epoll_entries() const { return m_epoll_fds; }
 		auto& get_epoll_entries() { return m_epoll_fds; }
+		void create_epoll_entry_from(int vfd, EpollEntry& entry);
 		enum SocketType : int {
 			INVALID,
 			PIPE2,
@@ -304,6 +305,7 @@ namespace tinykvm
 		void add_socket_pair(const SocketPair&);
 		const auto& get_socket_pairs() const { return m_sockets; }
 		auto& get_socket_pairs() { return m_sockets; }
+		void create_socket_pairs_from(const SocketPair& pair);
 
 		std::string sockaddr_to_string(const struct sockaddr_storage& addr) const;
 
