@@ -35,6 +35,7 @@ struct ColdStartFds {
 struct ColdStartEpollEntry {
 	size_t epoll_fds;
 	size_t shared_epoll_fds;
+	int vfd;
 };
 struct ColdStartEpollFd {
 	int vfd;
@@ -148,15 +149,13 @@ bool Machine::load_snapshot_state()
 		fdm.set_vfd_start(fds->next_vfd);
 		for (size_t i = 0; i < fds->epoll_entries; i++) {
 			ColdStartEpollEntry* centry = state.next<ColdStartEpollEntry>(current);
-			auto& our_entries = fdm.get_epoll_entries();
+			auto& entry = fdm.get_epoll_entry_for_vfd(centry->vfd);
 			for (size_t j = 0; j < centry->epoll_fds; j++) {
 				ColdStartEpollFd* cefd = state.next<ColdStartEpollFd>(current);
-				auto& entry = fdm.get_epoll_entry_for_vfd(cefd->vfd);
 				entry.epoll_fds[cefd->vfd] = cefd->event;
 			}
 			for (size_t j = 0; j < centry->shared_epoll_fds; j++) {
 				ColdStartSharedEpollFd* csefd = state.next<ColdStartSharedEpollFd>(current);
-				auto& entry = fdm.get_epoll_entry_for_vfd(csefd->vfd);
 				entry.shared_epoll_fds.insert(csefd->vfd);
 			}
 		}
@@ -232,6 +231,7 @@ void Machine::save_snapshot_state_now() const
 		// Epoll reconstruction entries
 		for (const auto& [vfd, entry] : epoll_entries) {
 			ColdStartEpollEntry* centry = state.next<ColdStartEpollEntry>(current);
+			centry->vfd = vfd;
 			centry->epoll_fds = entry->epoll_fds.size();
 			centry->shared_epoll_fds = entry->shared_epoll_fds.size();
 			for (const auto& [evfd, event] : entry->epoll_fds) {
@@ -268,16 +268,16 @@ void Machine::save_snapshot_state_now() const
 		}
 
 	} catch (const MachineException& me) {
-		throw std::runtime_error(std::string("Failed to get cold start state: ") + me.what());
+		throw std::runtime_error(std::string("Failed to get snapshot state: ") + me.what());
 	}
 }
 
 void* vMemory::get_snapshot_state_area() const
 {
 	if (!this->has_snapshot_area) {
-		throw std::runtime_error("No cold start state area allocated");
+		throw std::runtime_error("No snapshot state area allocated");
 	}
-	// The cold start state area is after the end of the memory
+	// The snapshot state area is after the end of the memory
 	return (void*)(this->ptr + this->size);
 }
 bool vMemory::has_loadable_snapshot_state() const noexcept
@@ -302,8 +302,8 @@ void* Machine::get_snapshot_state_user_area() const
 	if (state.size < sizeof(SnapshotState) || state.size > SnapshotState::Size()) {
 		return nullptr;
 	}
-	// The user area is after the SnapshotState + size
-	return reinterpret_cast<char*>(map) + sizeof(SnapshotState) + state.size;
+	// The user area is after the SnapshotState base + size
+	return reinterpret_cast<char*>(map) + state.size;
 }
 
 } // namespace tinykvm
