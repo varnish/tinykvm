@@ -38,8 +38,8 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	  m_mt   {nullptr} /* Explicitly */
 {
 	assert(kvm_fd != -1 && "Call Machine::init() first");
-	if (options.mmap_backed_files && !options.fast_cold_start_file.empty()) {
-		throw MachineException("Cannot have fast cold start with mmap-backed files at the same time");
+	if (options.mmap_backed_files && !options.snapshot_file.empty()) {
+		throw MachineException("Cannot have VM snapshot with mmap-backed files at the same time");
 	}
 
 	this->fd = create_kvm_vm();
@@ -48,9 +48,12 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 
 	this->vcpu.init(0, *this, options);
 
-	if (memory.has_loadable_cold_start_state()) {
-		if (this->load_cold_start_state()) {
-			printf("Loaded fast cold start state\n");
+	if (memory.has_loadable_snapshot_state()) {
+		this->m_loaded_from_snapshot = this->load_snapshot_state();
+		if (this->m_loaded_from_snapshot) {
+			if (options.verbose_loader) {
+				printf("Loaded VM snapshot state\n");
+			}
 			return;
 		}
 		// If the file does not exist, or anything else failed, we continue

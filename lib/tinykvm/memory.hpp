@@ -28,7 +28,7 @@ struct vMemory {
 	char*  ptr;
 	size_t size;
 	bool   owned = true;
-	bool   has_cold_start_area = false;
+	bool   has_snapshot_area = false;
 	/* Remote end pointer for this memory */
 	uint64_t remote_end = 0;
 	bool     remote_must_update_gigapages = true;
@@ -113,8 +113,8 @@ struct vMemory {
 	static size_t ColdStartStateSize() {
 		return 2UL << 20; // 2MB
 	}
-	bool has_loadable_cold_start_state() const noexcept;
-	void* get_cold_start_state_area() const;
+	bool has_loadable_snapshot_state() const noexcept;
+	void* get_snapshot_state_area() const;
 private:
 	using AllocationResult = std::tuple<char*, size_t>;
 	static AllocationResult allocate_mapped_memory(const MachineOptions&, size_t size);

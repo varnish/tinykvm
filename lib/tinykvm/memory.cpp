@@ -26,7 +26,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	: machine(m), physbase(ph), safebase(sf),
 	  // Over-allocate in order to avoid trouble with 2MB-aligned operations
 	  ptr(p), size(overaligned_memsize(s)), owned(own),
-	  has_cold_start_area(own && !options.fast_cold_start_file.empty()),
+	  has_snapshot_area(own && !options.snapshot_file.empty()),
 	  main_memory_writes(options.master_direct_memory_writes),
 	  split_hugepages(options.split_hugepages),
 	  executable_heap(options.executable_heap),
@@ -393,35 +393,35 @@ vMemory::AllocationResult
 	// Add the cold start state area
 	size += ColdStartStateSize();
 	// Open the to-be memory-mapped file
-	const std::string& filename = options.fast_cold_start_file;
+	const std::string& filename = options.snapshot_file;
 	if (filename.empty()) {
-		throw std::runtime_error("No fast cold start file specified");
+		throw std::runtime_error("No VM snapshot file specified");
 	}
 	const int fd = open(filename.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
 	if (fd < 0) {
-		throw std::runtime_error("Failed to open fast cold start file: " + filename);
+		throw std::runtime_error("Failed to open VM snapshot file: " + filename);
 	}
 	struct stat st;
 	if (fstat(fd, &st) != 0) {
 		close(fd);
-		throw std::runtime_error("Failed to stat fast cold start file: " + filename);
+		throw std::runtime_error("Failed to stat VM snapshot file: " + filename);
 	}
 	if (st.st_size != off_t(size)) {
 		if (st.st_size != 0) {
 			close(fd);
-			throw std::runtime_error("Fast cold start file has incorrect size: " + filename);
+			throw std::runtime_error("VM snapshot file has incorrect size: " + filename);
 		}
 		// Create the file with the correct size
 		if (ftruncate(fd, size) != 0) {
 			close(fd);
-			throw std::runtime_error("Failed to set size of fast cold start file: " + filename);
+			throw std::runtime_error("Failed to set size of VM snapshot file: " + filename);
 		}
 	}
 	char* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
 		MAP_SHARED | MAP_NORESERVE, fd, 0);
 	close(fd);
 	if (ptr == MAP_FAILED) {
-		memory_exception("Failed to mmap fast cold start file", 0, size);
+		memory_exception("Failed to mmap VM snapshot file", 0, size);
 	}
 	return AllocationResult{ptr, size - ColdStartStateSize()};
 }
@@ -434,7 +434,7 @@ vMemory vMemory::New(Machine& m, const MachineOptions& options,
 	// Over-allocate in order to avoid trouble with 2MB-aligned operations
 	size = vMemory::overaligned_memsize(size);
 	// Use file-backed memory if requested
-	if (!options.fast_cold_start_file.empty()) {
+	if (!options.snapshot_file.empty()) {
 		const auto [res_ptr, res_size] = allocate_filebacked_memory(options, size);
 		return vMemory(m, options, phys, safe, res_ptr, res_size);
 	}

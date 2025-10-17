@@ -50,10 +50,10 @@ struct ColdStartSocketPair {
 	int type;
 };
 
-struct ColdStartState {
+struct SnapshotState {
 	static constexpr uint32_t MAGIC = 0x564D4353; // 'VMCS'
 	uint32_t magic;
-	uint32_t version;
+	uint32_t size;
 	tinykvm_x86regs    regs;
 	kvm_sregs          sregs;
 	tinykvm_x86fpuregs fpu;
@@ -83,31 +83,29 @@ struct ColdStartState {
 		current = reinterpret_cast<char*>(current) + sizeof(T);
 		// Bounds-check against end-of-structure
 		if (reinterpret_cast<char*>(current) > reinterpret_cast<char*>(this) + Size()) {
-			throw std::runtime_error("Out of bounds access on ColdStartState");
+			throw std::runtime_error("Out of bounds access on SnapshotState");
 		}
 		return ret;
 	}
 };
-bool Machine::load_cold_start_state()
+bool Machine::load_snapshot_state()
 {
-	if (!memory.has_loadable_cold_start_state()) {
+	if (!memory.has_loadable_snapshot_state()) {
 		return false;
 	}
-	if (!this->memory.has_cold_start_area) {
-		throw std::runtime_error("No cold start state area allocated");
+	if (!this->memory.has_snapshot_area) {
+		throw std::runtime_error("No snapshot state area allocated");
 	}
 	if (this->is_forked()) {
-		throw std::runtime_error("Cannot load cold start state into a forked VM");
+		throw std::runtime_error("Cannot load snapshot state into a forked VM");
 	}
-	void* map = this->memory.get_cold_start_state_area();
-	ColdStartState& state = *reinterpret_cast<ColdStartState*>(map);
-	if (state.magic != ColdStartState::MAGIC) {
-		throw std::runtime_error("No valid cold start state found");
+	void* map = this->memory.get_snapshot_state_area();
+	SnapshotState& state = *reinterpret_cast<SnapshotState*>(map);
+	if (state.magic != SnapshotState::MAGIC) {
+		throw std::runtime_error("No valid snapshot state found");
 	}
-	if (state.version != 1) {
-		fprintf(stderr, "Warning: Cold start state version mismatch: %u != %u\n",
-			state.version, 1u);
-		return false;
+	if (state.size < sizeof(SnapshotState) || state.size > SnapshotState::Size()) {
+		throw std::runtime_error("Invalid snapshot state size");
 	}
 
 	// Load the state into the VM
@@ -130,7 +128,7 @@ bool Machine::load_cold_start_state()
 		this->memory.main_memory_writes = state.main_memory_writes;
 		this->memory.page_tables = state.m_page_tables;
 
-		void* current = reinterpret_cast<char*>(&state) + sizeof(ColdStartState);
+		void* current = reinterpret_cast<char*>(&state) + sizeof(SnapshotState);
 		// Load the thread states
 		ColdStartThreads* threads = state.next<ColdStartThreads>(current);
 		if (threads->count > 0) {
@@ -178,16 +176,16 @@ bool Machine::load_cold_start_state()
 	}
 	return true;
 }
-void Machine::save_cold_start_state_now() const
+void Machine::save_snapshot_state_now() const
 {
 	if (this->is_forked()) {
-		throw std::runtime_error("Cannot save cold start state of a forked VM");
+		throw std::runtime_error("Cannot save snapshot state of a forked VM");
 	}
-	void* map = this->memory.get_cold_start_state_area();
-	ColdStartState& state = *reinterpret_cast<ColdStartState*>(map);
+	void* map = this->memory.get_snapshot_state_area();
+	SnapshotState& state = *reinterpret_cast<SnapshotState*>(map);
 	try {
-		state.magic = ColdStartState::MAGIC;
-		state.version = 1;
+		state.magic = SnapshotState::MAGIC;
+		state.size  = 0; // Invalid (for now)
 		state.regs  = this->registers();
 		state.sregs = this->get_special_registers();
 		state.fpu   = this->fpu_registers();
@@ -206,7 +204,7 @@ void Machine::save_cold_start_state_now() const
 		state.main_memory_writes = this->memory.main_memory_writes;
 		state.m_page_tables = this->memory.page_tables;
 
-		void* current = reinterpret_cast<char*>(&state) + sizeof(ColdStartState);
+		void* current = reinterpret_cast<char*>(&state) + sizeof(SnapshotState);
 		// Save the multi-threading state
 		ColdStartThreads* threads = state.next<ColdStartThreads>(current);
 		if (this->has_threads()) {
@@ -262,27 +260,50 @@ void Machine::save_cold_start_state_now() const
 			csp->type = int(sp.type);
 		}
 
+		// Finally, set the size
+		state.size = static_cast<uint32_t>(
+			reinterpret_cast<char*>(current) - reinterpret_cast<char*>(&state));
+		if (state.size < sizeof(SnapshotState) || state.size > SnapshotState::Size()) {
+			throw std::runtime_error("Snapshot state size was invalid");
+		}
+
 	} catch (const MachineException& me) {
 		throw std::runtime_error(std::string("Failed to get cold start state: ") + me.what());
 	}
 }
 
-void* vMemory::get_cold_start_state_area() const
+void* vMemory::get_snapshot_state_area() const
 {
-	if (!this->has_cold_start_area) {
+	if (!this->has_snapshot_area) {
 		throw std::runtime_error("No cold start state area allocated");
 	}
 	// The cold start state area is after the end of the memory
 	return (void*)(this->ptr + this->size);
 }
-bool vMemory::has_loadable_cold_start_state() const noexcept
+bool vMemory::has_loadable_snapshot_state() const noexcept
 {
-	if (this->has_cold_start_area) {
-		void* area = this->get_cold_start_state_area();
+	if (this->has_snapshot_area) {
+		void* area = this->get_snapshot_state_area();
 		uint32_t* magic = reinterpret_cast<uint32_t*>(area);
-		return *magic == ColdStartState::MAGIC;
+		return *magic == SnapshotState::MAGIC;
 	}
 	return false;
+}
+void* Machine::get_snapshot_state_user_area() const
+{
+	if (!this->memory.has_snapshot_area) {
+		return nullptr;
+	}
+	void* map = this->memory.get_snapshot_state_area();
+	SnapshotState& state = *reinterpret_cast<SnapshotState*>(map);
+	if (state.magic != SnapshotState::MAGIC) {
+		return nullptr;
+	}
+	if (state.size < sizeof(SnapshotState) || state.size > SnapshotState::Size()) {
+		return nullptr;
+	}
+	// The user area is after the SnapshotState + size
+	return reinterpret_cast<char*>(map) + sizeof(SnapshotState) + state.size;
 }
 
 } // namespace tinykvm

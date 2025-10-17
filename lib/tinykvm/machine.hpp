@@ -298,7 +298,12 @@ struct Machine
 	/* Store non-memory VM state to the already existing cold
 	   start state area in memory. Any failure will throw an
 	   exception. The memory must have been pre-allocated. */
-	void save_cold_start_state_now() const;
+	void save_snapshot_state_now() const;
+	/* Check if the VM was loaded from a snapshot state. */
+	bool has_snapshot_state() const noexcept { return m_loaded_from_snapshot; }
+	/* Get pointer to user area in snapshot state memory, or nullptr
+	   if no snapshot state is present. */
+	void* get_snapshot_state_user_area() const;
 
 	static void init();
 	static void setup_linux_system_calls(bool unsafe_syscalls = false);
@@ -326,13 +331,14 @@ private:
 	void remote_update_gigapage_mappings(Machine& other, bool forced = false);
 	/* Prepare for resume with a pagetable reload */
 	void prepare_vmresume(address_t fsbase = 0, bool reload_pagetables = true);
-	bool load_cold_start_state();
+	bool load_snapshot_state();
 
 	vCPU  vcpu;
 	int   fd = 0;
 	bool  m_prepped = false;
 	bool  m_forked = false;
 	bool  m_just_reset = false;
+	bool  m_loaded_from_snapshot = false;
 	bool  m_remote_pfaults = false;
 	bool  m_permanent_remote_connection = false;
 	bool  m_relocate_fixed_mmap = false;
