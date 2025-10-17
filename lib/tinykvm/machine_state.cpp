@@ -94,7 +94,7 @@ bool Machine::load_snapshot_state()
 	if (!memory.has_loadable_snapshot_state()) {
 		return false;
 	}
-	if (!this->memory.has_snapshot_area) {
+	if (!this->memory.has_snapshot_area()) {
 		throw std::runtime_error("No snapshot state area allocated");
 	}
 	if (this->is_forked()) {
@@ -280,7 +280,7 @@ void Machine::save_snapshot_state_now() const
 
 void* vMemory::get_snapshot_state_area() const
 {
-	if (!this->has_snapshot_area) {
+	if (!this->has_snapshot_area()) {
 		throw std::runtime_error("No snapshot state area allocated");
 	}
 	// The snapshot state area is after the end of the memory
@@ -288,7 +288,7 @@ void* vMemory::get_snapshot_state_area() const
 }
 bool vMemory::has_loadable_snapshot_state() const noexcept
 {
-	if (this->has_snapshot_area) {
+	if (this->has_snapshot_area()) {
 		void* area = this->get_snapshot_state_area();
 		uint32_t* magic = reinterpret_cast<uint32_t*>(area);
 		return *magic == SnapshotState::MAGIC;
@@ -297,7 +297,7 @@ bool vMemory::has_loadable_snapshot_state() const noexcept
 }
 void* Machine::get_snapshot_state_user_area() const
 {
-	if (!this->memory.has_snapshot_area) {
+	if (!this->memory.has_snapshot_area()) {
 		return nullptr;
 	}
 	void* map = this->memory.get_snapshot_state_area();

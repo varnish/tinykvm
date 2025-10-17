@@ -28,7 +28,7 @@ struct vMemory {
 	char*  ptr;
 	size_t size;
 	bool   owned = true;
-	bool   has_snapshot_area = false;
+	int    snapshot_fd = -1;
 	/* Remote end pointer for this memory */
 	uint64_t remote_end = 0;
 	bool     remote_must_update_gigapages = true;
@@ -97,7 +97,7 @@ struct vMemory {
 	uint64_t expectedUsermodeFlags() const noexcept;
 
 	/* Create new identity-mapped memory regions */
-	vMemory(Machine&, const MachineOptions&, uint64_t, uint64_t, char*, size_t, bool = true);
+	vMemory(Machine&, const MachineOptions&, uint64_t, uint64_t, char*, size_t, int fd, bool own = true);
 	unsigned allocate_region_idx();
 	void install_mmap_ranges(const Machine& other);
 	void delete_foreign_mmap_ranges();
@@ -115,8 +115,14 @@ struct vMemory {
 	}
 	bool has_loadable_snapshot_state() const noexcept;
 	void* get_snapshot_state_area() const;
+	int get_snapshot_memory_fd() const noexcept {
+		return snapshot_fd;
+	}
+	bool has_snapshot_area() const noexcept {
+		return snapshot_fd != -1;
+	}
 private:
-	using AllocationResult = std::tuple<char*, size_t>;
+	using AllocationResult = std::tuple<char*, size_t, int>;
 	static AllocationResult allocate_mapped_memory(const MachineOptions&, size_t size);
 	static AllocationResult allocate_filebacked_memory(const MachineOptions&, size_t size);
 	std::vector<unsigned> m_bank_idx_free_list;

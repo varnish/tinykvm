@@ -22,11 +22,11 @@ namespace tinykvm {
 static constexpr bool VERBOSE_MMAP = false;
 
 vMemory::vMemory(Machine& m, const MachineOptions& options,
-	uint64_t ph, uint64_t sf, char* p, size_t s, bool own)
+	uint64_t ph, uint64_t sf, char* p, size_t s, int fd, bool own)
 	: machine(m), physbase(ph), safebase(sf),
 	  // Over-allocate in order to avoid trouble with 2MB-aligned operations
-	  ptr(p), size(overaligned_memsize(s)), owned(own),
-	  has_snapshot_area(own && !options.snapshot_file.empty()),
+	  ptr(p), size(overaligned_memsize(s)),
+	  owned(own), snapshot_fd(fd),
 	  main_memory_writes(options.master_direct_memory_writes),
 	  split_hugepages(options.split_hugepages),
 	  executable_heap(options.executable_heap),
@@ -55,7 +55,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	}
 }
 vMemory::vMemory(Machine& m, const MachineOptions& options, const vMemory& other)
-	: vMemory{m, options, other.physbase, other.safebase, other.ptr, other.size, false}
+	: vMemory{m, options, other.physbase, other.safebase, other.ptr, other.size, -1, false}
 {
 	this->executable_heap = other.executable_heap;
 	this->mmap_physical_begin = other.mmap_physical_begin;
@@ -379,7 +379,7 @@ vMemory::AllocationResult vMemory::allocate_mapped_memory(
 	if (advice != 0x0) {
 		madvise(ptr, size, advice);
 	}
-	return AllocationResult{ptr, size};
+	return AllocationResult{ptr, size, -1};
 }
 vMemory::AllocationResult
 	vMemory::allocate_filebacked_memory(const MachineOptions& options, size_t size)
@@ -406,7 +406,10 @@ vMemory::AllocationResult
 		close(fd);
 		throw std::runtime_error("Failed to stat VM snapshot file: " + filename);
 	}
-	if (st.st_size != off_t(size)) {
+	bool already_right_size = (st.st_size == off_t(size));
+	char* ptr = (char*)MAP_FAILED;
+	// If the file is not the correct size, resize it
+	if (!already_right_size) {
 		if (st.st_size != 0) {
 			close(fd);
 			throw std::runtime_error("VM snapshot file has incorrect size: " + filename);
@@ -416,14 +419,18 @@ vMemory::AllocationResult
 			close(fd);
 			throw std::runtime_error("Failed to set size of VM snapshot file: " + filename);
 		}
+		ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
+			MAP_SHARED | MAP_NORESERVE, fd, 0);
+	} else {
+		// Map an existing file, which should not be modified on disk
+		ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_NORESERVE, fd, 0);
 	}
-	char* ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
-		MAP_SHARED | MAP_NORESERVE, fd, 0);
 	close(fd);
 	if (ptr == MAP_FAILED) {
 		memory_exception("Failed to mmap VM snapshot file", 0, size);
 	}
-	return AllocationResult{ptr, size - ColdStartStateSize()};
+	return AllocationResult{ptr, size - ColdStartStateSize(), fd};
 }
 
 vMemory vMemory::New(Machine& m, const MachineOptions& options,
@@ -435,12 +442,12 @@ vMemory vMemory::New(Machine& m, const MachineOptions& options,
 	size = vMemory::overaligned_memsize(size);
 	// Use file-backed memory if requested
 	if (!options.snapshot_file.empty()) {
-		const auto [res_ptr, res_size] = allocate_filebacked_memory(options, size);
-		return vMemory(m, options, phys, safe, res_ptr, res_size);
+		const auto [res_ptr, res_size, fd] = allocate_filebacked_memory(options, size);
+		return vMemory(m, options, phys, safe, res_ptr, res_size, fd);
 	}
 	// Normal 2MB main memory allocation
-	const auto [res_ptr, res_size] = allocate_mapped_memory(options, size);
-	return vMemory(m, options, phys, safe, res_ptr, res_size);
+	const auto [res_ptr, res_size, fd] = allocate_mapped_memory(options, size);
+	return vMemory(m, options, phys, safe, res_ptr, res_size, -1);
 }
 
 VirtualMem vMemory::vmem() const
