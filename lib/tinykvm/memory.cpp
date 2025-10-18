@@ -425,6 +425,9 @@ vMemory::AllocationResult
 		// Map an existing file, which should not be modified on disk
 		ptr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_NORESERVE, fd, 0);
+		// Advise the kernel that we will be immediately accessing this memory's
+		// state and user region
+		madvise(ptr + size - ColdStartStateSize(), vMemory::PageSize(), MADV_WILLNEED);
 	}
 	close(fd);
 	if (ptr == MAP_FAILED) {
@@ -509,6 +512,10 @@ char* vMemory::get_userpage_at(uint64_t addr) const
 #endif
 }
 
+std::vector<uint64_t> Machine::get_accessed_pages() const
+{
+	return tinykvm::get_accessed_pages(this->main_memory());
+}
 size_t Machine::banked_memory_pages() const noexcept
 {
 	size_t count = 0;

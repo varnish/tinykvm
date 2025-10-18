@@ -525,7 +525,22 @@ void foreach_page_makecow(vMemory& mem, uint64_t kernel_end, uint64_t shared_mem
 				entry |= PDE64_CLONEABLE | PDE64_G; // Global bit for read-only pages
 			}
 		}
+		// Clear accessed bit for *all* pages
+		// Doing this makes it possible to send a dummy request to estimate which
+		// pages are needed after a fork, for use with MAP_POPULATE-like optimizations.
+		entry &= ~PDE64_ACCESSED;
 	});
+}
+std::vector<uint64_t> get_accessed_pages(const vMemory& memory)
+{
+	std::vector<uint64_t> accessed_pages;
+	foreach_page(memory,
+	[&accessed_pages] (uint64_t addr, uint64_t& entry, size_t /*size*/) {
+		if ((entry & (PDE64_ACCESSED | PDE64_PRESENT)) == (PDE64_ACCESSED | PDE64_PRESENT)) {
+			accessed_pages.push_back(addr & PDE64_ADDR_MASK);
+		}
+	}, false);
+	return accessed_pages;
 }
 
 void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback, bool ignore_missing)

@@ -110,7 +110,7 @@ struct vMemory {
 		static constexpr uint64_t ALIGN = 1ULL << 21;
 		return (size + (ALIGN - 1)) & ~(ALIGN - 1);
 	}
-	static size_t ColdStartStateSize() {
+	static constexpr size_t ColdStartStateSize() {
 		return 2UL << 20; // 2MB
 	}
 	bool has_loadable_snapshot_state() const noexcept;

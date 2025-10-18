@@ -1,18 +1,26 @@
 #include "machine.hpp"
 
+#include <cstring>
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <stdexcept>
+#include <span>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #ifdef TINYKVM_ARCH_AMD64
 #include "amd64/amd64.hpp"
+#include "amd64/paging.hpp"
 #endif
 #include "linux/fds.hpp"
 #include "linux/threads.hpp"
 
 namespace tinykvm {
+
+struct ColdStartAccessedRange {
+	uint64_t start;
+	uint64_t end;
+};
 
 struct ColdStartThreadState {
 	int tid;
@@ -73,10 +81,13 @@ struct SnapshotState {
 	//MMapCache m_mmap_cache;
 	Machine::address_t mmap_current;
 
-	bool main_memory_writes;
 	Machine::address_t m_page_tables;
+	bool main_memory_writes;
+	uint32_t num_access_ranges;
 
-	static constexpr size_t Size() noexcept { return 4096ul; }
+	char current[0];
+
+	static constexpr size_t Size() noexcept { return vMemory::ColdStartStateSize(); }
 
 	template <typename T>
 	T* next(void*& current) {
@@ -106,6 +117,7 @@ bool Machine::load_snapshot_state()
 		throw std::runtime_error("No valid snapshot state found");
 	}
 	if (state.size < sizeof(SnapshotState) || state.size > SnapshotState::Size()) {
+		fprintf(stderr, "Invalid snapshot state size: %u\n", state.size);
 		throw std::runtime_error("Invalid snapshot state size");
 	}
 
@@ -129,7 +141,22 @@ bool Machine::load_snapshot_state()
 		this->memory.main_memory_writes = state.main_memory_writes;
 		this->memory.page_tables = state.m_page_tables;
 
-		void* current = reinterpret_cast<char*>(&state) + sizeof(SnapshotState);
+		void* current = state.current;
+		// Load populate pages
+		for (unsigned i = 0; i < state.num_access_ranges; i++) {
+			ColdStartAccessedRange* range = state.next<ColdStartAccessedRange>(current);
+			if (range->start >= MemoryBanks::ARENA_BASE_ADDRESS || range->start < kernel_end_address())
+				continue;
+			try {
+				//printf("Populating pages from 0x%lX -> 0x%lX\n", range->start, range->end);
+				char* page = this->memory.get_userpage_at(range->start);
+				madvise(page, range->end - range->start, MADV_WILLNEED | MADV_RANDOM);
+			} catch (const std::exception& e) {
+				fprintf(stderr, "Failed to access page at 0x%lX: %s\n", range->start, e.what());
+				continue;
+			}
+		}
+
 		// Load the thread states
 		ColdStartThreads* threads = state.next<ColdStartThreads>(current);
 		if (threads->count > 0) {
@@ -181,7 +208,7 @@ bool Machine::load_snapshot_state()
 	}
 	return true;
 }
-void Machine::save_snapshot_state_now() const
+void Machine::save_snapshot_state_now(const std::vector<uint64_t>& populate_pages) const
 {
 	if (this->is_forked()) {
 		throw std::runtime_error("Cannot save snapshot state of a forked VM");
@@ -209,7 +236,40 @@ void Machine::save_snapshot_state_now() const
 		state.main_memory_writes = this->memory.main_memory_writes;
 		state.m_page_tables = this->memory.page_tables;
 
-		void* current = reinterpret_cast<char*>(&state) + sizeof(SnapshotState);
+		void* current = state.current;
+		// Save populate pages
+		state.num_access_ranges = 0;
+		if (!populate_pages.empty()) {
+			uint64_t current_begin = 0;
+			uint64_t current_end = 0;
+			for (uint64_t page_addr : populate_pages) {
+				if (page_addr >= MemoryBanks::ARENA_BASE_ADDRESS || page_addr < kernel_end_address())
+					continue;
+				// Merge contiguous ranges
+				if (current_end == page_addr) {
+					current_end += vMemory::PageSize();
+					continue;
+				}
+				// Store previous range
+				if (current_end != current_begin) {
+					ColdStartAccessedRange* range = state.next<ColdStartAccessedRange>(current);
+					range->start = current_begin;
+					range->end = current_end;
+					state.num_access_ranges++;
+				}
+				// Start new range
+				current_begin = page_addr;
+				current_end = page_addr;
+			}
+			// Store last range
+			if (current_end != current_begin) {
+				ColdStartAccessedRange* range = state.next<ColdStartAccessedRange>(current);
+				range->start = current_begin;
+				range->end = current_end;
+				state.num_access_ranges++;
+			}
+		}
+
 		// Save the multi-threading state
 		ColdStartThreads* threads = state.next<ColdStartThreads>(current);
 		if (this->has_threads()) {
@@ -274,7 +334,14 @@ void Machine::save_snapshot_state_now() const
 		}
 
 	} catch (const MachineException& me) {
+		fprintf(stderr, "Failed to get snapshot state: %s Data: 0x%#lX\n",
+			me.what(), me.data());
+		state.magic = 0; // Invalidate
 		throw std::runtime_error(std::string("Failed to get snapshot state: ") + me.what());
+	} catch (const std::exception& e) {
+		fprintf(stderr, "Failed to get snapshot state: %s\n", e.what());
+		state.magic = 0; // Invalidate
+		throw;
 	}
 }
 
