@@ -208,7 +208,7 @@ bool Machine::load_snapshot_state()
 	}
 	return true;
 }
-void Machine::save_snapshot_state_now(const std::vector<uint64_t>& populate_pages) const
+void Machine::save_snapshot_state_now(const std::vector<std::pair<uint64_t, uint64_t>>& populate_pages) const
 {
 	if (this->is_forked()) {
 		throw std::runtime_error("Cannot save snapshot state of a forked VM");
@@ -242,12 +242,12 @@ void Machine::save_snapshot_state_now(const std::vector<uint64_t>& populate_page
 		if (!populate_pages.empty()) {
 			uint64_t current_begin = 0;
 			uint64_t current_end = 0;
-			for (uint64_t page_addr : populate_pages) {
+			for (const auto& [page_addr, size] : populate_pages) {
 				if (page_addr >= MemoryBanks::ARENA_BASE_ADDRESS || page_addr < kernel_end_address())
 					continue;
 				// Merge contiguous ranges
 				if (current_end == page_addr) {
-					current_end += vMemory::PageSize();
+					current_end += size;
 					continue;
 				}
 				// Store previous range
@@ -259,7 +259,7 @@ void Machine::save_snapshot_state_now(const std::vector<uint64_t>& populate_page
 				}
 				// Start new range
 				current_begin = page_addr;
-				current_end = page_addr;
+				current_end = page_addr + size;
 			}
 			// Store last range
 			if (current_end != current_begin) {

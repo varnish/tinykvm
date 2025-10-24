@@ -518,7 +518,7 @@ char* vMemory::get_userpage_at(uint64_t addr) const
 #endif
 }
 
-std::vector<uint64_t> Machine::get_accessed_pages() const
+std::vector<std::pair<uint64_t, uint64_t>> Machine::get_accessed_pages() const
 {
 	return tinykvm::get_accessed_pages(this->main_memory());
 }

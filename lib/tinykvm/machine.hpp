@@ -245,7 +245,7 @@ struct Machine
 	void set_main_memory_writable(bool v) { memory.main_memory_writes = v; }
 	bool is_forked() const noexcept { return m_forked; }
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
-	std::vector<uint64_t> get_accessed_pages() const;
+	std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages() const;
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);
@@ -299,7 +299,7 @@ struct Machine
 	/* Store non-memory VM state to the already existing cold
 	   start state area in memory. Any failure will throw an
 	   exception. The memory must have been pre-allocated. */
-	void save_snapshot_state_now(const std::vector<uint64_t>& populate_pages = {}) const;
+	void save_snapshot_state_now(const std::vector<std::pair<uint64_t, uint64_t>>& populate_pages = {}) const;
 	/* Check if the VM was loaded from a snapshot state. */
 	bool has_snapshot_state() const noexcept { return m_loaded_from_snapshot; }
 	/* Get pointer to user area in snapshot state memory, or nullptr
