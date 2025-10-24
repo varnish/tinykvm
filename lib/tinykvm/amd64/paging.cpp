@@ -531,13 +531,13 @@ void foreach_page_makecow(vMemory& mem, uint64_t kernel_end, uint64_t shared_mem
 		entry &= ~PDE64_ACCESSED;
 	});
 }
-std::vector<uint64_t> get_accessed_pages(const vMemory& memory)
+std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages(const vMemory& memory)
 {
-	std::vector<uint64_t> accessed_pages;
+	std::vector<std::pair<uint64_t, uint64_t>> accessed_pages;
 	foreach_page(memory,
-	[&accessed_pages] (uint64_t addr, uint64_t& entry, size_t /*size*/) {
-		if ((entry & (PDE64_ACCESSED | PDE64_PRESENT)) == (PDE64_ACCESSED | PDE64_PRESENT)) {
-			accessed_pages.push_back(addr & PDE64_ADDR_MASK);
+	[&accessed_pages] (uint64_t addr, uint64_t& entry, size_t size) {
+		if ((entry & (PDE64_PS | PDE64_ACCESSED | PDE64_PRESENT)) == (PDE64_PS | PDE64_ACCESSED | PDE64_PRESENT)) {
+			accessed_pages.push_back({addr & PDE64_ADDR_MASK, size});
 		}
 	}, false);
 	return accessed_pages;
