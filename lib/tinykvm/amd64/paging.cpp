@@ -391,40 +391,56 @@ static const char* pagetag_cloneable_and_global(uint64_t entry)
 }
 
 TINYKVM_COLD()
-void print_pte(const vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
+static const char* leaf_pagetable_bits(uint64_t entry)
+{
+	if ((entry & (PDE64_ACCESSED | PDE64_DIRTY)) == (PDE64_ACCESSED | PDE64_DIRTY)) {
+		return " A+D";
+	} else if (entry & PDE64_ACCESSED) {
+		return " A";
+	} else if (entry & PDE64_DIRTY) {
+		return " D";
+	} else {
+		return "";
+	}
+}
+TINYKVM_COLD()
+static void print_pte(const vMemory& memory, uint64_t pte_addr, uint64_t pte_mem)
 {
 	uint64_t* pt = memory.page_at(pte_mem);
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pt[i] & PDE64_PRESENT) {
-			printf("    |-- 4k PT (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s\n",
+			printf("    |-- 4k PT (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s%s\n",
 				pte_addr + (i << 12), pt[i] & PDE64_ADDR_MASK,
 				pt[i] & PDE64_RW, !(pt[i] & PDE64_NX),
 				(pt[i] & PDE64_USER) ? "USER" : "KERNEL",
-				pagetag_cloneable_and_global(pt[i]));
+				pagetag_cloneable_and_global(pt[i]),
+				leaf_pagetable_bits(pt[i]));
 		}
 	}
 }
 TINYKVM_COLD()
-void print_pd(const vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
+static void print_pd(const vMemory& memory, uint64_t pd_addr, uint64_t pd_mem)
 {
 	uint64_t* pd = memory.page_at(pd_mem);
 	for (uint64_t i = 0; i < 512; i++) {
 		if (pd[i] & PDE64_PRESENT) {
 			uint64_t addr = pd_addr + (i << 21);
 			uint64_t mem  = pd[i] & PDE64_ADDR_MASK;
-			printf("  |-* 2MB PD (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s\n",
+			const bool is_leaf = (pd[i] & PDE64_PS) != 0;
+			printf("  |-* 2MB PD (0x%lX): 0x%lX  W=%lu  E=%d  %s  %s%s\n",
 				addr, mem,
 				pd[i] & PDE64_RW, !(pd[i] & PDE64_NX),
 				(pd[i] & PDE64_USER) ? "USER" : "KERNEL",
-				pagetag_cloneable_and_global(pd[i]));
-			if (!(pd[i] & PDE64_PS)) {
+				pagetag_cloneable_and_global(pd[i]),
+				is_leaf ? leaf_pagetable_bits(pd[i]) : "");
+			if (!is_leaf) {
 				print_pte(memory, addr, mem);
 			}
 		}
 	}
 }
 TINYKVM_COLD()
-void print_pdpt(const vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
+static void print_pdpt(const vMemory& memory, uint64_t pdpt_base, uint64_t pdpt_mem)
 {
 	uint64_t* pdpt = memory.page_at(pdpt_mem);
 	for (uint64_t i = 0; i < 512; i++) {
