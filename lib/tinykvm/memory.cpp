@@ -397,12 +397,18 @@ vMemory::AllocationResult
 	if (filename.empty()) {
 		throw std::runtime_error("No VM snapshot file specified");
 	}
-	int fd = open(filename.c_str(), O_RDONLY | O_CLOEXEC);
-	if (fd < 0) {
-		if (errno != ENOENT) {
+	if (options.snapshot_mode == MachineOptions::SnapshotMode::Disabled) {
+		throw std::runtime_error("VM snapshot disabled");
+	}
+	int fd = -1;
+	if (options.snapshot_mode != MachineOptions::SnapshotMode::Create) {
+		fd = open(filename.c_str(), O_RDONLY | O_CLOEXEC);
+		if (fd < 0 && (options.snapshot_mode == MachineOptions::SnapshotMode::Open || errno != ENOENT)) {
 			throw std::runtime_error("Failed to open VM snapshot file: " + filename);
 		}
-		fd = open(filename.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+	}
+	if (fd < 0) {
+		fd = open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 		if (fd < 0) {
 			throw std::runtime_error("Failed to create VM snapshot file: " + filename);
 		}

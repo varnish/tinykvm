@@ -97,9 +97,20 @@ namespace tinykvm
 		/* Enable file-backed memory mappings for large files */
 		bool mmap_backed_files = false;
 		/* Enable VM snapshot by file-mapping all physical memory
-		   to the given file. The file is created if it does not exist,
+		   to the given file. Depending on `snapshot_mode`,
+		   the file may be created if it does not exist,
 		   and must be of the correct size if it does exist. */
 		std::string snapshot_file;
+		enum SnapshotMode {
+			Disabled = 0,
+			Open = 1,
+			Create = 2,
+			OpenOrCreate = 3,
+		};
+		/* When using a snapshot_file, control whether file
+		   should be created if missing, opened, or created
+		   and possibly overwritten. */
+		SnapshotMode snapshot_mode = OpenOrCreate;
 		/* When using hugepages, cover the given size with
 		   hugepages, unless 0, in which case the entire
 		   main memory will be covered. */
