@@ -552,7 +552,9 @@ std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages(const vMemory& mem
 	std::vector<std::pair<uint64_t, uint64_t>> accessed_pages;
 	foreach_page(memory,
 	[&accessed_pages] (uint64_t addr, uint64_t& entry, size_t size) {
-		if ((entry & (PDE64_PS | PDE64_ACCESSED | PDE64_PRESENT)) == (PDE64_PS | PDE64_ACCESSED | PDE64_PRESENT)) {
+		// Leaf pages are either huge pages with the PS bit set or of PAGE_SIZE.
+		if ((entry & (PDE64_ACCESSED | PDE64_PRESENT)) == (PDE64_ACCESSED | PDE64_PRESENT) &&
+				((entry & PDE64_PS) || (size == PAGE_SIZE))) {
 			accessed_pages.push_back({addr & PDE64_ADDR_MASK, size});
 		}
 	}, false);
