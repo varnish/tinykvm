@@ -143,14 +143,17 @@ bool Machine::load_snapshot_state()
 
 		void* current = state.current;
 		// Load populate pages
+		madvise(this->memory.ptr, kernel_end_address(), MADV_WILLNEED | MADV_RANDOM);
+		static const uint64_t step = 1024*1024;
 		for (unsigned i = 0; i < state.num_access_ranges; i++) {
 			ColdStartAccessedRange* range = state.next<ColdStartAccessedRange>(current);
 			if (range->start >= MemoryBanks::ARENA_BASE_ADDRESS || range->start < kernel_end_address())
 				continue;
 			try {
 				//printf("Populating pages from 0x%lX -> 0x%lX\n", range->start, range->end);
-				char* page = this->memory.get_userpage_at(range->start);
-				madvise(page, range->end - range->start, MADV_WILLNEED | MADV_RANDOM);
+				for (uint64_t start = range->start; start < range->end; start += step) {
+					madvise(this->memory.ptr + start, std::min(range->end - start, step), MADV_WILLNEED | MADV_RANDOM);
+				}
 			} catch (const std::exception& e) {
 				fprintf(stderr, "Failed to access page at 0x%lX: %s\n", range->start, e.what());
 				continue;
