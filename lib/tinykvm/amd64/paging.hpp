@@ -7,7 +7,8 @@ namespace tinykvm {
 extern uint64_t setup_amd64_paging(vMemory&,
 	std::string_view binary,
 	const std::vector<VirtualRemapping>& remappings,
-	bool split_hugepages);
+	bool split_hugepages,
+	bool split_all_hugepages_during_loading);
 extern void print_pagetables(const vMemory&);
 
 using foreach_page_t = std::function<void(uint64_t, uint64_t&, size_t)>;

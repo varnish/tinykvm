@@ -379,7 +379,8 @@ void Machine::setup_long_mode(const MachineOptions& options)
 	hdr.vm64_remote_return_addr =
 		usercode_header().translated_vm_remote_disconnect(memory);
 
-	this->m_kernel_end = setup_amd64_paging(memory, m_binary, options.remappings, options.split_hugepages);
+	this->m_kernel_end = setup_amd64_paging(memory, m_binary, options.remappings,
+		options.split_hugepages, options.split_all_hugepages_during_loading);
 }
 
 std::pair<__u64, __u64> Machine::get_fsgs() const

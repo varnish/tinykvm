@@ -138,7 +138,7 @@ static void add_remappings(vMemory& memory,
 uint64_t setup_amd64_paging(vMemory& memory,
 	std::string_view binary,
 	const std::vector<VirtualRemapping>& remappings,
-	bool split_hugepages)
+	bool split_hugepages, bool split_all_hugepages_during_loading)
 {
 	static constexpr uint64_t PD_MASK = (1ULL << 30) - 1;
 	const size_t PD_PAGES = (memory.size + PD_MASK) >> 30;
@@ -234,6 +234,27 @@ uint64_t setup_amd64_paging(vMemory& memory,
 			| ((base_giga_page << 30) + (i << 21));
 	}
 
+	if (split_all_hugepages_during_loading)
+	{
+		// Split all hugepages into 4k pages for the entire memory area
+		for (uint64_t i = base_2mb_page; i < 512*PD_PAGES; i++)
+		{
+			if (pd[i] & PDE64_PS) {
+				// Set default attributes + free PTE page
+				pd[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
+				// Fill new page with default attributes
+				auto* pagetable = (uint64_t*) memory.at(free_page);
+				for (uint64_t j = 0; j < 512; j++) {
+					// Set writable 4k attributes
+					uint64_t addr4k = (base_giga_page << 30) | (i << 21) | (j << 12);
+					pagetable[j] =
+						PDE64_PRESENT | heap_flags | addr4k;
+				}
+				free_page += 0x1000;
+			}
+		}
+	}
+
 	/* ELF executable area */
 	if (!binary.empty())
 	{
@@ -267,14 +288,15 @@ uint64_t setup_amd64_paging(vMemory& memory,
 					auto pdidx = (addr >> 21) & 511;
 					// Look for *complete* 2MB pages within segment
 					// If split_hugepages is enabled, we want to avoid writable 2MB pages
-					if ((addr & ~0xFFFFFFFFFFE00FFFLL) == 0 && (!split_hugepages || !write))
+					if ((addr & ~0xFFFFFFFFFFE00FFFULL) == 0 && (!split_hugepages || !write))
 					{
-						if (addr + (1UL << 21) <= end) {
-							// This is a 2MB-aligned ELF segment
+						auto& ptentry = pd[pdidx];
+						// Aligned 2MB _leaf_ page within segment
+						if (addr + (1UL << 21) <= end && (ptentry & PDE64_PS) == PDE64_PS) {
+							// This is a 2MB-aligned ELF segment, with a leaf 2MB page entry
 	#if 0
 							printf("Found 2MB segment at 0x%lX -> 0x%lX\n", addr, end);
 	#endif
-							auto& ptentry = pd[pdidx];
 							const uint64_t addr2m = (base_giga_page << 30) | (pdidx << 21);
 							ptentry = PDE64_PRESENT | PDE64_USER | PDE64_NX | PDE64_PS | addr2m;
 							if (!read) ptentry &= ~PDE64_PRESENT; // A weird one, but... AMD64.

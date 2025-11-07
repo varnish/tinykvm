@@ -75,8 +75,14 @@ namespace tinykvm
 		   to their own main memory instead of memory banks,
 		   allowing forks to immediately see changes. */
 		bool master_direct_memory_writes = false;
-		/* When enabled, split hugepages during page faults. */
+		/* When enabled, split hugepages during page faults. This will also
+		   split hugepages during ELF loading for 2MB-aligned entries. */
 		bool split_hugepages = false;
+		/* When enabled, split all hugepages during ELF loading making the entire
+		   guest memory area consist of 4k leaf pages only. This consumes more
+		   memory and requires extra page-walking, but makes copy-on-write handling
+		   simpler and will make the ACCESS bit more granular. */
+		bool split_all_hugepages_during_loading = false;
 		/* When enabled, reset_to() will accept a different
 		   master VM than the original, but at a steep cost. */
 		bool allow_reset_to_new_master = false;
