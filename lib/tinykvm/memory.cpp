@@ -479,6 +479,11 @@ MemoryBank::Page vMemory::new_hugepage()
 	return banks.get_available_bank(512u).get_next_page(512u);
 }
 
+size_t vMemory::merge_leaf_pages_into_hugepages()
+{
+	return paging_merge_leaf_pages_into_hugepages(*this);
+}
+
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, bool dirty)
 {
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");

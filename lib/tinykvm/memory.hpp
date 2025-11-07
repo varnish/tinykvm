@@ -82,6 +82,9 @@ struct vMemory {
 	size_t unlocked_memory_pages() const noexcept {
 		return unlocked_pages;
 	}
+	/* Merge leaf pages back into hugepages where possible, ignoring
+	   access bits. This is done to reduce page walking overhead. */
+	size_t merge_leaf_pages_into_hugepages();
 
 	VirtualMem vmem() const;
 

@@ -236,17 +236,21 @@ uint64_t setup_amd64_paging(vMemory& memory,
 
 	if (split_all_hugepages_during_loading)
 	{
+		// Stop at 1MB address, to prevent trampling user space
+		uint64_t max = 512 * PD_PAGES;
+		if (max > 512U * 1U)
+			max = 512U * 1U;
+
 		// Split all hugepages into 4k pages for the entire memory area
-		for (uint64_t i = base_2mb_page; i < 512*PD_PAGES; i++)
+		for (uint64_t i = base_2mb_page+2; i < max; i++)
 		{
 			if (pd[i] & PDE64_PS) {
 				// Set default attributes + free PTE page
-				pd[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
-				// Fill new page with default attributes
+				pd[i] = PDE64_PRESENT | heap_flags | free_page;
+				// Fill new page with default heap attributes
 				auto* pagetable = (uint64_t*) memory.at(free_page);
 				for (uint64_t j = 0; j < 512; j++) {
-					// Set writable 4k attributes
-					uint64_t addr4k = (base_giga_page << 30) | (i << 21) | (j << 12);
+					const uint64_t addr4k = (base_giga_page << 30) | (i << 21) | (j << 12);
 					pagetable[j] =
 						PDE64_PRESENT | heap_flags | addr4k;
 				}
@@ -936,5 +940,55 @@ void WritablePage::set_protections(int prot)
 		entry |= PDE64_NX; // Set NX
 	}
 }
+
+size_t paging_merge_leaf_pages_into_hugepages(vMemory& memory)
+{
+	unsigned merged_pages = 0;
+	// Try to merge contiguous 4k pages with the same permissions,
+	// ignoring accessed/dirty bits, into 2MB pages. We will not
+	// try to optimize the page tables, rather just turn 2MB entry
+	// pages directly into leaf 2MB pages.
+	auto* pml4 = memory.page_at(memory.page_tables);
+	for (size_t i = 0; i < 4; i++) { // 512GB entries
+		if (pml4[i] & PDE64_PRESENT) {
+			const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
+			auto* pdpt = memory.page_at(pdpt_mem);
+			for (uint64_t j = 0; j < 512; j++) { // 1GB entries
+				if (pdpt[j] & PDE64_PRESENT) {
+					const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
+					auto* pd = memory.page_at(pd_mem);
+					for (uint64_t k = 0; k < 512; k++) { // 2MB entries
+						if (pd[k] & PDE64_PRESENT) {
+							// Only consider page tables
+							if (pd[k] & PDE64_PS)
+								continue;
+							const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
+							auto* pt = memory.page_at(pt_mem);
+							// Check if we can merge 512 entries
+							bool can_merge = true;
+							static constexpr uint64_t MERGE_MASK =
+								PDE64_PRESENT | PDE64_RW | PDE64_USER | PDE64_NX | PDE64_CLONEABLE | PDE64_G;
+							uint64_t first_entry = pt[0] & MERGE_MASK;
+							for (size_t e = 1; e < 512; e++) {
+								if ((pt[e] & MERGE_MASK) != first_entry) {
+									can_merge = false;
+									break;
+								}
+							}
+							if (can_merge) {
+								// Merge into 2MB page with same flags
+								pd[k] = (pt[0] & PDE64_ADDR_MASK) | first_entry
+									| PDE64_PS | PDE64_PRESENT;
+								CLPRINT("Merged 4k pages into 2MB page at PD index %lu\n", k);
+								merged_pages += 512;
+							}
+						} // pd present
+					} // pd[k]
+				} // pdpt present
+			} // pdpt[j]
+		} // pml4 present
+	} // pml4[i]
+	return merged_pages;
+} // paging_merge_leaf_pages_into_hugepages()
 
 } // tinykvm

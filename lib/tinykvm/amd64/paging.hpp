@@ -32,6 +32,8 @@ struct WritablePageOptions {
 };
 extern WritablePage writable_page_at(vMemory&, uint64_t addr, uint64_t flags, WritablePageOptions = {});
 extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags);
+// Merges leaf pages back into hugepages where possible. Returns number of merged pages.
+extern size_t paging_merge_leaf_pages_into_hugepages(vMemory&);
 
 static inline bool page_is_zeroed(const uint64_t* page) {
 	for (size_t i = 0; i < 512; i += 8) {
