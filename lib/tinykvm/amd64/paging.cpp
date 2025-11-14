@@ -236,13 +236,14 @@ uint64_t setup_amd64_paging(vMemory& memory,
 
 	if (split_all_hugepages_during_loading)
 	{
+		static constexpr uint64_t MAX_FREE_PAGE = 509ULL * 0x1000;
 		// Stop at 1MB address, to prevent trampling user space
 		uint64_t max = 512 * PD_PAGES;
 		if (max > 512U * 1U)
 			max = 512U * 1U;
 
 		// Split all hugepages into 4k pages for the entire memory area
-		for (uint64_t i = base_2mb_page+2; i < max; i++)
+		for (uint64_t i = base_2mb_page+2; i < max && free_page < MAX_FREE_PAGE; i++)
 		{
 			if (pd[i] & PDE64_PS) {
 				// Set default attributes + free PTE page
@@ -941,7 +942,7 @@ void WritablePage::set_protections(int prot)
 	}
 }
 
-size_t paging_merge_leaf_pages_into_hugepages(vMemory& memory)
+size_t paging_merge_leaf_pages_into_hugepages(vMemory& memory, bool merge_if_dirty)
 {
 	unsigned merged_pages = 0;
 	// Try to merge contiguous 4k pages with the same permissions,
@@ -960,26 +961,54 @@ size_t paging_merge_leaf_pages_into_hugepages(vMemory& memory)
 					for (uint64_t k = 0; k < 512; k++) { // 2MB entries
 						if (pd[k] & PDE64_PRESENT) {
 							// Only consider page tables
-							if (pd[k] & PDE64_PS)
+							if ((pd[k] & PDE64_PS) != 0)
 								continue;
 							const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
 							auto* pt = memory.page_at(pt_mem);
 							// Check if we can merge 512 entries
 							bool can_merge = true;
+							bool any_dirty = (pt[0] & PDE64_DIRTY) != 0;
+							bool all_dirty = (pt[0] & PDE64_DIRTY) != 0;
 							static constexpr uint64_t MERGE_MASK =
 								PDE64_PRESENT | PDE64_RW | PDE64_USER | PDE64_NX | PDE64_CLONEABLE | PDE64_G;
-							uint64_t first_entry = pt[0] & MERGE_MASK;
+							const uint64_t first_entry = pt[0] & MERGE_MASK;
+							const uint64_t first_addr = pt[0] & PDE64_ADDR_MASK;
+							// 2MB leaf page must be 2MB-aligned
+							if ((first_addr & 0x1FFFFF) != 0) {
+								continue;
+							}
+							// All entries must be present and have the same flags
+							// and be contiguous in physical memory
+							uint64_t expected_addr = first_addr;
 							for (size_t e = 1; e < 512; e++) {
 								if ((pt[e] & MERGE_MASK) != first_entry) {
 									can_merge = false;
 									break;
 								}
+								expected_addr += 0x1000;
+								if ((pt[e] & PDE64_ADDR_MASK) != expected_addr) {
+									can_merge = false;
+									break;
+								}
+								if (pt[e] & PDE64_DIRTY) {
+									any_dirty = true;
+								}
+								else {
+									all_dirty = false;
+								}
 							}
-							if (can_merge) {
+							// Perform merge if possible:
+							// - either all pages are clean
+							// - or merge_if_dirty is set (and zero or more pages are dirty)
+							// - or all pages are dirty
+							if (can_merge && (merge_if_dirty || !any_dirty || all_dirty)) {
 								// Merge into 2MB page with same flags
-								pd[k] = (pt[0] & PDE64_ADDR_MASK) | first_entry
-									| PDE64_PS | PDE64_PRESENT;
-								CLPRINT("Merged 4k pages into 2MB page at PD index %lu\n", k);
+								pd[k] = first_addr | first_entry | PDE64_PS | PDE64_PRESENT;
+								if (any_dirty) {
+									pd[k] |= PDE64_DIRTY;
+								}
+								//printf("Entry: PDPT[%lu] PD[%lu] merged 512 pages into 2MB page 0x%lX with flags 0x%lX\n",
+								//	j, k, pd[k] & PDE64_ADDR_MASK, pd[k] & ~PDE64_ADDR_MASK);
 								merged_pages += 512;
 							}
 						} // pd present
