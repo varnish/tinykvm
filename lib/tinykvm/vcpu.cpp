@@ -416,11 +416,10 @@ void vCPU::set_vcpu_table_at(unsigned index, int value)
 	}
 }
 
-void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_boundary)
+void Machine::prepare_copy_on_write(size_t max_work_mem,
+	uint64_t shared_memory_boundary, bool split_accessed_hugepages)
 {
 	this->m_prepped = true;
-	if (max_work_mem == 0) {
-	}
 
 	/* Make each writable page read-only, causing page fault.
 	   any page after the @shared_memory_boundary is untouched,
@@ -457,13 +456,13 @@ void Machine::prepare_copy_on_write(size_t max_work_mem, uint64_t shared_memory_
 		vcpu.set_special_registers(sregs);
 		this->enter_usermode();
 
-		foreach_page_makecow(this->memory, kernel_end_address(), shared_memory_boundary);
+		foreach_page_makecow(this->memory, kernel_end_address(), shared_memory_boundary, split_accessed_hugepages);
 		return;
 	}
 
 	/* This call makes this VM usable after making every page in the
 	   page tables read-only, enabling memory through page faults. */
-	foreach_page_makecow(this->memory, kernel_end_address(), shared_memory_boundary);
+	foreach_page_makecow(this->memory, kernel_end_address(), shared_memory_boundary, split_accessed_hugepages);
 	this->setup_cow_mode(this);
 }
 void Machine::setup_cow_mode(const Machine* other)

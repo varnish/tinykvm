@@ -72,6 +72,7 @@ struct vMemory {
 	char *get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, bool dirty);
 	MemoryBank::Page new_page();
 	MemoryBank::Page new_hugepage();
+	MemoryBank::Page allocate_unmapped_kernelpage();
 
 	bool compare(const vMemory& other);
 	/* When a main VM has direct memory writes enabled, it can

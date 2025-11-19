@@ -164,9 +164,9 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	const uint64_t vdso_pdpt_addr = pml4_addr + PD_END + 0x0;
 	const uint64_t vsyscall_pd_addr = pml4_addr + PD_END + 0x1000;
 	const uint64_t vsyscall_pt_addr = pml4_addr + PD_END + 0x2000;
-	auto *vdso_pdpt = (uint64_t *)(pagetable + PD_END + 0x0000);
-	auto *vsyscall_pd = (uint64_t *)(pagetable + PD_END + 0x1000);
-	auto *vsyscall_pt = (uint64_t *)(pagetable + PD_END + 0x2000);
+	auto* vdso_pdpt = (uint64_t *)(pagetable + PD_END + 0x0000);
+	auto* vsyscall_pd = (uint64_t *)(pagetable + PD_END + 0x1000);
+	auto* vsyscall_pt = (uint64_t *)(pagetable + PD_END + 0x2000);
 
 	// next free page for ELF loader
 	uint64_t free_page = pml4_addr + PD_END + 0x3000;
@@ -390,6 +390,10 @@ uint64_t setup_amd64_paging(vMemory& memory,
 			| (base_giga_page << 30) | (base_2mb_page << 21) | (i << 12);
 	}
 
+	if (free_page >= memory.physbase + (2ULL << 20)) {
+		throw MachineException("Pagetable setup exceeded 2MB limit");
+	}
+
 	/* Verify a kernel page */
 	page_at(memory, memory.physbase + 0x1000,
 		[&memory] (uint64_t addr, uint64_t& entry, size_t size) {
@@ -532,8 +536,9 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 					{
 						if (pd[k] & PDE64_PRESENT) {
 							const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
+							const bool is_2mb_page = (pd[k] & PDE64_PS) != 0;
 							callback(pt_base, pd[k], pt_size);
-							if (!(pd[k] & PDE64_PS)) { // not 2MB page
+							if (!is_2mb_page) {
 								auto* pt = memory.page_at(pt_mem);
 								for (uint64_t e = 0; e < 512; e++) {
 									const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
@@ -554,18 +559,48 @@ void foreach_page(const vMemory& mem, foreach_page_t callback, bool skip_oob_add
 	foreach_page(const_cast<vMemory&>(mem), std::move(callback), skip_oob_addresses);
 }
 
-void foreach_page_makecow(vMemory& mem, uint64_t kernel_end, uint64_t shared_memory_boundary)
+void foreach_page_makecow(vMemory& mem, uint64_t kernel_end,
+	uint64_t shared_memory_boundary, bool split_accessed_hugepages)
 {
 	if (UNLIKELY(shared_memory_boundary < kernel_end)) {
 		memory_exception("Shared memory boundary was illegal (zero)", shared_memory_boundary, 0u);
 	}
 	foreach_page(mem,
-	[=] (uint64_t addr, uint64_t& entry, size_t /*size*/) {
+	[=, m = &mem] (uint64_t addr, uint64_t& entry, size_t size) {
 		if (addr < shared_memory_boundary) {
 			const uint64_t flags = (PDE64_PRESENT | PDE64_RW);
 			if ((entry & flags) == flags) {
 				entry &= ~PDE64_RW;
 				entry |= PDE64_CLONEABLE | PDE64_G; // Global bit for read-only pages
+			}
+			if ((entry & PDE64_ACCESSED) != 0)
+			{
+				// Since this page has been accessed, check if it's a 2MB leaf page
+				// and if it is, split it into 4k pages with the ACCESS bit removed.
+				if (size == (1ULL << 21) && (entry & PDE64_PS) != 0 && split_accessed_hugepages)
+				{
+					// Split 2MB page into 4k pages
+					const uint64_t pd_base = entry & PDE64_ADDR_MASK;
+					// Allocate new page for page table
+					const auto new_page = m->allocate_unmapped_kernelpage();
+					if (new_page.addr != 0) {
+						// Set default attributes + new page table
+						const uint64_t pd_entry_flags = entry & ~(PDE64_ADDR_MASK | PDE64_PS | PDE64_ACCESSED);
+						entry = pd_entry_flags | new_page.addr;
+						// Fill new page with default attributes
+						uint64_t* pagetable = new_page.pmem;
+						for (uint64_t i = 0; i < 512; i++) {
+							// Set writable 4k attributes
+							uint64_t addr4k = pd_base | (i << 12);
+							pagetable[i] = pd_entry_flags | addr4k;
+						}
+						return;
+					} // new_page.addr
+					// Failing to allocate, so we simply won't
+					// split the page, but this may lead to extra
+					// memory usage if forks don't need the whole
+					// 2MB page.
+				}
 			}
 		}
 		// Clear accessed bit for *all* pages

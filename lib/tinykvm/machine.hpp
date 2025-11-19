@@ -163,6 +163,7 @@ struct Machine
 	address_t exit_address() const noexcept;
 	void set_stack_address(address_t addr) { this->m_stack_address = addr; }
 	address_t kernel_end_address() const noexcept { return m_kernel_end; }
+	void set_kernel_end_address(address_t addr) { m_kernel_end = addr; }
 	address_t max_address() const noexcept { return memory.physbase + memory.size; }
 
 	static constexpr uint64_t BRK_MAX = 0x22000;
@@ -241,7 +242,8 @@ struct Machine
 	/* Make VM copy-on-write in order to support fast forking.
 	   When @max_work_mem is non-zero, the master VM can still
 	   be used after preparation. */
-	void prepare_copy_on_write(size_t max_work_mem = 0, uint64_t shared_memory_boundary = UINT64_MAX);
+	void prepare_copy_on_write(size_t max_work_mem = 0, uint64_t shared_memory_boundary = UINT64_MAX,
+		bool split_accessed_hugepages = false);
 	void set_main_memory_writable(bool v) { memory.main_memory_writes = v; }
 	bool is_forked() const noexcept { return m_forked; }
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }

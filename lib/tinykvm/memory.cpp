@@ -573,6 +573,48 @@ void vMemory::increment_unlocked_pages(size_t pages)
 	}
 }
 
+MemoryBank::Page vMemory::allocate_unmapped_kernelpage()
+{
+	if (this->machine.is_forked()) {
+		// It's too dangerous as forked VMs may have active
+		// TLB entries that user memory mappings that will
+		// suddenly become kernel mappings.
+		memory_exception("Cannot allocate unmapped kernel page in forked VM", 0, 0);
+	}
+
+	MemoryBank::Page result{};
+	result.pmem = nullptr;
+	result.addr = 0;
+	// 1. Check if kernel end is < 2MB userspace area
+	const uint64_t kernel_end = machine.kernel_end_address();
+	if (kernel_end < physbase + (1ULL << 21)) {
+		// Find the page directory entry for the kernel end
+		tinykvm::page_at(*this, kernel_end,
+		[&](uint64_t addr, uint64_t& entry, uint64_t page_size) mutable {
+			static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
+			// Grab physical from the page directory entry
+			const uint64_t phys_addr = entry & PDE64_ADDR_MASK;
+			uint64_t* phys_mem = this->page_at(phys_addr);
+			if (phys_addr < PT_ADDR || phys_mem < (uint64_t*)(this->ptr + PT_ADDR)) {
+				memory_exception("Invalid page directory entry for kernel end", addr, page_size);
+			}
+			// Set up the page directory entry with:
+			// Kernel + unmapped + no-execute
+			entry = phys_addr | PDE64_NX;
+
+			result = MemoryBank::Page{
+				phys_mem,
+				kernel_end,
+				PageSize(),
+				false
+			};
+			this->machine.set_kernel_end_address(kernel_end + PageSize());
+		}, false);
+	}
+	//printf("*** Allocated unmapped kernel page at 0x%lX\n", result.addr);
+	return result;
+}
+
 uint64_t vMemory::expectedUsermodeFlags() const noexcept
 {
 	uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
