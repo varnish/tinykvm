@@ -2,7 +2,6 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <tinykvm/machine.hpp>
-#include <linux/kvm.h>
 extern std::vector<uint8_t> build_and_load(const std::string& code);
 static const uint64_t MAX_MEMORY = 8ul << 20; /* 8MB */
 static const uint64_t MAX_COWMEM = 3ul << 20; /* 3MB */
@@ -605,6 +604,8 @@ int func2() {
 	REQUIRE(machine2.is_forkable());
 	REQUIRE(!machine2.is_forked());
 
+	/// -- full resets -- ///
+
 	auto fork1 = tinykvm::Machine { machine1, {
 		.max_cow_mem = MAX_COWMEM,
 		.split_hugepages = true
@@ -617,7 +618,6 @@ int func2() {
 
 		fork1.reset_to(machine1, {
 			.max_cow_mem = 4ul << 20,
-			.split_hugepages = true
 		});
 	}
 
@@ -634,7 +634,41 @@ int func2() {
 
 		fork2.reset_to(machine2, {
 			.max_cow_mem = 4ul << 20,
-			.split_hugepages = true
+		});
+	}
+
+	/// -- keep working memory resets -- ///
+
+	auto fork3 = tinykvm::Machine { machine1, {
+		.max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
+	} };
+
+	for (int i = 0; i < 100; i++)
+	{
+		fork3.run(4.0f);
+		REQUIRE(fork3.return_value() == 666);
+
+		fork3.reset_to(machine1, {
+			.max_cow_mem = 4ul << 20,
+			.reset_keep_all_work_memory = true
+		});
+	}
+
+	auto fork4 = tinykvm::Machine { machine2, {
+		.max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
+	} };
+
+	for (int i = 0; i < 100; i++)
+	{
+		fork4.setup_linux({"fork"}, env);
+		fork4.run(4.0f);
+		REQUIRE(fork4.return_value() == 666);
+
+		fork4.reset_to(machine2, {
+			.max_cow_mem = 4ul << 20,
+			.reset_keep_all_work_memory = true
 		});
 	}
 }
