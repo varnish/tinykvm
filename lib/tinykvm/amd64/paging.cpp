@@ -305,7 +305,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 							const uint64_t addr2m = (base_giga_page << 30) | (pdidx << 21);
 							ptentry = PDE64_PRESENT | PDE64_USER | PDE64_NX | PDE64_PS | addr2m;
 							if (!read) ptentry &= ~PDE64_PRESENT; // A weird one, but... AMD64.
-							if (write) ptentry |= PDE64_RW;
+							if (write) ptentry |= PDE64_RW | PDE64_DIRTY;
 							else ptentry |= PDE64_G; // Global bit for read-only pages
 							if (exec) ptentry &= ~PDE64_NX;
 							// Increment whole 2MB page
@@ -349,6 +349,8 @@ uint64_t setup_amd64_paging(vMemory& memory,
 					if (!write) {
 						ptentry &= ~PDE64_RW;
 						ptentry |= PDE64_G; // Global bit for read-only pages
+					} else {
+						ptentry |= PDE64_DIRTY;
 					}
 					addr += 0x1000;
 				}

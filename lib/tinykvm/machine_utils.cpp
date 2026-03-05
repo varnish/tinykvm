@@ -41,34 +41,27 @@ void Machine::memzero(address_t addr, size_t len)
 
 void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool zeroes)
 {
-	if (uses_cow_memory() || !memory.safely_within(addr, len))
+	auto* src = (const uint8_t *)vsrc;
+	while (len != 0)
 	{
-		auto* src = (const uint8_t *)vsrc;
-		while (len != 0)
-		{
-			const size_t offset = addr & PageMask();
-			const size_t size = std::min(vMemory::PageSize() - offset, len);
-			const bool full_page = (size == vMemory::PageSize());
-			WritablePageOptions opts;
-			opts.allow_dirty = full_page;
-			opts.zeroes = zeroes;
-			// Get a writable page, possibly allocating a new one
-			WritablePage page = writable_page_at(memory, addr & ~PageMask(), memory.expectedUsermodeFlags(), opts);
-			// Page is always dirty
-			page.set_dirty();
-			// Copy data to the page
-			char* page_data = page.page;
-			std::memcpy(&page_data[offset], src, size);
+		const size_t offset = addr & PageMask();
+		const size_t size = std::min(vMemory::PageSize() - offset, len);
+		const bool full_page = (size == vMemory::PageSize());
+		WritablePageOptions opts;
+		opts.allow_dirty = full_page;
+		opts.zeroes = zeroes;
+		// Get a writable page, possibly allocating a new one
+		WritablePage page = writable_page_at(memory, addr & ~PageMask(), memory.expectedUsermodeFlags(), opts);
+		// Page is always dirty
+		page.set_dirty();
+		// Copy data to the page
+		char* page_data = page.page;
+		std::memcpy(&page_data[offset], src, size);
 
-			addr += size;
-			src += size;
-			len -= size;
-		}
-		return;
+		addr += size;
+		src += size;
+		len -= size;
 	}
-	/* Original VM uses identity-mapped memory */
-	auto* dst = memory.safely_at(addr, len);
-	std::memcpy(dst, vsrc, len);
 }
 
 void Machine::copy_from_guest(void* vdst, address_t addr, size_t len) const

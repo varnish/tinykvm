@@ -106,7 +106,7 @@ namespace tinykvm
 		   to the given file. Depending on `snapshot_mode`,
 		   the file may be created if it does not exist,
 		   and must be of the correct size if it does exist. */
-		std::string snapshot_file;
+		std::string snapshot_file {};
 		enum SnapshotMode {
 			Disabled = 0,
 			Open = 1,

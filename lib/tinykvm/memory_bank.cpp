@@ -156,7 +156,7 @@ void MemoryBanks::reset(const MachineOptions& options)
 	//size_t limit_pages = options.reset_free_work_mem / vMemory::PageSize();
 
 	/* Instead of removing the banks, give memory back to kernel */
-	for (size_t i = 1u; i < m_mem.size(); i++) {
+	for (size_t i = 0u; i < m_mem.size(); i++) {
 		/* WARNING: MADV_FREE *does not* immediately free, so use MADV_DONTNEED instead. */
 		if (m_mem[i].dirty_size() > 0)
 			madvise(m_mem[i].mem, m_mem[i].dirty_size(), MADV_DONTNEED);
