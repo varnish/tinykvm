@@ -247,7 +247,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 		{
 			if (pd[i] & PDE64_PS) {
 				// Set default attributes + free PTE page
-				pd[i] = PDE64_PRESENT | heap_flags | free_page;
+				pd[i] = PDE64_PRESENT | PDE64_USER | PDE64_RW | free_page;
 				// Fill new page with default heap attributes
 				auto* pagetable = (uint64_t*) memory.at(free_page);
 				for (uint64_t j = 0; j < 512; j++) {
