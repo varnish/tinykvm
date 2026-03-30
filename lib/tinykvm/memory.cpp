@@ -494,11 +494,15 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, boo
 
 	WritablePageOptions zero_opts;
 	zero_opts.zeroes = zeroes;
-	auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
-	if (dirty) {
-		writable_page.set_dirty();
+	try {
+		auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
+		if (dirty) {
+			writable_page.set_dirty();
+		}
+		return writable_page.page;
+	} catch (const RetryException& e) {
+		return get_writable_page(addr, flags, zeroes, dirty);
 	}
-	return writable_page.page;
 }
 
 char* vMemory::get_kernelpage_at(uint64_t addr) const

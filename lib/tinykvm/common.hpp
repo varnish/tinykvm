@@ -157,6 +157,11 @@ namespace tinykvm
 		bool m_is_oom = false; /* True if the exception was caused by OOM */
 	};
 
+	class RetryException: public MachineException {
+	public:
+		RetryException() : MachineException("Retry", 0) {}
+	};
+
 	template <class...> constexpr std::false_type always_false {};
 
 	template<typename T>

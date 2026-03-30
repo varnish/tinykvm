@@ -50,13 +50,18 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 		WritablePageOptions opts;
 		opts.allow_dirty = full_page;
 		opts.zeroes = zeroes;
-		// Get a writable page, possibly allocating a new one
-		WritablePage page = writable_page_at(memory, addr & ~PageMask(), memory.expectedUsermodeFlags(), opts);
-		// Page is always dirty
-		page.set_dirty();
-		// Copy data to the page
-		char* page_data = page.page;
-		std::memcpy(&page_data[offset], src, size);
+		try {
+			// Get a writable page, possibly allocating a new one
+			WritablePage page = writable_page_at(memory, addr & ~PageMask(), memory.expectedUsermodeFlags(), opts);
+			// Page is always dirty
+			page.set_dirty();
+			// Copy data to the page
+			char* page_data = page.page;
+			std::memcpy(&page_data[offset], src, size);
+		} catch (const RetryException& e) {
+			// Retry the operation
+			continue;
+		}
 
 		addr += size;
 		src += size;

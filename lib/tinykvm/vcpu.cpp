@@ -517,6 +517,26 @@ void Machine::setup_cow_mode(const Machine* other)
 		});
 	}
 }
+void Machine::make_unpresented_with_callback(vMemory::page_presentable_callback_t on_presentable)
+{
+	#define PDE64_PRESENTABLE address_t(1ul << 10)
+	this->memory.on_page_presentable = std::move(on_presentable);
+	foreach_page(this->memory, [this] (auto addr, auto& entry, auto) {
+		if (addr >= this->m_kernel_end && (entry & PDE64_PRESENT) != 0) {
+			entry &= ~PDE64_PRESENT;
+			entry |= PDE64_PRESENTABLE;
+		}
+	}, false);
+}
+void Machine::restore_unpresented_pages()
+{
+	foreach_page(this->memory, [] (auto addr, auto& entry, auto) {
+		if (entry & PDE64_PRESENTABLE) {
+			entry |= PDE64_PRESENT;
+			entry &= ~PDE64_PRESENTABLE;
+		}
+	}, false);
+}
 
 void Machine::print_pagetables() const {
 	tinykvm::print_pagetables(this->memory);

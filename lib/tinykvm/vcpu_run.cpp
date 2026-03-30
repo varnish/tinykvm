@@ -292,7 +292,14 @@ long vCPU::run_once()
 							// Since it's foreign memory, we try to handle it in the remote VM
 							WritablePageOptions zero_opts;
 							zero_opts.zeroes = false;
-							(void)writable_page_at(machine().remote().memory, addr, PDE64_USER | PDE64_RW, zero_opts);
+							try {
+								(void)writable_page_at(machine().remote().memory, addr, PDE64_USER | PDE64_RW, zero_opts);
+							} catch (const RetryException&) {
+								// The page was presentable, but not present. We need to retry the instruction now that the page is present.
+								regs.rax = 0; /* Indicate that it was local */
+								this->set_registers(regs);
+								return KVM_EXIT_IO;
+							}
 							// Remember that this address caused a fault, so that we don't loop infinitely
 							if (this->last_fault_address == addr) {
 								// This address already caused a fault
@@ -332,49 +339,54 @@ long vCPU::run_once()
 					this->set_registers(regs);
 					return KVM_EXIT_IO;
 				} else {
-					regs.rax = 0; /* Indicate that it was local */
+ 					regs.rax = 0; /* Indicate that it was local */
 				}
 				this->set_registers(regs);
 
 				WritablePageOptions zero_opts;
 				zero_opts.zeroes = false;
-				auto result = writable_page_at(memory, addr, PDE64_USER | PDE64_RW, zero_opts);
-				if (machine().has_remote() && machine().remote().is_foreign_address(addr) && machine().remote().is_remote_connected()) {
-					// If a new gigapage was created, we need to update the
-					// PML4[0] 512GB page table entry in the caller VM too
-					machine().remote().remote_update_gigapage_mappings(machine());
-				}
-				if (this->last_fault_address == addr) {
-					// This address already caused a fault
-					this->handle_exception(intr);
-					Machine::machine_exception("Page fault repeat on same address", intr);
-				}
-				this->last_fault_address = addr;
-				if constexpr (false) {
-					char buffer[256];
-					PRINTER(machine().m_printer, buffer,
-						"Page fault on 0x%lX handled, mapped to host page %p\n", addr, result.page);
-					PRINTER(machine().m_printer, buffer,
-						"  Entry value 0x%lX\n", result.entry);
-					PRINTER(machine().m_printer, buffer,
-						"  Our bank arena: begin=0x%lX\n",
-						memory.banks.arena_begin());
-					static uint64_t last_reported = 0;
-					static int count = 0;
-					if (last_reported == addr) {
-						count++;
-						PRINTER(machine().m_printer, buffer,
-							"  Page fault repeats %d times, address=0x%lX\n",
-							count, last_reported);
-						if (count > 2) {
-							print_pagetables(memory);
-							this->handle_exception(intr);
-							Machine::machine_exception("Too many page faults", intr);
-						}
-					} else {
-						last_reported = addr;
-						count = 0;
+				try {
+					WritablePage result = writable_page_at(memory, addr, PDE64_USER | PDE64_RW, zero_opts);
+					if (machine().has_remote() && machine().remote().is_foreign_address(addr) && machine().remote().is_remote_connected()) {
+						// If a new gigapage was created, we need to update the
+						// PML4[0] 512GB page table entry in the caller VM too
+						machine().remote().remote_update_gigapage_mappings(machine());
 					}
+					if (this->last_fault_address == addr) {
+						// This address already caused a fault
+						this->handle_exception(intr);
+						Machine::machine_exception("Page fault repeat on same address", intr);
+					}
+					this->last_fault_address = addr;
+					if constexpr (false) {
+						char buffer[256];
+						PRINTER(machine().m_printer, buffer,
+							"Page fault on 0x%lX handled, mapped to host page %p\n", addr, result.page);
+						PRINTER(machine().m_printer, buffer,
+							"  Entry value 0x%lX\n", result.entry);
+						PRINTER(machine().m_printer, buffer,
+							"  Our bank arena: begin=0x%lX\n",
+							memory.banks.arena_begin());
+						static uint64_t last_reported = 0;
+						static int count = 0;
+						if (last_reported == addr) {
+							count++;
+							PRINTER(machine().m_printer, buffer,
+								"  Page fault repeats %d times, address=0x%lX\n",
+								count, last_reported);
+							if (count > 2) {
+								print_pagetables(memory);
+								this->handle_exception(intr);
+								Machine::machine_exception("Too many page faults", intr);
+							}
+						} else {
+							last_reported = addr;
+							count = 0;
+						}
+					}
+				} catch (const RetryException&) {
+					// The page was presentable, but not present.
+					return KVM_EXIT_IO;
 				}
 				return KVM_EXIT_IO;
 			}

@@ -17,6 +17,7 @@
 #define CLPRINT(...) /* ... */
 #endif
 #define PDE64_CLONEABLE  (1ul << 11)
+#define PDE64_PRESENTABLE (1ul << 10)
 
 namespace tinykvm {
 
@@ -734,6 +735,13 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 			assert(!is_copy_on_write(pml4[i]) && (pml4[i] & PDE64_PRESENT));
 		}
 		const uint64_t j = index_from_pdpt_entry(addr);
+		if ((pdpt[j] & (PDE64_PRESENT | PDE64_PRESENTABLE)) == PDE64_PRESENTABLE) {
+			pdpt[j] |= PDE64_PRESENT;
+			pdpt[j] &= ~PDE64_PRESENTABLE;
+			const uint64_t paddr = pdpt_base | (j << 30);
+			if (memory.on_page_presentable) memory.on_page_presentable(paddr, addr);
+			throw RetryException();
+		}
 		if (pdpt[j] & PDE64_PRESENT) {
 			const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
 			auto* pd = memory.page_at(pd_mem);
@@ -748,6 +756,13 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 				}
 			}
 			const uint64_t k = index_from_pd_entry(addr);
+			if ((pd[k] & (PDE64_PRESENT | PDE64_PRESENTABLE)) == PDE64_PRESENTABLE) {
+				pd[k] |= PDE64_PRESENT;
+				pd[k] &= ~PDE64_PRESENTABLE;
+				const uint64_t paddr = pd_base | (k << 21);
+				if (memory.on_page_presentable) memory.on_page_presentable(paddr, addr);
+				throw RetryException();
+			}
 			if (pd[k] & (PDE64_PRESENT | PDE64_CLONEABLE)) {
 				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
 				uint64_t* pt;
@@ -855,6 +870,13 @@ entry_is_no_longer_copy_on_write:
 				}
 
 				const uint64_t e = index_from_pt_entry(addr);
+				if ((pt[e] & (PDE64_PRESENT | PDE64_PRESENTABLE)) == PDE64_PRESENTABLE) {
+					pt[e] |= PDE64_PRESENT;
+					pt[e] &= ~PDE64_PRESENTABLE;
+					const uint64_t paddr = pt_base | (e << 12);
+					if (memory.on_page_presentable) memory.on_page_presentable(paddr, addr);
+					throw RetryException();
+				}
 				if (pt[e] & (PDE64_PRESENT | PDE64_CLONEABLE)) { // 4KB page
 					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
 					uint64_t* data;
