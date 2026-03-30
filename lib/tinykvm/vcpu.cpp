@@ -535,7 +535,7 @@ void Machine::restore_unpresented_pages()
 			entry |= PDE64_PRESENT;
 			entry &= ~PDE64_PRESENTABLE;
 		}
-	}, false);
+	}, false, true);
 }
 
 void Machine::print_pagetables() const {
