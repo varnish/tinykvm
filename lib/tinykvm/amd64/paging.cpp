@@ -505,12 +505,13 @@ void print_pagetables(const vMemory& memory)
 	}
 }
 
-void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addresses)
+void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addresses, bool include_unpresent)
 {
+	const uint64_t present_mask = include_unpresent ? (PDE64_PRESENT | PDE64_PRESENTABLE) : (PDE64_PRESENT);
 	auto* pml4 = memory.page_at(memory.page_tables);
 	for (size_t i = 0; i < 512; i++)
 	{
-		if (pml4[i] & PDE64_PRESENT) {
+		if (pml4[i] & present_mask) {
 			const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
 			callback(pdpt_base, pml4[i], pdpt_size);
 
@@ -521,7 +522,7 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 			auto* pdpt = memory.page_at(pdpt_mem);
 			for (uint64_t j = 0; j < 512; j++)
 			{
-				if (pdpt[j] & PDE64_PRESENT) {
+				if (pdpt[j] & present_mask) {
 					const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
 					callback(pd_base, pdpt[j], pd_size);
 
@@ -537,7 +538,7 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 					auto* pd = memory.page_at(pd_mem);
 					for (uint64_t k = 0; k < 512; k++)
 					{
-						if (pd[k] & PDE64_PRESENT) {
+						if (pd[k] & present_mask) {
 							const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
 							const bool is_2mb_page = (pd[k] & PDE64_PS) != 0;
 							callback(pt_base, pd[k], pt_size);
@@ -545,7 +546,7 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 								auto* pt = memory.page_at(pt_mem);
 								for (uint64_t e = 0; e < 512; e++) {
 									const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
-									if (pt[e] & PDE64_PRESENT) { // 4KB page
+									if (pt[e] & present_mask) { // 4KB page
 										callback(pte_base, pt[e], pte_size);
 									}
 								} // e
@@ -557,9 +558,9 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 		}
 	} // i
 } // foreach_page
-void foreach_page(const vMemory& mem, foreach_page_t callback, bool skip_oob_addresses)
+void foreach_page(const vMemory& mem, foreach_page_t callback, bool skip_oob_addresses, bool include_unpresent)
 {
-	foreach_page(const_cast<vMemory&>(mem), std::move(callback), skip_oob_addresses);
+	foreach_page(const_cast<vMemory&>(mem), std::move(callback), skip_oob_addresses, include_unpresent);
 }
 
 void foreach_page_makecow(vMemory& mem, uint64_t kernel_end,

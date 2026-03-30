@@ -347,7 +347,11 @@ void print_pagetables(const vMemory& memory)
 	});
 }
 
-void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addresses)
+/* include_unpresent is an amd64-only concept: it also visits entries kept
+   around with the present bit cleared (PDE64_PRESENTABLE) by the unpresent
+   fault handler. ARM64 has no such lazily-unpresented entries, so an invalid
+   descriptor here is genuinely absent and the flag has nothing to add. */
+void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addresses, bool)
 {
 	auto* l1 = memory.page_at(memory.page_tables);
 	for (uint64_t i = 0; i < 512; i++) {
@@ -381,9 +385,9 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 	}
 }
 
-void foreach_page(const vMemory& memory, foreach_page_t callback, bool skip_oob_addresses)
+void foreach_page(const vMemory& memory, foreach_page_t callback, bool skip_oob_addresses, bool include_unpresent)
 {
-	foreach_page(const_cast<vMemory&>(memory), std::move(callback), skip_oob_addresses);
+	foreach_page(const_cast<vMemory&>(memory), std::move(callback), skip_oob_addresses, include_unpresent);
 }
 
 void foreach_page_makecow(vMemory& memory, uint64_t kernel_end,
