@@ -384,10 +384,57 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 	return true;
 }
 
+bool Machine::relocate_relr_section(const char* section_name)
+{
+	const auto* relr = section_by_name(m_binary, section_name);
+	if (relr == nullptr) {
+		return false;
+	}
+	if ((relr->sh_size % sizeof(Elf64_Addr)) != 0) {
+		throw MachineException("Malformed RELR section", relr->sh_size);
+	}
+
+	const size_t relr_ents = relr->sh_size / sizeof(Elf64_Addr);
+	auto* relr_addr = elf_offset_array<Elf64_Addr>(m_binary, relr->sh_offset, relr_ents);
+
+	address_t where = 0;
+	for (size_t i = 0; i < relr_ents; i++)
+	{
+		const uint64_t entry = relr_addr[i];
+		if ((entry & 1ULL) == 0)
+		{
+			where = this->m_image_base + entry;
+			if (memory.safely_within(where, sizeof(address_t))) {
+				*(address_t*)memory.safely_at(where, sizeof(address_t)) += this->m_image_base;
+			}
+			where += sizeof(address_t);
+		}
+		else
+		{
+			if (UNLIKELY(where == 0)) {
+				throw MachineException("Malformed RELR sequence", entry);
+			}
+			uint64_t bits = entry >> 1;
+			while (bits != 0)
+			{
+				const unsigned bit = __builtin_ctzll(bits);
+				const address_t reloc_addr = where + bit * sizeof(address_t);
+				if (memory.safely_within(reloc_addr, sizeof(address_t))) {
+					*(address_t*)memory.safely_at(reloc_addr, sizeof(address_t)) += this->m_image_base;
+				}
+				bits &= (bits - 1);
+			}
+			where += 63 * sizeof(address_t);
+		}
+	}
+	return true;
+}
+
 void Machine::dynamic_linking(std::string_view binary, const MachineOptions& options)
 {
 	(void)binary;
 	(void)options;
+	this->relocate_relr_section(".relr.dyn");
 	this->relocate_section(".rela.dyn", ".dynsym");
 	//this->relocate_section(".rela.plt", ".dynsym");
 }
