@@ -374,7 +374,7 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 
 		const address_t addr = this->m_image_base + rela_addr[i].r_offset;
 		if (memory.safely_within(addr, sizeof(address_t))) {
-			*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + sym->st_value;
+			*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + rela_addr[i].r_addend;
 		} else {
 			if constexpr (VERBOSE_LOADER) {
 				printf("Relocation failed: %s\n", &m_binary[sym->st_name]);
