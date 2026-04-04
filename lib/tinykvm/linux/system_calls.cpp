@@ -2,6 +2,7 @@
 #include "threads.hpp"
 #include <cstring>
 #include <fcntl.h>
+#include <limits.h>
 #include <netinet/in.h>
 #include <sched.h>
 #include <signal.h>
@@ -2892,9 +2893,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
 				// Check if the path is a symlink
 				if (cpu.machine().fds().resolve_symlink(path)) {
-					// Copy the resolved path to the guest
-					cpu.machine().copy_to_guest(g_buffer, path.c_str(), path.size());
-					regs.rax = path.size();
+					// Copy the resolved path to the guest, respecting guest buffer size.
+					const size_t copied = std::min<size_t>(path.size(), g_size);
+					cpu.machine().copy_to_guest(g_buffer, path.c_str(), copied);
+					regs.rax = copied;
 				}
 				else if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
 					// Pretend the path is not a link
@@ -2904,10 +2906,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					// Translate from vfd when fd != AT_FDCWD
 					if (vfd != AT_FDCWD)
 						fd = cpu.machine().fds().translate(vfd);
-					// Path is in allow-list
-					regs.rax = readlinkat(fd, path.c_str(), (char *)g_buffer, g_size);
-					if (regs.rax > 0) {
-						cpu.machine().copy_to_guest(g_buffer, path.c_str(), regs.rax);
+					// Read link target into host buffer, then copy to guest memory.
+					char host_buffer[PATH_MAX];
+					const size_t host_size = std::min<size_t>(g_size, sizeof(host_buffer));
+					const ssize_t bytes = readlinkat(fd, path.c_str(), host_buffer, host_size);
+					if (bytes >= 0) {
+						cpu.machine().copy_to_guest(g_buffer, host_buffer, size_t(bytes));
+						regs.rax = bytes;
 					} else {
 						regs.rax = -errno;
 					}
