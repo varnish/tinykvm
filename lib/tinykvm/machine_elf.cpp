@@ -361,11 +361,8 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 	auto* rela_addr = elf_offset_array<Elf64_Rela>(m_binary, rela->sh_offset, rela_ents);
 	for (size_t i = 0; i < rela_ents; i++)
 	{
-		const auto symidx = ELF64_R_SYM(rela_addr[i].r_info);
-		const Elf64_Sym* sym = elf_sym_index(m_binary, dyn_hdr, symidx);
-
 		const auto rtype = ELF64_R_TYPE(rela_addr[i].r_info);
-		if (rtype != R_X86_64_RELATIVE) {
+		if (rtype != R_X86_64_RELATIVE && rtype != R_X86_64_IRELATIVE) {
 			if constexpr (VERBOSE_LOADER) {
 				printf("Skipping non-relative relocation: %lu\n", rtype);
 			}
@@ -374,10 +371,17 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 
 		const address_t addr = this->m_image_base + rela_addr[i].r_offset;
 		if (memory.safely_within(addr, sizeof(address_t))) {
-			*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + rela_addr[i].r_addend;
+			if (rtype == R_X86_64_RELATIVE) {
+				*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + rela_addr[i].r_addend;
+			} else {
+				/* Best-effort bootstrap handling for IFUNC relocations.
+				   A full implementation must evaluate the resolver and write
+				   its return value. */
+				*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + rela_addr[i].r_addend;
+			}
 		} else {
 			if constexpr (VERBOSE_LOADER) {
-				printf("Relocation failed: %s\n", &m_binary[sym->st_name]);
+				printf("Relocation failed at address: %p\n", (void*)addr);
 			}
 		}
 	}
@@ -414,6 +418,11 @@ bool Machine::relocate_relr_section(const char* section_name)
 			if (UNLIKELY(where == 0)) {
 				throw MachineException("Malformed RELR sequence", entry);
 			}
+			/* ELF RELR bitmap entry format:
+			   - LSB=1 marks bitmap entry
+			   - upper 63 bits encode relocations for subsequent machine words
+			   This mirrors the generic RELR decoding model used in Linux early
+			   relocation code (arch/arm64/kernel/pi/relocate.c). */
 			uint64_t bits = entry >> 1;
 			while (bits != 0)
 			{
@@ -424,6 +433,7 @@ bool Machine::relocate_relr_section(const char* section_name)
 				}
 				bits &= (bits - 1);
 			}
+			/* Consumed one 63-bit bitmap window (64-bit word minus 1 tag bit). */
 			where += 63 * sizeof(address_t);
 		}
 	}
