@@ -408,9 +408,10 @@ bool Machine::relocate_relr_section(const char* section_name)
 		if ((entry & 1ULL) == 0)
 		{
 			where = this->m_image_base + entry;
-			if (memory.safely_within(where, sizeof(address_t))) {
-				*(address_t*)memory.safely_at(where, sizeof(address_t)) += this->m_image_base;
+			if (!memory.safely_within(where, sizeof(address_t))) {
+				throw MachineException("RELR relocation target out of bounds", where);
 			}
+			*(address_t*)memory.safely_at(where, sizeof(address_t)) += this->m_image_base;
 			where += sizeof(address_t);
 		}
 		else
@@ -428,9 +429,10 @@ bool Machine::relocate_relr_section(const char* section_name)
 			{
 				const unsigned bit = __builtin_ctzll(bits);
 				const address_t reloc_addr = where + bit * sizeof(address_t);
-				if (memory.safely_within(reloc_addr, sizeof(address_t))) {
-					*(address_t*)memory.safely_at(reloc_addr, sizeof(address_t)) += this->m_image_base;
+				if (!memory.safely_within(reloc_addr, sizeof(address_t))) {
+					throw MachineException("RELR relocation bitmap target out of bounds", reloc_addr);
 				}
+				*(address_t*)memory.safely_at(reloc_addr, sizeof(address_t)) += this->m_image_base;
 				bits &= (bits - 1);
 			}
 			/* Consumed one 63-bit bitmap window (64-bit word minus 1 tag bit). */
