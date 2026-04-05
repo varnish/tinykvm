@@ -324,6 +324,7 @@ private:
 	void elf_load_ph(std::string_view binary, const MachineOptions&, const void*);
 	void dynamic_linking(std::string_view binary, const MachineOptions&);
 	bool relocate_section(const char* section_name, const char* sym_section);
+	bool relocate_relr_section(const char* section_name);
 	void setup_long_mode(const MachineOptions&);
 	void setup_cow_mode(const Machine*); // After prepare_copy_on_write and forking
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
