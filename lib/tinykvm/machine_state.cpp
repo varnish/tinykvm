@@ -1,5 +1,6 @@
 #include "machine.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <fcntl.h>
 #include <linux/kvm.h>
@@ -7,9 +8,12 @@
 #include <span>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <unordered_map>
+#include <unordered_set>
 #include <unistd.h>
 #ifdef TINYKVM_ARCH_AMD64
 #include "amd64/amd64.hpp"
+#include "amd64/memory_layout.hpp"
 #include "amd64/paging.hpp"
 #endif
 #include "linux/fds.hpp"
@@ -211,6 +215,162 @@ bool Machine::load_snapshot_state()
 	}
 	return true;
 }
+void Machine::reorder_snapshot_memory(const std::vector<uint64_t>& fault_order)
+{
+	const uint64_t physbase = this->memory.physbase;
+	const uint64_t mem_size = this->memory.size;
+	const uint64_t kernel_end = this->kernel_end_address();
+	const uint64_t FIXED_REGION_END = kernel_end;
+	const uint64_t arena_base = MemoryBanks::ARENA_BASE_ADDRESS;
+	char* const ptr = this->memory.ptr;
+
+	// Step 1: Collect all pages from the page tables
+	auto all_pages = collect_all_pages(this->memory, true);
+
+	// Deduplicate pages (a physical address may appear as both branch and leaf
+	// in edge cases, or the same page table page may be referenced multiple times)
+	std::unordered_set<uint64_t> seen;
+	std::vector<PageInfo> unique_pages;
+	unique_pages.reserve(all_pages.size());
+	for (auto& pi : all_pages) {
+		if (seen.insert(pi.paddr).second) {
+			unique_pages.push_back(pi);
+		}
+	}
+
+	// Step 2: Sort pages into categories
+	// Build fault order lookup: paddr -> order index
+	std::unordered_map<uint64_t, size_t> fault_index;
+	fault_index.reserve(fault_order.size());
+	for (size_t i = 0; i < fault_order.size(); i++) {
+		fault_index.insert_or_assign(fault_order[i], i);
+	}
+
+	// Separate into categories.
+	// Pages below FIXED_REGION_END are fixed kernel structures (GDT, TSS, IDT, etc.)
+	// and must remain at their exact physical addresses.
+	// Bank pages (>= ARENA_BASE_ADDRESS) are CoW copies from setup_cow_mode that
+	// need to be flattened into main memory — they go into branch_pages.
+	std::vector<PageInfo> fixed_pages, kernel_pages, faulted_pages, unfaulted_pages, branch_pages;
+	for (auto& pi : unique_pages) {
+		if (pi.paddr >= arena_base) {
+			// Bank page — must be flattened into main memory
+			branch_pages.push_back(pi);
+		} else if (pi.paddr < FIXED_REGION_END) {
+			fixed_pages.push_back(pi);
+		} else if (pi.is_branch) {
+			branch_pages.push_back(pi);
+		} else if (pi.paddr < kernel_end) {
+			kernel_pages.push_back(pi);
+		} else {
+			auto it = fault_index.find(pi.paddr);
+			if (it != fault_index.end()) {
+				faulted_pages.push_back(pi);
+			} else {
+				unfaulted_pages.push_back(pi);
+			}
+		}
+	}
+
+	// Sort kernel pages by address
+	std::sort(kernel_pages.begin(), kernel_pages.end(),
+		[](const PageInfo& a, const PageInfo& b) { return a.paddr < b.paddr; });
+	// Sort faulted pages by fault order
+	std::sort(faulted_pages.begin(), faulted_pages.end(),
+		[&](const PageInfo& a, const PageInfo& b) {
+			return fault_index[a.paddr] < fault_index[b.paddr];
+		});
+	// Sort unfaulted pages by address
+	std::sort(unfaulted_pages.begin(), unfaulted_pages.end(),
+		[](const PageInfo& a, const PageInfo& b) { return a.paddr < b.paddr; });
+	// Sort branch pages by address
+	std::sort(branch_pages.begin(), branch_pages.end(),
+		[](const PageInfo& a, const PageInfo& b) { return a.paddr < b.paddr; });
+
+	// Concatenate in order: kernel, faulted user, unfaulted user, branch (page tables)
+	// Fixed pages are excluded — they keep their original addresses.
+	std::vector<PageInfo> ordered;
+	ordered.reserve(unique_pages.size());
+	ordered.insert(ordered.end(), kernel_pages.begin(), kernel_pages.end());
+	ordered.insert(ordered.end(), faulted_pages.begin(), faulted_pages.end());
+	ordered.insert(ordered.end(), unfaulted_pages.begin(), unfaulted_pages.end());
+	ordered.insert(ordered.end(), branch_pages.begin(), branch_pages.end());
+
+	// Step 3: Assign new sequential addresses
+	// Fixed pages keep their identity mapping
+	std::unordered_map<uint64_t, uint64_t> translation;
+	translation.reserve(ordered.size() + fixed_pages.size());
+	for (auto& pi : fixed_pages) {
+		translation[pi.paddr] = pi.paddr; // identity — no move
+	}
+	// Movable pages start after the fixed region.
+	// Assign addresses sequentially, but stop accepting pages if we'd
+	// exceed the allocation. Pages that don't fit are dropped — unfaulted
+	// pages at the tail are the ones most likely trimmed, since they
+	// weren't accessed during the probing request anyway.
+	const uint64_t mem_limit = physbase + mem_size;
+	uint64_t cursor = FIXED_REGION_END;
+	size_t pages_placed = 0;
+	for (auto& pi : ordered) {
+		uint64_t aligned = (cursor + (pi.size - 1)) & ~(pi.size - 1);
+		if (aligned + pi.size > mem_limit)
+			break;
+		translation[pi.paddr] = aligned;
+		cursor = aligned + pi.size;
+		pages_placed++;
+	}
+	// Trim ordered to only the pages that fit
+	const size_t pages_dropped = ordered.size() - pages_placed;
+	ordered.resize(pages_placed);
+	if (pages_dropped > 0) {
+		printf("reorder_snapshot_memory: dropped %zu pages that didn't fit after alignment\n",
+			pages_dropped);
+	}
+
+	// Step 4: Copy pages to temporary buffer in new order
+	char* tmp = (char*)mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+	if (tmp == MAP_FAILED) {
+		fprintf(stderr, "reorder_snapshot_memory: failed to allocate temp buffer, skipping\n");
+		return;
+	}
+
+	// Copy fixed region as-is (pages below FIXED_REGION_END stay in place)
+	std::memcpy(tmp, ptr, FIXED_REGION_END - physbase);
+	// Copy movable pages to their new locations.
+	// Bank pages (>= ARENA_BASE_ADDRESS) must be read via memory.page_at()
+	// since they're not in the main memory mmap.
+	for (auto& pi : ordered) {
+		uint64_t new_paddr = translation[pi.paddr];
+		const char* src;
+		if (pi.paddr >= arena_base) {
+			src = (const char*)this->memory.page_at(pi.paddr);
+		} else {
+			src = ptr + (pi.paddr - physbase);
+		}
+		std::memcpy(tmp + (new_paddr - physbase), src, pi.size);
+	}
+
+	// Step 5: Rewire page tables in the temp buffer
+	uint64_t new_root = translation.at(this->memory.page_tables);
+	rewire_page_tables(tmp, physbase, new_root, translation, true);
+
+	// Step 6: Copy back and update metadata
+	std::memcpy(ptr, tmp, mem_size);
+	munmap(tmp, mem_size);
+	this->memory.page_tables = new_root;
+
+	// Update KVM CR3 to match the new page table root.
+	// setup_cow_mode set CR3 to a bank address which won't exist on load.
+	auto sregs = this->get_special_registers();
+	sregs.cr3 = new_root;
+	this->set_special_registers(sregs);
+
+	printf("Reordered snapshot memory: %zu pages (%zu fixed, %zu kernel, %zu faulted, %zu unfaulted, %zu branch)\n",
+		ordered.size() + fixed_pages.size(), fixed_pages.size(), kernel_pages.size(),
+		faulted_pages.size(), unfaulted_pages.size(), branch_pages.size());
+}
+
 void Machine::save_snapshot_state_now(const std::vector<std::pair<uint64_t, uint64_t>>& populate_pages) const
 {
 	if (this->is_forked()) {

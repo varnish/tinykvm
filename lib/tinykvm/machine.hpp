@@ -302,6 +302,9 @@ struct Machine
 	   write-fault VM exits. CoW state is rebuilt by every fork/reset_to,
 	   so re-apply after each. Returns the number of pages made writable. */
 	size_t prefetch_pages(const std::vector<std::pair<uint64_t, uint64_t>>& pages);
+	/* Reorder snapshot memory so pages are sequential in fault order.
+	   Rewires page tables to reflect the new physical layout. */
+	void reorder_snapshot_memory(const std::vector<uint64_t>& fault_order);
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);

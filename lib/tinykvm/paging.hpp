@@ -1,6 +1,7 @@
 #pragma once
 #include "memory.hpp"
 #include <functional>
+#include <unordered_map>
 
 namespace tinykvm {
 
@@ -40,6 +41,18 @@ extern uint64_t paging_address_mask();
    arm64 is AP[1] (user access), so the mask must not be hardcoded in shared
    code (e.g. Machine::memzero). */
 extern uint64_t paging_dirty_bit();
+
+struct PageInfo {
+	uint64_t paddr;
+	uint64_t size;
+	bool is_branch; // true = page table node, false = leaf data page
+};
+// Collect all pages (leaf + branch) from the page tables.
+extern std::vector<PageInfo> collect_all_pages(const vMemory& memory, bool include_unpresent = true);
+// Rewire all physical addresses in page tables using a translation map.
+// Operates on raw memory at base_ptr, using new_root as the PML4 physical address.
+extern void rewire_page_tables(char* base_ptr, uint64_t physbase, uint64_t new_root,
+	const std::unordered_map<uint64_t, uint64_t>& translation, bool include_unpresent = true);
 
 static inline bool page_is_zeroed(const uint64_t* page) {
 	for (size_t i = 0; i < 512; i += 8) {
