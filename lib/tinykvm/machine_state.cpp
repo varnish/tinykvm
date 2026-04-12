@@ -147,22 +147,36 @@ bool Machine::load_snapshot_state()
 
 		void* current = state.current;
 		// Load populate pages
-		madvise(this->memory.ptr, kernel_end_address(), MADV_WILLNEED | MADV_RANDOM);
-		static const uint64_t step = 1024*1024;
+		madvise(this->memory.ptr, kernel_end_address(), MADV_WILLNEED | MADV_SEQUENTIAL);
+		static constexpr uint64_t step = 2*1024*1024;
+		static constexpr uint64_t madvise_max_total = 40 * 1024 * 1024;
+		uint64_t madvised_total = 0;
+		int madvised_total_calls = 0;
 		for (unsigned i = 0; i < state.num_access_ranges; i++) {
 			ColdStartAccessedRange* range = state.next<ColdStartAccessedRange>(current);
 			if (range->start >= MemoryBanks::ARENA_BASE_ADDRESS || range->start < kernel_end_address())
 				continue;
+			if (madvised_total >= madvise_max_total)
+				continue;
 			try {
 				//printf("Populating pages from 0x%lX -> 0x%lX\n", range->start, range->end);
 				for (uint64_t start = range->start; start < range->end; start += step) {
-					madvise(this->memory.ptr + start, std::min(range->end - start, step), MADV_WILLNEED | MADV_RANDOM);
+					madvise(this->memory.ptr + start, std::min(range->end - start, step), MADV_WILLNEED | MADV_SEQUENTIAL);
+					madvised_total += std::min(range->end - start, step);
+					madvised_total_calls++;
+					//printf("Madvised pages from 0x%lX -> 0x%lX (total madvised: %zu MiB)\n",
+					//	start, std::min(start + step, range->end), madvised_total / (1024 * 1024));
+					if (madvised_total >= madvise_max_total) {
+						break;
+					}
 				}
 			} catch (const std::exception& e) {
 				fprintf(stderr, "Failed to access page at 0x%lX: %s\n", range->start, e.what());
 				continue;
 			}
 		}
+		//printf("Madvised a total of %zu MiB of pages in %d calls\n",
+		// 	madvised_total / (1024 * 1024), madvised_total_calls);
 
 		// Load the thread states
 		ColdStartThreads* threads = state.next<ColdStartThreads>(current);
@@ -215,7 +229,7 @@ bool Machine::load_snapshot_state()
 	}
 	return true;
 }
-void Machine::reorder_snapshot_memory(const std::vector<uint64_t>& fault_order)
+std::vector<std::pair<uint64_t, uint64_t>> Machine::reorder_snapshot_memory(const std::vector<uint64_t>& fault_order)
 {
 	const uint64_t physbase = this->memory.physbase;
 	const uint64_t mem_size = this->memory.size;
@@ -332,7 +346,7 @@ void Machine::reorder_snapshot_memory(const std::vector<uint64_t>& fault_order)
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
 	if (tmp == MAP_FAILED) {
 		fprintf(stderr, "reorder_snapshot_memory: failed to allocate temp buffer, skipping\n");
-		return;
+		return {};
 	}
 
 	// Copy fixed region as-is (pages below FIXED_REGION_END stay in place)
@@ -369,6 +383,19 @@ void Machine::reorder_snapshot_memory(const std::vector<uint64_t>& fault_order)
 	printf("Reordered snapshot memory: %zu pages (%zu fixed, %zu kernel, %zu faulted, %zu unfaulted, %zu branch)\n",
 		ordered.size() + fixed_pages.size(), fixed_pages.size(), kernel_pages.size(),
 		faulted_pages.size(), unfaulted_pages.size(), branch_pages.size());
+
+	// Build post-reorder populate pages from the placed pages.
+	// Since kernel + faulted pages are packed sequentially, these should
+	// merge into very few contiguous ranges.
+	std::vector<std::pair<uint64_t, uint64_t>> populate_pages;
+	populate_pages.reserve(ordered.size());
+	for (auto& pi : ordered) {
+		auto it = translation.find(pi.paddr);
+		if (it != translation.end()) {
+			populate_pages.push_back({it->second, pi.size});
+		}
+	}
+	return populate_pages;
 }
 
 void Machine::save_snapshot_state_now(const std::vector<std::pair<uint64_t, uint64_t>>& populate_pages) const
