@@ -1,6 +1,7 @@
 #pragma once
 #include "../memory.hpp"
 #include <functional>
+#include <unordered_map>
 
 namespace tinykvm {
 
@@ -34,6 +35,18 @@ extern WritablePage writable_page_at(vMemory&, uint64_t addr, uint64_t flags, Wr
 extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags);
 // Merges leaf pages back into hugepages where possible. Returns number of merged pages.
 extern size_t paging_merge_leaf_pages_into_hugepages(vMemory&, bool merge_if_dirty = false);
+
+struct PageInfo {
+	uint64_t paddr;
+	uint64_t size;
+	bool is_branch; // true = page table node, false = leaf data page
+};
+// Collect all pages (leaf + branch) from the page tables.
+extern std::vector<PageInfo> collect_all_pages(const vMemory& memory, bool include_unpresent = true);
+// Rewire all physical addresses in page tables using a translation map.
+// Operates on raw memory at base_ptr, using new_root as the PML4 physical address.
+extern void rewire_page_tables(char* base_ptr, uint64_t physbase, uint64_t new_root,
+	const std::unordered_map<uint64_t, uint64_t>& translation, bool include_unpresent = true);
 
 static inline bool page_is_zeroed(const uint64_t* page) {
 	for (size_t i = 0; i < 512; i += 8) {
