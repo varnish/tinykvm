@@ -148,8 +148,8 @@ bool Machine::load_snapshot_state()
 		void* current = state.current;
 		// Load populate pages
 		madvise(this->memory.ptr, kernel_end_address(), MADV_WILLNEED | MADV_SEQUENTIAL);
-		static constexpr uint64_t step = 2*1024*1024;
-		static constexpr uint64_t madvise_max_total = 40 * 1024 * 1024;
+		static constexpr uint64_t step = 1*1024*1024;
+		static constexpr uint64_t madvise_max_total = 32 * 1024 * 1024;
 		uint64_t madvised_total = 0;
 		int madvised_total_calls = 0;
 		for (unsigned i = 0; i < state.num_access_ranges; i++) {
@@ -384,17 +384,24 @@ std::vector<std::pair<uint64_t, uint64_t>> Machine::reorder_snapshot_memory(cons
 		ordered.size() + fixed_pages.size(), fixed_pages.size(), kernel_pages.size(),
 		faulted_pages.size(), unfaulted_pages.size(), branch_pages.size());
 
-	// Build post-reorder populate pages from the placed pages.
-	// Since kernel + faulted pages are packed sequentially, these should
-	// merge into very few contiguous ranges.
+	// Build post-reorder populate pages from only the pages that were
+	// actually accessed during the probing request (+ kernel and branch
+	// pages needed for page table infrastructure).  Unfaulted pages are
+	// still present in the snapshot but should not be prefetched — they
+	// can be demand-paged if a future request happens to need them.
 	std::vector<std::pair<uint64_t, uint64_t>> populate_pages;
-	populate_pages.reserve(ordered.size());
-	for (auto& pi : ordered) {
-		auto it = translation.find(pi.paddr);
-		if (it != translation.end()) {
-			populate_pages.push_back({it->second, pi.size});
+	populate_pages.reserve(kernel_pages.size() + faulted_pages.size() + branch_pages.size());
+	auto add_translated = [&](const std::vector<PageInfo>& pages) {
+		for (auto& pi : pages) {
+			auto it = translation.find(pi.paddr);
+			if (it != translation.end()) {
+				populate_pages.push_back({it->second, pi.size});
+			}
 		}
-	}
+	};
+	add_translated(kernel_pages);
+	add_translated(faulted_pages);
+	add_translated(branch_pages);
 	return populate_pages;
 }
 
