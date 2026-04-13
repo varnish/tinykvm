@@ -87,6 +87,7 @@ struct SnapshotState {
 
 	Machine::address_t m_page_tables;
 	bool main_memory_writes;
+	bool memory_reordered;
 	uint32_t num_access_ranges;
 
 	char current[0];
@@ -143,6 +144,7 @@ bool Machine::load_snapshot_state()
 		this->m_kernel_end = state.m_kernel_end;
 		this->m_mmap_cache.current() = state.mmap_current;
 		this->memory.main_memory_writes = state.main_memory_writes;
+		this->memory.memory_reordered = state.memory_reordered;
 		this->memory.page_tables = state.m_page_tables;
 
 		void* current = state.current;
@@ -159,7 +161,8 @@ bool Machine::load_snapshot_state()
 			if (madvised_total >= madvise_max_total)
 				continue;
 			try {
-				//printf("Populating pages from 0x%lX -> 0x%lX\n", range->start, range->end);
+				//const size_t num_pages = ((range->end - range->start + 0xFFF) & ~0xFFFLL) / 0x1000;
+				//printf("Populating pages from 0x%lX -> 0x%lX (%zu pages)\n", range->start, range->end, num_pages);
 				for (uint64_t start = range->start; start < range->end; start += step) {
 					madvise(this->memory.ptr + start, std::min(range->end - start, step), MADV_WILLNEED | MADV_SEQUENTIAL);
 					madvised_total += std::min(range->end - start, step);
@@ -175,8 +178,10 @@ bool Machine::load_snapshot_state()
 				continue;
 			}
 		}
-		//printf("Madvised a total of %zu MiB of pages in %d calls\n",
-		// 	madvised_total / (1024 * 1024), madvised_total_calls);
+		if constexpr (false) {
+			printf("Madvised a total of %zu MiB of pages in %d calls\n",
+		 		madvised_total / (1024 * 1024), madvised_total_calls);
+		}
 
 		// Load the thread states
 		ColdStartThreads* threads = state.next<ColdStartThreads>(current);
@@ -373,6 +378,7 @@ std::vector<std::pair<uint64_t, uint64_t>> Machine::reorder_snapshot_memory(cons
 	std::memcpy(ptr, tmp, mem_size);
 	munmap(tmp, mem_size);
 	this->memory.page_tables = new_root;
+	this->memory.memory_reordered = true;
 
 	// Update KVM CR3 to match the new page table root.
 	// setup_cow_mode set CR3 to a bank address which won't exist on load.
@@ -431,6 +437,7 @@ void Machine::save_snapshot_state_now(const std::vector<std::pair<uint64_t, uint
 		state.m_kernel_end = this->m_kernel_end;
 		state.mmap_current = this->m_mmap_cache.current();
 		state.main_memory_writes = this->memory.main_memory_writes;
+		state.memory_reordered = this->memory.memory_reordered;
 		state.m_page_tables = this->memory.page_tables;
 
 		void* current = state.current;
