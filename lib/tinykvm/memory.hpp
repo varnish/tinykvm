@@ -42,6 +42,11 @@ struct vMemory {
 	/* Use memory banks only for page tables, write directly
 	   to main memory. Used with is_forkable_master(). */
 	bool   main_memory_writes = false;
+	/* Set when reorder_snapshot_memory has moved pages, breaking
+	   the identity mapping (vaddr == paddr), so any physical address
+	   must be resolved through the page tables rather than assumed
+	   equal to the virtual one. Carried across snapshot save/restore. */
+	bool   memory_reordered = false;
 	/* Split into small pages (4K) when reaching a leaf hugepage. */
 	bool   split_hugepages = true;
 	/* Executable heap */

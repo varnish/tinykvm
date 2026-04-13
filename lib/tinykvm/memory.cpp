@@ -202,8 +202,6 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				//fprintf(stderr, "Copying virtual page %016lx from physical %016lx with size %lu\n",
 				//	addr, bank_addr, page_size);
 
-				// This is a writable page, we will copy it using the "real"
-				// address from the master VM.
 				auto* our_page = this->safely_at(bank_addr, page_size);
 				// Find the page in the main VM *through its page tables*.
 				// Only main memory is identity-mapped; the mmap physical
