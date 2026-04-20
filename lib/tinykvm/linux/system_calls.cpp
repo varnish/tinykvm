@@ -2893,10 +2893,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
 				// Check if the path is a symlink
 				if (cpu.machine().fds().resolve_symlink(path)) {
-					// Copy the resolved path to the guest, respecting guest buffer size.
-					const size_t copied = std::min<size_t>(path.size(), g_size);
-					cpu.machine().copy_to_guest(g_buffer, path.c_str(), copied);
-					regs.rax = copied;
+					// Copy the resolved path to the guest
+					const size_t copy_size = std::min(path.size(), size_t(g_size));
+					cpu.machine().copy_to_guest(g_buffer, path.c_str(), copy_size);
+					regs.rax = copy_size;
 				}
 				else if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
 					// Pretend the path is not a link
@@ -2906,13 +2906,17 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					// Translate from vfd when fd != AT_FDCWD
 					if (vfd != AT_FDCWD)
 						fd = cpu.machine().fds().translate(vfd);
-					// Read link target into host buffer, then copy to guest memory.
-					char host_buffer[PATH_MAX];
-					const size_t host_size = std::min<size_t>(g_size, sizeof(host_buffer));
-					const ssize_t bytes = readlinkat(fd, path.c_str(), host_buffer, host_size);
-					if (bytes >= 0) {
-						cpu.machine().copy_to_guest(g_buffer, host_buffer, size_t(bytes));
-						regs.rax = bytes;
+					// Path is in allow-list
+					const size_t h_size = std::min(size_t(g_size), size_t(PATH_MAX));
+					std::vector<char> buffer((h_size > 0) ? h_size : 1);
+					// readlinkat() returns -1 on failure, so storing that in
+					// regs.rax (unsigned) could wrap. Preserves the original intent to store
+					// the length in regs.rax (on success) but avoid a segfault if -1
+					// (which becomes 0xFFFFFFFFFFFFFFFF) and then is sent to copy_to_guest() ...
+					const ssize_t host_result = readlinkat(fd, path.c_str(), buffer.data(), h_size);
+					if (host_result >= 0) {
+						cpu.machine().copy_to_guest(g_buffer, buffer.data(), host_result);
+						regs.rax = host_result;
 					} else {
 						regs.rax = -errno;
 					}

@@ -86,3 +86,33 @@ int main() {
 	// and the data matched 'Hello World!'.
 	REQUIRE(output_is_hello_world);
 }
+
+TEST_CASE("readlinkat failure path does not overflow copy", "[Output][Syscall]")
+{
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+int main() {
+	char buf[32];
+	errno = 0;
+	long rc = readlinkat(AT_FDCWD, "/proc/self/fd/999999", buf, sizeof(buf));
+	if (rc != -1) return 21;
+	if (errno <= 0) return 22;
+	return 0;
+}
+)M");
+
+	tinykvm::Machine machine{binary, {.max_mem = MAX_MEMORY}};
+	machine.fds().set_open_readable_callback(
+	[&](std::string& path) -> bool {
+		(void)path;
+		return true;
+	});
+	machine.setup_linux({"readlinkat-check"}, env);
+	machine.run(2.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
