@@ -2908,14 +2908,14 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						fd = cpu.machine().fds().translate(vfd);
 					// Path is in allow-list
 					const size_t h_size = std::min(size_t(g_size), size_t(PATH_MAX));
-					std::vector<char> buffer((h_size > 0) ? h_size : 1);
+					char host_buffer[PATH_MAX];
 					// readlinkat() returns -1 on failure, so storing that in
 					// regs.rax (unsigned) could wrap. Preserves the original intent to store
 					// the length in regs.rax (on success) but avoid a segfault if -1
 					// (which becomes 0xFFFFFFFFFFFFFFFF) and then is sent to copy_to_guest() ...
-					const ssize_t host_result = readlinkat(fd, path.c_str(), buffer.data(), h_size);
+					const ssize_t host_result = readlinkat(fd, path.c_str(), host_buffer, h_size);
 					if (host_result >= 0) {
-						cpu.machine().copy_to_guest(g_buffer, buffer.data(), host_result);
+						cpu.machine().copy_to_guest(g_buffer, host_buffer, host_result);
 						regs.rax = host_result;
 					} else {
 						regs.rax = -errno;
