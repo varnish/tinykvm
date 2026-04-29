@@ -182,6 +182,7 @@ struct Machine
 
 	uint64_t address_of(std::string_view symbol, const std::vector<uint8_t>&) const;
 	uint64_t address_of(std::string_view symbol, std::string_view binary = {}) const;
+	static uint64_t AddressOf(std::string_view symbol, std::string_view binary);
 	std::string resolve(uint64_t rip, std::string_view binary = {}) const;
 
 	bool smp_active() const noexcept;

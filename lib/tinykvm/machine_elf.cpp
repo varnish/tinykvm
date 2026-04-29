@@ -284,6 +284,11 @@ uint64_t Machine::address_of(std::string_view name, const std::vector<uint8_t>& 
 	return this->address_of(name, std::string_view{
 		reinterpret_cast<const char*>(binary.data()), binary.size()});
 }
+uint64_t Machine::AddressOf(std::string_view symbol, std::string_view binary)
+{
+	const auto* sym = resolve_symbol(binary, symbol.data());
+	return (sym) ? sym->st_value : 0x0;
+}
 std::string Machine::resolve(uint64_t rip, std::string_view binary) const
 {
 	if (binary.empty())

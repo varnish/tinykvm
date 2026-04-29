@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
+#include <unistd.h>
 #include "assert.hpp"
 #include "load_file.hpp"
 
@@ -9,18 +10,30 @@
 #define GUEST_MEMORY   0x80000000  /* 2GB memory */
 #define GUEST_WORK_MEM 1024UL * 1024*1024 /* MB working mem */
 
-static uint64_t verify_exists(tinykvm::Machine& vm, const char* name)
-{
-	uint64_t addr = vm.address_of(name);
-	if (addr == 0x0) {
-//		fprintf(stderr, "Error: '%s' is missing\n", name);
-//		exit(1);
-	}
-	return addr;
-}
-
 inline timespec time_now();
 inline long nanodiff(timespec start_time, timespec end_time);
+
+// Use intercepted guest program base address, and the unrelocated symbol
+// from the guest binary to resolve the actual symbol address
+struct DynamicResolver {
+	DynamicResolver(const std::vector<uint8_t>& binary, uint64_t guest_program_base)
+		: m_binary{binary}, m_base_addr{guest_program_base}
+	{
+	}
+
+	uint64_t resolve(std::string_view symbol) const noexcept
+	{
+		uint64_t addr = tinykvm::Machine::AddressOf(symbol, std::string_view{(const char*)m_binary.data(), m_binary.size()});
+		if (addr != 0x0) {
+			addr += m_base_addr;
+		}
+		return addr;
+	}
+
+private:
+	const std::vector<uint8_t>& m_binary;
+	uint64_t m_base_addr = 0;
+};
 
 int main(int argc, char** argv)
 {
@@ -29,17 +42,29 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 	std::vector<uint8_t> binary;
+	std::vector<uint8_t> guest_binary;
 	std::vector<std::string> args;
 	std::string filename = argv[1];
+	std::string guest_program_path; // Absolute path
 	binary = load_file(filename);
 
 	const tinykvm::DynamicElf dyn_elf = tinykvm::is_dynamic_elf(
 		std::string_view{(const char*)binary.data(), binary.size()});
 	if (dyn_elf.is_dynamic) {
-		// Add ld-linux.so.2 as first argument
+		// Keep the guest binary for symbol resolution later
+		guest_binary = std::move(binary);
+		// Load the dynamic linker as the main program
 		static const std::string ld_linux_so = "/lib64/ld-linux-x86-64.so.2";
 		binary = load_file(ld_linux_so);
 		args.push_back(ld_linux_so);
+
+		// Absolute path for matching against /proc/self/fd
+		char abs_path[PATH_MAX];
+		if (realpath(filename.c_str(), abs_path) == nullptr) {
+			fprintf(stderr, "Error resolving absolute path of '%s'\n", filename.c_str());
+			exit(1);
+		}
+		guest_program_path = abs_path;
 	}
 
 	for (int i = 1; i < argc; i++)
@@ -89,6 +114,7 @@ int main(int argc, char** argv)
 	};
 	tinykvm::Machine master_vm {binary, options};
 	//master_vm.print_pagetables();
+	uint64_t guest_program_base = 0;
 	if (dyn_elf.is_dynamic) {
 		static const std::vector<std::string> allowed_readable_paths({
 			argv[1],
@@ -114,36 +140,36 @@ int main(int argc, char** argv)
 					allowed_readable_paths.end(), path) != allowed_readable_paths.end();
 			}
 		);
+
+		// Match /proc/self/fd/<fd> to see if it points to our guest program
+		master_vm.set_mmap_callback(
+			[&] (tinykvm::vCPU& cpu, uint64_t, size_t, int, int, int fd, uint64_t offset)
+			{
+				if (fd < 0 || offset != 0 || guest_program_base != 0)
+					return;
+				char linkpath[64];
+				snprintf(linkpath, sizeof(linkpath), "/proc/self/fd/%d", fd);
+				char resolved[PATH_MAX];
+				ssize_t len = readlink(linkpath, resolved, sizeof(resolved) - 1);
+				if (len > 0) {
+					resolved[len] = '\0';
+					if (guest_program_path == resolved) {
+						guest_program_base = cpu.registers().rax;
+						printf("Guest program loaded at 0x%lX\n", guest_program_base);
+					}
+				}
+			}
+		);
 	}
 
 	master_vm.setup_linux(
 		args,
 		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
 
-	const auto rsp = master_vm.stack_address();
-
-	uint64_t call_addr = verify_exists(master_vm, "my_backend");
-
 	/* Remote debugger session */
 	if (getenv("DEBUG"))
 	{
-		auto* vm = &master_vm;
-		tinykvm::tinykvm_x86regs regs;
-
-		if (getenv("VMCALL")) {
-			master_vm.run();
-		}
-		if (getenv("FORK")) {
-			master_vm.prepare_copy_on_write();
-			vm = new tinykvm::Machine {master_vm, options};
-			vm->setup_call(regs, call_addr, rsp);
-			vm->set_registers(regs);
-		} else if (getenv("VMCALL")) {
-			master_vm.setup_call(regs, call_addr, rsp);
-			master_vm.set_registers(regs);
-		}
-
-		tinykvm::RSP server {filename, *vm, 2159};
+		tinykvm::RSP server {filename, master_vm, 2159};
 		printf("Waiting for connection localhost:2159...\n");
 		auto client = server.accept();
 		if (client != nullptr) {
@@ -154,11 +180,11 @@ int main(int argc, char** argv)
 				while (client->process_one());
 			} catch (const tinykvm::MachineException& e) {
 				printf("EXCEPTION %s: %lu\n", e.what(), e.data());
-				vm->print_registers();
+				master_vm.print_registers();
 			}
 		} else {
 			/* Resume execution normally */
-			vm->run();
+			master_vm.run();
 		}
 		/* Exit after debugging */
 		return 0;
@@ -184,6 +210,20 @@ int main(int argc, char** argv)
 	auto t1 = time_now();
 	asm("" ::: "memory");
 
+	DynamicResolver resolver{guest_binary, guest_program_base};
+	uint64_t call_addr = 0x0;
+	if (dyn_elf.is_dynamic) {
+		call_addr = resolver.resolve("my_backend");
+		if (call_addr != 0x0) {
+			printf("Resolved 'my_backend' at 0x%lX (image_base 0x%lX, guest_base 0x%lX)\n",
+				call_addr, master_vm.image_base(), guest_program_base);
+		}
+	} else {
+		// For static executables, resolve symbols directly from the loaded binary.
+		call_addr = master_vm.address_of("my_backend");
+		printf("Resolved 'my_backend' at 0x%lX\n", call_addr);
+	}
+
 	if (call_addr == 0x0) {
 		double t = nanodiff(t0, t1) / 1e9;
 		printf("Time: %fs Return value: %ld\n", t, master_vm.return_value());
@@ -195,21 +235,19 @@ int main(int argc, char** argv)
 	tinykvm::Machine vm{master_vm, options};
 
 	/* Make a VM function call */
-	tinykvm::tinykvm_regs regs;
-	vm.setup_call(regs, call_addr, rsp);
-	//regs.rip = vm.entry_address_if_usermode();
-	vm.set_registers(regs);
 	printf("Calling fork at 0x%lX\n", call_addr);
-	vm.run(8.0f);
+	struct MyStruct {
+		int a;
+		float b;
+		char c;
+	} arg2 {42, 3.14f, 'X'};
+	vm.timed_vmcall(call_addr, 8.0f, "Hello from vmcall!", arg2, 42);
 
 	/* Re-run */
-	//vm.reset_to(master_vm, options);
+	arg2 = {84, 2.718f, 'Y'};
+	vm.reset_to(master_vm, options);
 
-	vm.setup_call(regs, call_addr, rsp);
-	//regs.rip = vm.entry_address_if_usermode();
-	vm.set_registers(regs);
-	printf("Calling fork at 0x%lX\n", call_addr);
-	vm.run(8.0f);
+	vm.timed_vmcall(call_addr, 8.0f, "Second call after reset!", arg2, 84);
 }
 
 timespec time_now()

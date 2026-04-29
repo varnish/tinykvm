@@ -1,7 +1,8 @@
-#include <assert.h>
+#include <cassert>
 #include <malloc.h>
-#include <stdio.h>
-#include <string.h>
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
 static void test_threads();
 extern "C" int gettid();
 
@@ -13,7 +14,9 @@ int main()
 	printf("%.*s", 13, test);
 
 	test_threads();
-	return 0;
+
+	// Prevent global destructors
+	std::quick_exit(0);
 }
 
 extern "C" __attribute__((used))
@@ -148,4 +151,19 @@ void test_threads()
 
 	printf("SUCCESS\n");
 	threads_test_suite_ok = 1;
+}
+
+static std::vector<int> data = {1, 2, 3, 4, 5};
+
+struct MyStruct {
+	int a;
+	float b;
+	char c;
+};
+extern "C" void my_backend(const char* arg1, MyStruct* arg2, int arg3)
+{
+	printf("Hello from my_backend! arg1=%s, arg2={a=%d, b=%f, c='%c'}, arg3=%d\n",
+		arg1, arg2->a, arg2->b, arg2->c, arg3);
+	printf("State of global data: %d %d %d %d %d  Size: %zu\n",
+		data[0], data[1], data[2], data[3], data[4], data.size());
 }
