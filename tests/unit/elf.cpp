@@ -2,22 +2,55 @@
 
 #include <tinykvm/machine.hpp>
 #include <tinykvm/rsp_client.hpp>
+
+#include <limits.h>
+#include <stdexcept>
+#include <unistd.h>
+
 extern std::vector<uint8_t> load_file(const std::string& filename);
+extern std::vector<uint8_t> build_and_load(const std::string& code);
 static const uint64_t MAX_MEMORY = 8ul << 20; /* 8MB */
 static const std::vector<std::string> env{
 	"LC_TYPE=C", "LC_ALL=C", "USER=root"};
 static const std::vector<uint8_t> ld_linux_x86_64_so
 	= load_file("/lib64/ld-linux-x86-64.so.2");
 
+static std::string current_dir_path()
+{
+	char cwd[PATH_MAX];
+	if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+		throw std::runtime_error("Failed to resolve current directory");
+	}
+	return std::string(cwd);
+}
+
 TEST_CASE("Initialize KVM", "[Initialize]")
 {
 	tinykvm::Machine::init();
 }
 
-TEST_CASE("Verify dynamic Rust ELF", "[ELF]")
+TEST_CASE("Verify static ELF without dynamic relocation", "[ELF][no-reloc]")
+{
+	const auto binary = build_and_load(R"M(
+#include <stdio.h>
+int main(int argc, char** argv) {
+	(void)argc;
+	(void)argv;
+	return 123;
+}
+)M");
+
+	tinykvm::Machine machine{binary, {.max_mem = MAX_MEMORY}};
+	machine.setup_linux({"program"}, env);
+	machine.run(2.0f);
+
+	REQUIRE(machine.return_value() == 123);
+}
+
+TEST_CASE("Verify dynamic Rust ELF relocation support", "[ELF][reloc]")
 {
 	std::string guest_filename
-		= std::string(get_current_dir_name()) + "/../unit/elf/rust.elf";
+		= current_dir_path() + "/../unit/elf/rust.elf";
 	// Make filename absolute
 	char abs_path[PATH_MAX];
 	realpath(guest_filename.c_str(), abs_path);
@@ -62,7 +95,7 @@ TEST_CASE("Verify dynamic Rust ELF", "[ELF]")
 	REQUIRE(machine.return_value() == 231);
 }
 
-TEST_CASE("Verify dynamic Rust ELF (himem)", "[ELF]")
+TEST_CASE("Verify dynamic Rust ELF relocation support (himem)", "[ELF][reloc]")
 {
 	const uint64_t HIMEM = 128ULL << 30; /* 128GB */
 	tinykvm::Machine machine{ld_linux_x86_64_so, {
@@ -83,7 +116,7 @@ TEST_CASE("Verify dynamic Rust ELF (himem)", "[ELF]")
 	// Load the dynamic linker instead of the program
 	std::vector<std::string> args;
 	args.push_back("/lib64/ld-linux-x86-64.so.2");
-	args.push_back(std::string(get_current_dir_name()) + "/../unit/elf/rust.elf");
+	args.push_back(current_dir_path() + "/../unit/elf/rust.elf");
 	// We need to create a Linux environment for runtimes to work well
 	machine.setup_linux(args, env);
 	REQUIRE(machine.entry_address() > HIMEM);
