@@ -6,6 +6,7 @@ project(tinykvm)
 
 option(KVM_EXPERIMENTAL "Enable experimental features" OFF)
 
+
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)")
 	set (TINYKVM_ARCH "AMD64" CACHE STRING "TinyKVM Arch Backend")
 else()
@@ -54,7 +55,7 @@ target_link_libraries(tinykvm PUBLIC pthread rt)
 
 set_source_files_properties(
 	tinykvm/page_streaming.cpp
-	PROPERTIES COMPILE_FLAGS -mavx2)
+	PROPERTIES COMPILE_FLAGS -march=native)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 	target_compile_options(tinykvm PUBLIC -O0 -ggdb3)
