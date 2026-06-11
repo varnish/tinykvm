@@ -28,3 +28,7 @@ add_unit_test(remote remote.cpp)
 add_unit_test(reset  reset.cpp)
 add_unit_test(timeout timeout.cpp)
 add_unit_test(tegridy tegridy.cpp)
+
+if (TINYKVM_ARCH STREQUAL "ARM64")
+	add_unit_test(arm64_minimal arm64_minimal.cpp)
+endif()

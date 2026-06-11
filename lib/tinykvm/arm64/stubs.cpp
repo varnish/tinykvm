@@ -26,12 +26,23 @@ void Machine::setup_linux(const std::vector<std::string>&, const std::vector<std
 
 void Machine::setup_linux_system_calls(bool)
 {
-	throw MachineException("Linux syscall emulation is not implemented on ARM64");
+	/* Machine::init() installs syscall handlers globally. Raw ARM64 guests
+	   need init to succeed, but Linux syscall emulation is not implemented. */
 }
 
 bool Machine::load_snapshot_state()
 {
 	return false;
+}
+
+bool vMemory::has_loadable_snapshot_state() const noexcept
+{
+	return false;
+}
+
+void* vMemory::get_snapshot_state_area() const
+{
+	return nullptr;
 }
 
 void Machine::save_snapshot_state_now(const std::vector<std::pair<uint64_t, uint64_t>>&) const

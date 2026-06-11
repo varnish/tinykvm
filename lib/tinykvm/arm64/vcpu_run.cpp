@@ -1,5 +1,6 @@
 #include "../machine.hpp"
 
+#include "memory_layout.hpp"
 #include "../util/scoped_profiler.hpp"
 #include <cerrno>
 #include <linux/kvm.h>
@@ -26,6 +27,27 @@ void tinykvm_timer_signal_handler(int sig) {
 
 namespace tinykvm {
 static constexpr bool VERBOSE_TIMER = false;
+
+static uint64_t core_reg_id(uint64_t reg)
+{
+	return KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | reg;
+}
+
+static void advance_pc_one_instruction(int fd)
+{
+	__u64 pc = 0;
+	struct kvm_one_reg pc_reg {
+		.id = core_reg_id(KVM_REG_ARM_CORE_REG(regs.pc)),
+		.addr = (uint64_t)&pc,
+	};
+	if (ioctl(fd, KVM_GET_ONE_REG, &pc_reg) < 0) {
+		throw MachineException("KVM_GET_ONE_REG pc failed", errno);
+	}
+	pc += 4;
+	if (ioctl(fd, KVM_SET_ONE_REG, &pc_reg) < 0) {
+		throw MachineException("KVM_SET_ONE_REG pc failed", errno);
+	}
+}
 
 bool vCPU::timed_out() const
 {
@@ -106,6 +128,12 @@ long vCPU::run_once()
 		this->stopped = true;
 		return 0;
 	case KVM_EXIT_MMIO:
+		if (kvm_run->mmio.phys_addr == ARM64_STOP_MMIO_ADDR
+			&& kvm_run->mmio.is_write) {
+			advance_pc_one_instruction(this->fd);
+			this->stopped = true;
+			return 0;
+		}
 		Machine::machine_exception("Unhandled ARM64 MMIO exit", kvm_run->mmio.phys_addr);
 	case KVM_EXIT_FAIL_ENTRY:
 		Machine::machine_exception("Failed to start guest! Misconfigured?", KVM_EXIT_FAIL_ENTRY);

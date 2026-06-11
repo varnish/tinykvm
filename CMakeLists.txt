@@ -16,10 +16,6 @@ endif()
 
 add_subdirectory(lib tinykvm)
 
-target_compile_definitions(tinykvm PUBLIC
-	TINYKVM_ARCH_${TINYKVM_ARCH}=1
-	TINYKVM_ARCH="${TINYKVM_ARCH}")
-
 if (TINYKVM_ARCH STREQUAL "AMD64")
 	add_executable(bench
 		src/bench.cpp

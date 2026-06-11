@@ -1,6 +1,7 @@
 #include "../machine.hpp"
 
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <linux/kvm.h>
 #include <signal.h>
@@ -108,60 +109,84 @@ void vCPU::deinit()
 	}
 }
 
-static tinykvm_arm64regs from_kvm_regs(const struct kvm_regs& src)
+static uint64_t core_reg_id(uint64_t reg)
 {
-	tinykvm_arm64regs dst {};
-	std::memcpy(dst.regs, src.regs.regs, sizeof(dst.regs));
-	dst.pc = src.regs.pc;
-	dst.pstate = src.regs.pstate;
-	dst.sp = ((dst.pstate & ARM64_PSTATE_MODE_MASK) == ARM64_PSTATE_EL1H)
-		? src.sp_el1
-		: src.regs.sp;
-	return dst;
+	return KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | reg;
 }
 
-static struct kvm_regs to_kvm_regs(const tinykvm_arm64regs& src)
+static uint64_t core_gpr_reg_id(size_t index)
 {
-	struct kvm_regs dst {};
-	std::memcpy(dst.regs.regs, src.regs, sizeof(src.regs));
-	dst.regs.pc = src.pc;
-	dst.regs.pstate = src.pstate;
-	if ((src.pstate & ARM64_PSTATE_MODE_MASK) == ARM64_PSTATE_EL1H) {
-		dst.sp_el1 = src.sp;
-	} else {
-		dst.regs.sp = src.sp;
+	return core_reg_id(KVM_REG_ARM_CORE_REG(regs.regs)
+		+ index * sizeof(__u64) / sizeof(__u32));
+}
+
+static void get_one_reg(int fd, uint64_t id, __u64& value)
+{
+	struct kvm_one_reg reg {
+		.id = id,
+		.addr = (uint64_t)&value,
+	};
+	if (ioctl(fd, KVM_GET_ONE_REG, &reg) < 0) {
+		throw MachineException("KVM_GET_ONE_REG failed", errno);
 	}
-	return dst;
+}
+
+static void set_one_reg(int fd, uint64_t id, uint64_t value)
+{
+	struct kvm_one_reg reg {
+		.id = id,
+		.addr = (uint64_t)&value,
+	};
+	if (ioctl(fd, KVM_SET_ONE_REG, &reg) < 0) {
+		throw MachineException("KVM_SET_ONE_REG failed", errno);
+	}
+}
+
+static tinykvm_arm64regs get_arm64_regs(int fd)
+{
+	tinykvm_arm64regs regs {};
+	for (size_t i = 0; i < 31; i++) {
+		get_one_reg(fd, core_gpr_reg_id(i), regs.regs[i]);
+	}
+	get_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.pc)), regs.pc);
+	get_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.pstate)), regs.pstate);
+	const auto sp_reg = ((regs.pstate & ARM64_PSTATE_MODE_MASK) == ARM64_PSTATE_EL1H)
+		? KVM_REG_ARM_CORE_REG(sp_el1)
+		: KVM_REG_ARM_CORE_REG(regs.sp);
+	get_one_reg(fd, core_reg_id(sp_reg), regs.sp);
+	return regs;
+}
+
+static void set_arm64_regs(int fd, const tinykvm_arm64regs& regs)
+{
+	for (size_t i = 0; i < 31; i++) {
+		set_one_reg(fd, core_gpr_reg_id(i), regs.regs[i]);
+	}
+	set_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.pc)), regs.pc);
+	set_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.pstate)), regs.pstate);
+	const auto sp_reg = ((regs.pstate & ARM64_PSTATE_MODE_MASK) == ARM64_PSTATE_EL1H)
+		? KVM_REG_ARM_CORE_REG(sp_el1)
+		: KVM_REG_ARM_CORE_REG(regs.sp);
+	set_one_reg(fd, core_reg_id(sp_reg), regs.sp);
 }
 
 const tinykvm_regs& vCPU::registers() const
 {
 	static thread_local tinykvm_arm64regs regs;
-	struct kvm_regs kregs {};
-	if (ioctl(this->fd, KVM_GET_REGS, &kregs) < 0) {
-		Machine::machine_exception("KVM_GET_REGS failed", errno);
-	}
-	regs = from_kvm_regs(kregs);
+	regs = get_arm64_regs(this->fd);
 	return regs;
 }
 
 tinykvm_regs& vCPU::registers()
 {
 	static thread_local tinykvm_arm64regs regs;
-	struct kvm_regs kregs {};
-	if (ioctl(this->fd, KVM_GET_REGS, &kregs) < 0) {
-		Machine::machine_exception("KVM_GET_REGS failed", errno);
-	}
-	regs = from_kvm_regs(kregs);
+	regs = get_arm64_regs(this->fd);
 	return regs;
 }
 
 void vCPU::set_registers(const struct tinykvm_regs& regs)
 {
-	struct kvm_regs kregs = to_kvm_regs(regs);
-	if (ioctl(this->fd, KVM_SET_REGS, &kregs) < 0) {
-		Machine::machine_exception("KVM_SET_REGS failed", errno);
-	}
+	set_arm64_regs(this->fd, regs);
 }
 
 tinykvm_fpuregs vCPU::fpu_registers() const

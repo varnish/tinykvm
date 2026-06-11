@@ -53,6 +53,9 @@ else()
 endif()
 
 add_library(tinykvm STATIC ${SOURCES})
+target_compile_definitions(tinykvm PUBLIC
+	TINYKVM_ARCH_${TINYKVM_ARCH}=1
+	TINYKVM_ARCH="${TINYKVM_ARCH}")
 target_compile_definitions(tinykvm PUBLIC _GNU_SOURCE=1)
 target_include_directories(tinykvm PUBLIC .)
 target_compile_features(tinykvm PUBLIC cxx_std_20)

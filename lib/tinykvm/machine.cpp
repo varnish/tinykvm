@@ -1,10 +1,14 @@
 #include "machine.hpp"
 
+#if defined(TINYKVM_ARCH_ARM64)
+#include "arm64/memory_layout.hpp"
+#endif
 #include "linux/threads.hpp"
 #include "smp.hpp"
 #include "util/scoped_profiler.hpp"
 #include "util/threadpool.h"
 #include <cassert>
+#include <cerrno>
 #include <cstring>
 #include <fcntl.h>
 #include <linux/kvm.h>
@@ -43,6 +47,13 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	}
 
 	this->fd = create_kvm_vm();
+
+#if defined(TINYKVM_ARCH_ARM64)
+	if (memory.within(ARM64_STOP_MMIO_ADDR, vMemory::PageSize())) {
+		throw MachineException("ARM64 stop MMIO address overlaps guest RAM",
+			ARM64_STOP_MMIO_ADDR);
+	}
+#endif
 
 	install_memory(0, memory.vmem(), false);
 
@@ -85,9 +96,11 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->set_registers(regs);
 }
 Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
-	: Machine(std::string_view{(const char*)&bin[0], bin.size()}, opts) {}
+	: Machine(bin.empty() ? std::string_view{} :
+		std::string_view{(const char*)bin.data(), bin.size()}, opts) {}
 Machine::Machine(std::span<const uint8_t> bin, const MachineOptions& opts)
-	: Machine(std::string_view{(const char*)bin.data(), bin.size()}, opts) {}
+	: Machine(bin.empty() ? std::string_view{} :
+		std::string_view{(const char*)bin.data(), bin.size()}, opts) {}
 
 Machine::Machine(const Machine& other, const MachineOptions& options)
 	: m_prepped {false},
@@ -421,9 +434,15 @@ void Machine::init()
 __attribute__ ((cold))
 int Machine::create_kvm_vm()
 {
-	int fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
+#if defined(TINYKVM_ARCH_ARM64)
+	const int ipa_size = ioctl(kvm_fd, KVM_CHECK_EXTENSION, KVM_CAP_ARM_VM_IPA_SIZE);
+	const unsigned long vm_type = ipa_size > 0 ? KVM_VM_TYPE_ARM_IPA_SIZE(ipa_size) : 0;
+#else
+	const unsigned long vm_type = 0;
+#endif
+	int fd = ioctl(kvm_fd, KVM_CREATE_VM, vm_type);
 	if (UNLIKELY(fd < 0)) {
-		machine_exception("Failed to KVM_CREATE_VM. Is your user in the 'kvm' group?");
+		machine_exception("Failed to KVM_CREATE_VM", errno);
 	}
 
 	/*if (ioctl(fd, KVM_SET_TSS_ADDR, 0xffffd000) < 0) {
