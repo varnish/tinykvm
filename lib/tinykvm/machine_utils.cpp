@@ -6,7 +6,9 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
+#ifdef TINYKVM_ARCH_AMD64
 #include "amd64/paging.hpp"
+#endif
 #include "util/scoped_profiler.hpp"
 static constexpr bool VERBOSE_FILE_BACKED_MMAP = false;
 
@@ -14,6 +16,10 @@ namespace tinykvm {
 
 void Machine::memzero(address_t addr, size_t len)
 {
+#ifndef TINYKVM_ARCH_AMD64
+	std::memset(memory.safely_at(addr, len), 0, len);
+	return;
+#else
 	while (len != 0)
 	{
 		const size_t offset = addr & PageMask();
@@ -37,10 +43,19 @@ void Machine::memzero(address_t addr, size_t len)
 		addr += size;
 		len -= size;
 	}
+#endif
 }
 
 void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool zeroes)
 {
+#ifndef TINYKVM_ARCH_AMD64
+	if (zeroes) {
+		std::memset(memory.safely_at(addr, len), 0, len);
+	} else {
+		std::memcpy(memory.safely_at(addr, len), vsrc, len);
+	}
+	return;
+#else
 	auto* src = (const uint8_t *)vsrc;
 	while (len != 0)
 	{
@@ -62,6 +77,7 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 		src += size;
 		len -= size;
 	}
+#endif
 }
 
 void Machine::copy_from_guest(void* vdst, address_t addr, size_t len) const
@@ -165,6 +181,10 @@ size_t Machine::gather_buffers_from_range(
 size_t Machine::writable_buffers_from_range(
 	std::vector<WrBuffer>& buffers, address_t addr, size_t len)
 {
+#ifndef TINYKVM_ARCH_AMD64
+	buffers.push_back({memory.safely_at(addr, len), len});
+	return 1;
+#else
 	WrBuffer* last = nullptr;
 	while (len != 0)
 	{
@@ -200,12 +220,17 @@ size_t Machine::writable_buffers_from_range(
 		len -= size;
 	}
 	return buffers.size();
+#endif
 }
 
 bool Machine::mmap_backed_area(
 	int fd, int off, int prot, address_t virt_base, size_t size_bytes)
 {
+#ifdef TINYKVM_ARCH_AMD64
 	static constexpr bool MANUAL_PREADV = false;
+#else
+	static constexpr bool MANUAL_PREADV = true;
+#endif
 	ScopedProfiler<MachineProfiling::MMapFiles> prof(profiling());
 	address_t& mmap_phys_base = memory.mmap_physical;
 
@@ -265,13 +290,22 @@ bool Machine::mmap_backed_area(
 		}
 	}
 
-	const address_t size_memory = size & ~0x1FFFFFLL; // Align *DOWN* to 2MB
+	const address_t size_memory =
+#ifdef TINYKVM_ARCH_AMD64
+		size & ~0x1FFFFFLL; // Align *DOWN* to 2MB
+#else
+		0;
+#endif
 	if constexpr (VERBOSE_FILE_BACKED_MMAP) {
 		printf("mmap: allocating %zu bytes at 0x%lX -> 0x%lX (0x%lX) offset %d\n",
 			   size_t(size_memory), virt_base, virt_base + size_memory, virt_base + size, off);
 	}
 
 	if (size_memory > 0) {
+#ifndef TINYKVM_ARCH_AMD64
+		(void)prot;
+		return false;
+#else
 		void* real_addr = nullptr;
 		if constexpr (!MANUAL_PREADV) {
 			real_addr = mmap(nullptr, size_memory, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, off);
@@ -345,6 +379,7 @@ bool Machine::mmap_backed_area(
 		mmap_phys_base += size_memory;
 		// Force-align mmap_phys_base to 2MB
 		mmap_phys_base = (mmap_phys_base + 0x1FFFFFLL) & ~0x1FFFFFLL;
+#endif
 	} // size_memory > 0
 
 	if constexpr (MANUAL_PREADV) {

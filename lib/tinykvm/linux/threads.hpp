@@ -11,12 +11,12 @@ namespace tinykvm {
 struct Thread {
 	struct MultiThreading& mt;
 	const int tid;
-	struct tinykvm_x86regs stored_regs;
+	struct tinykvm_regs stored_regs;
 	uint64_t fsbase;
 	uint64_t clear_tid;
 
 	void suspend(uint64_t rv);
-	struct tinykvm_x86regs activate();
+	struct tinykvm_regs activate();
 	void resume();
 	void exit();
 

@@ -128,9 +128,9 @@ struct Machine
 	long step_one();
 	long run_with_breakpoints(std::array<uint64_t, 4> bps);
 
-	tinykvm_x86regs& registers();
-	const tinykvm_x86regs& registers() const;
-	void set_registers(const tinykvm_x86regs&);
+	tinykvm_regs& registers();
+	const tinykvm_regs& registers() const;
+	void set_registers(const tinykvm_regs&);
 	tinykvm_fpuregs fpu_registers() const;
 	void set_fpu_registers(const tinykvm_fpuregs&);
 	const kvm_sregs& get_special_registers() const;
@@ -238,8 +238,8 @@ struct Machine
 	size_t banked_memory_capacity_bytes() const noexcept { return banked_memory_capacity_pages() * vMemory::PageSize(); }
 
 	template <typename... Args> constexpr
-	void setup_call(tinykvm_x86regs&, uint64_t addr, uint64_t rsp, Args&&... args);
-	void setup_clone(tinykvm_x86regs&, address_t stack);
+	void setup_call(tinykvm_regs&, uint64_t addr, uint64_t rsp, Args&&... args);
+	void setup_clone(tinykvm_regs&, address_t stack);
 	/* Make VM copy-on-write in order to support fast forking.
 	   When @max_work_mem is non-zero, the master VM can still
 	   be used after preparation. */
@@ -318,7 +318,7 @@ struct Machine
 	~Machine();
 
 private:
-	void setup_registers(tinykvm_x86regs &);
+	void setup_registers(tinykvm_regs &);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void elf_loader(std::string_view binary, const MachineOptions&);

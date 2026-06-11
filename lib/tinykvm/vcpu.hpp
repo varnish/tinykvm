@@ -12,9 +12,9 @@ namespace tinykvm
 		void init(int id, Machine&, const MachineOptions&);
 		void smp_init(int id, Machine &);
 		void deinit();
-		tinykvm_x86regs& registers();
-		const tinykvm_x86regs& registers() const;
-		void set_registers(const struct tinykvm_x86regs &);
+		tinykvm_regs& registers();
+		const tinykvm_regs& registers() const;
+		void set_registers(const struct tinykvm_regs &);
 		tinykvm_fpuregs fpu_registers() const;
 		void set_fpu_registers(const struct tinykvm_fpuregs &);
 		const struct kvm_sregs& get_special_registers() const;

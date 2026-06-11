@@ -335,15 +335,25 @@ uint64_t Machine::translate(uint64_t virt) const
 
 void Machine::setup_registers(tinykvm_regs& regs)
 {
+#if defined(TINYKVM_ARCH_AMD64)
 	/* Set IOPL=3 to allow I/O instructions, IF *NOT* enabled */
 	regs.rflags = 2 | (3 << 12); // IF: 0x200
 	regs.rip = this->start_address();
 	regs.rsp = this->stack_address();
+#elif defined(TINYKVM_ARCH_ARM64)
+	regs.pc = this->start_address();
+	regs.sp = this->stack_address();
+	regs.pstate = 0x3c5;
+#endif
 }
 
 long Machine::return_value() const
 {
+#if defined(TINYKVM_ARCH_AMD64)
 	return registers().rdi;
+#elif defined(TINYKVM_ARCH_ARM64)
+	return registers().regs[0];
+#endif
 }
 
 void Machine::print(const char* buffer, size_t len)

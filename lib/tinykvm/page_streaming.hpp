@@ -12,8 +12,11 @@ namespace tinykvm {
 #else
 	inline void page_duplicate(uint64_t* dest, const uint64_t* source)
 	{
-		//std::memcpy(dest, source, 4096);
+#ifdef TINYKVM_ARCH_AMD64
 		avx2_page_duplicate(dest, source);
+#else
+		std::memcpy(dest, source, 4096);
+#endif
 	}
 
 	inline void page_memzero(uint64_t* dest)

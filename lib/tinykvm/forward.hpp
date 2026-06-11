@@ -40,6 +40,17 @@ struct tinykvm_x86fpuregs {
 
 #elif defined(TINYKVM_ARCH_ARM64)
 
+struct tinykvm_arm64regs {
+	__u64 regs[31];
+	__u64 sp;
+	__u64 pc;
+	__u64 pstate;
+};
+
+struct tinykvm_arm64fpuregs {
+	__u8 storage[528];
+};
+
 #define tinykvm_regs    tinykvm_arm64regs
 #define tinykvm_fpuregs tinykvm_arm64fpuregs
 

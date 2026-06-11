@@ -20,7 +20,7 @@ namespace tinykvm
 			address_t array, uint32_t array_item_size);
 		void timed_smpcall_clone(size_t num_cpus,
 			address_t stack_base, uint32_t stack_size,
-			float timeout, const tinykvm_x86regs& regs);
+			float timeout, const tinykvm_regs& regs);
 
 		int smp_active() const noexcept { return m_smp_active; }
 		void wait();
@@ -36,7 +36,7 @@ namespace tinykvm
 		{
 			vCPU* vcpu = nullptr;
 			uint32_t ticks = 0;
-			struct tinykvm_x86regs regs;
+			struct tinykvm_regs regs;
 		};
 		struct MPvCPU
 		{

@@ -28,7 +28,7 @@ struct SignalAction {
 };
 
 struct SignalReturn {
-	tinykvm_x86regs regs;
+	tinykvm_regs regs;
 };
 
 struct SignalPerThread {

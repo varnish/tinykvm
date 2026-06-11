@@ -20,27 +20,29 @@ target_compile_definitions(tinykvm PUBLIC
 	TINYKVM_ARCH_${TINYKVM_ARCH}=1
 	TINYKVM_ARCH="${TINYKVM_ARCH}")
 
-add_executable(bench
-	src/bench.cpp
-)
-target_link_libraries(bench tinykvm)
+if (TINYKVM_ARCH STREQUAL "AMD64")
+	add_executable(bench
+		src/bench.cpp
+	)
+	target_link_libraries(bench tinykvm)
 
-add_executable(tinytest
-	src/tests.cpp
-)
-target_link_libraries(tinytest tinykvm)
+	add_executable(tinytest
+		src/tests.cpp
+	)
+	target_link_libraries(tinytest tinykvm)
 
-add_executable(simplekvm
-	src/simple.cpp
-)
-target_link_libraries(simplekvm tinykvm)
+	add_executable(simplekvm
+		src/simple.cpp
+	)
+	target_link_libraries(simplekvm tinykvm)
 
-add_executable(storagekvm
-	src/storage.cpp
-)
-target_link_libraries(storagekvm tinykvm)
+	add_executable(storagekvm
+		src/storage.cpp
+	)
+	target_link_libraries(storagekvm tinykvm)
 
-add_executable(pipekvm
-	src/pipe.cpp
-)
-target_link_libraries(pipekvm tinykvm)
+	add_executable(pipekvm
+		src/pipe.cpp
+	)
+	target_link_libraries(pipekvm tinykvm)
+endif()

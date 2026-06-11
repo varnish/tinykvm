@@ -24,13 +24,13 @@ inline void Machine::system_call(vCPU& cpu, unsigned idx)
 	m_unhandled_syscall(cpu, idx);
 }
 
-inline tinykvm_x86regs& Machine::registers() {
+inline tinykvm_regs& Machine::registers() {
 	return vcpu.registers();
 }
-inline const tinykvm_x86regs& Machine::registers() const {
+inline const tinykvm_regs& Machine::registers() const {
 	return vcpu.registers();
 }
-inline void Machine::set_registers(const tinykvm_x86regs& regs) {
+inline void Machine::set_registers(const tinykvm_regs& regs) {
 	vcpu.set_registers(regs);
 }
 inline tinykvm_fpuregs Machine::fpu_registers() const {
@@ -48,11 +48,12 @@ inline void Machine::set_special_registers(const struct kvm_sregs& sregs) {
 
 
 template <typename... Args> inline constexpr
-void Machine::setup_call(tinykvm_x86regs& regs,
+void Machine::setup_call(tinykvm_regs& regs,
 	uint64_t addr, uint64_t rsp,
 	Args&&... args)
 {
 	regs = {};
+#if defined(TINYKVM_ARCH_AMD64)
 	/* Set IOPL=3 to allow I/O instructions in usermode */
 	regs.rflags = 2 | (3 << 12);
 	if (this->m_just_reset) {
@@ -103,6 +104,32 @@ void Machine::setup_call(tinykvm_x86regs& regs,
 	stack_push<uint64_t> (regs.rsp, exit_address());
 	/* VM needs to be in user-mode to make a vmcall. */
 	this->enter_usermode();
+#elif defined(TINYKVM_ARCH_ARM64)
+	regs.pc = addr;
+	regs.sp = rsp & ~0xFULL;
+	regs.pstate = 0x3c5;
+	[[maybe_unused]] unsigned iargs = 0;
+	([&] {
+		if (iargs >= 8)
+			throw MachineException("Too many vmcall arguments");
+		auto& reg = regs.regs[iargs];
+		if constexpr (std::is_integral_v<std::remove_cvref_t<Args>>) {
+			reg = args;
+			iargs ++;
+		} else if constexpr (is_stdstring<Args>::value) {
+			reg = stack_push(regs.sp, args.c_str(), args.size()+1);
+			iargs ++;
+		} else if constexpr (is_string<Args>::value) {
+			reg = stack_push_cstr(regs.sp, args);
+			iargs ++;
+		} else if constexpr (std::is_pod_v<std::remove_reference<Args>>) {
+			reg = stack_push(regs.sp, args);
+			iargs ++;
+		} else {
+			static_assert(always_false<decltype(args)>, "Unknown vmcall argument type");
+		}
+	}(), ...);
+#endif
 }
 
 inline void Machine::vmresume(float timeout)
@@ -119,6 +146,7 @@ inline void Machine::vmresume(float timeout)
 
 inline void Machine::prepare_vmresume(address_t fsbase, bool reload_pagetables)
 {
+#if defined(TINYKVM_ARCH_AMD64)
 	auto& regs = vcpu.registers();
 	struct PreservedRegisters
 	{
@@ -140,16 +168,27 @@ inline void Machine::prepare_vmresume(address_t fsbase, bool reload_pagetables)
 	regs.rax = (reload_pagetables) ? 0x1F777 : 0x1F707; // ENTRY/REENTRY SYSCALL
 	regs.rip = this->preserving_entry_address();
 	vcpu.set_registers(regs);
+#else
+	(void)fsbase;
+	(void)reload_pagetables;
+	throw MachineException("vmresume is not implemented on ARM64");
+#endif
 }
 
-inline void Machine::setup_clone(tinykvm_x86regs& regs, address_t stack)
+inline void Machine::setup_clone(tinykvm_regs& regs, address_t stack)
 {
+#if defined(TINYKVM_ARCH_AMD64)
 	/* Set IOPL=3 to allow I/O instructions */
 	regs.rflags = 2 | (3 << 12);
 	regs.r15 = regs.rip;
 	regs.rip = this->entry_address();
 	regs.rbp = 0;
 	regs.rsp = stack;
+#else
+	regs.sp = stack;
+	regs.pc = this->entry_address();
+	regs.pstate = 0x3c5;
+#endif
 }
 
 template <typename... Args> inline constexpr

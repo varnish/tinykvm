@@ -162,6 +162,12 @@ void vMemory::record_cow_leaf_user_page(uint64_t addr)
 
 bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 {
+#ifndef TINYKVM_ARCH_AMD64
+	(void)main_vm;
+	banks.reset(options);
+	cow_written_pages.clear();
+	return true;
+#else
 	if (options.reset_keep_all_work_memory) {
 		// With this method, instead of resetting the memory banks,
 		// and the pagetables, which requires an expensive mov cr3,
@@ -212,6 +218,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 	banks.reset(options);
 	cow_written_pages.clear();
 	return true;
+#endif
 }
 void vMemory::fork_reset(const vMemory& other, const MachineOptions& options)
 {
@@ -481,17 +488,30 @@ MemoryBank::Page vMemory::new_hugepage()
 
 size_t vMemory::merge_leaf_pages_into_hugepages()
 {
+#ifdef TINYKVM_ARCH_AMD64
 	return paging_merge_leaf_pages_into_hugepages(*this);
+#else
+	return 0;
+#endif
 }
 
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, bool dirty)
 {
+	(void)flags;
+	(void)dirty;
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
 	if (machine.has_remote() && machine.is_foreign_address(addr)) {
 		// When connected to a remote VM, we can access the remote kernel memory
 		return machine.remote().main_memory().get_writable_page(addr, flags, zeroes, dirty);
 	}
 
+#ifndef TINYKVM_ARCH_AMD64
+	auto* page = safely_at(addr, PAGE_SIZE);
+	if (zeroes) {
+		std::memset(page, 0, PAGE_SIZE);
+	}
+	return page;
+#else
 	WritablePageOptions zero_opts;
 	zero_opts.zeroes = zeroes;
 	auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
@@ -499,6 +519,7 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, boo
 		writable_page.set_dirty();
 	}
 	return writable_page.page;
+#endif
 }
 
 char* vMemory::get_kernelpage_at(uint64_t addr) const
@@ -511,7 +532,7 @@ char* vMemory::get_kernelpage_at(uint64_t addr) const
 	constexpr uint64_t flags = PDE64_PRESENT;
 	return readable_page_at(*this, addr, flags);
 #else
-#error "Implement me!"
+	return const_cast<char*>(safely_at(addr, PAGE_SIZE));
 #endif
 }
 
@@ -525,13 +546,17 @@ char* vMemory::get_userpage_at(uint64_t addr) const
 	constexpr uint64_t flags = PDE64_PRESENT | PDE64_USER;
 	return readable_page_at(*this, addr, flags);
 #else
-#error "Implement me!"
+	return const_cast<char*>(safely_at(addr, PAGE_SIZE));
 #endif
 }
 
 std::vector<std::pair<uint64_t, uint64_t>> Machine::get_accessed_pages() const
 {
+#ifdef TINYKVM_ARCH_AMD64
 	return tinykvm::get_accessed_pages(this->main_memory());
+#else
+	return {};
+#endif
 }
 size_t Machine::banked_memory_pages() const noexcept
 {
@@ -575,6 +600,9 @@ void vMemory::increment_unlocked_pages(size_t pages)
 
 MemoryBank::Page vMemory::allocate_unmapped_kernelpage()
 {
+#ifndef TINYKVM_ARCH_AMD64
+	memory_exception("Unmapped kernel pages are not implemented on ARM64", 0, 0);
+#else
 	if (this->machine.is_forked()) {
 		// It's too dangerous as forked VMs may have active
 		// TLB entries that user memory mappings that will
@@ -613,14 +641,19 @@ MemoryBank::Page vMemory::allocate_unmapped_kernelpage()
 	}
 	//printf("*** Allocated unmapped kernel page at 0x%lX\n", result.addr);
 	return result;
+#endif
 }
 
 uint64_t vMemory::expectedUsermodeFlags() const noexcept
 {
+#ifndef TINYKVM_ARCH_AMD64
+	return 0;
+#else
 	uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
 	if (!this->executable_heap)
 		flags |= PDE64_NX;
 	return flags;
+#endif
 }
 
 } // namespace tinykvm
