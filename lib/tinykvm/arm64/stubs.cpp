@@ -4,32 +4,6 @@
 
 namespace tinykvm {
 
-void Machine::setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&)
-{
-	throw MachineException("Linux argv setup is not implemented on ARM64");
-}
-
-void Machine::setup_argv(const std::vector<std::string>&, const std::vector<std::string>&)
-{
-	throw MachineException("Linux argv setup is not implemented on ARM64");
-}
-
-void Machine::setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&)
-{
-	throw MachineException("Linux process setup is not implemented on ARM64");
-}
-
-void Machine::setup_linux(const std::vector<std::string>&, const std::vector<std::string>&)
-{
-	throw MachineException("Linux process setup is not implemented on ARM64");
-}
-
-void Machine::setup_linux_system_calls(bool)
-{
-	/* Machine::init() installs syscall handlers globally. Raw ARM64 guests
-	   need init to succeed, but Linux syscall emulation is not implemented. */
-}
-
 bool Machine::load_snapshot_state()
 {
 	return false;
@@ -287,7 +261,8 @@ MultiThreading& Machine::threads()
 
 void Machine::setup_multithreading()
 {
-	throw MachineException("Guest threading is not implemented on ARM64");
+	/* Syscall table installation must succeed on ARM64; actual guest thread
+	   operations still throw from the stubs above if reached. */
 }
 
 Signals::Signals() = default;

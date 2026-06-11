@@ -108,6 +108,7 @@ void Machine::setup_call(tinykvm_regs& regs,
 	regs.pc = addr;
 	regs.sp = rsp & ~0xFULL;
 	regs.pstate = 0x3c5;
+	regs.regs[30] = exit_address();
 	[[maybe_unused]] unsigned iargs = 0;
 	([&] {
 		if (iargs >= 8)

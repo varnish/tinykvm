@@ -15,6 +15,10 @@ namespace tinykvm
 		tinykvm_regs& registers();
 		const tinykvm_regs& registers() const;
 		void set_registers(const struct tinykvm_regs &);
+#if defined(TINYKVM_ARCH_ARM64)
+		void flush_registers() const;
+		void invalidate_register_cache() const;
+#endif
 		tinykvm_fpuregs fpu_registers() const;
 		void set_fpu_registers(const struct tinykvm_fpuregs &);
 		const struct kvm_sregs& get_special_registers() const;
@@ -32,7 +36,7 @@ namespace tinykvm
 		void enter_usermode();
 
 		void print_registers() const;
-		void handle_exception(uint8_t intr);
+		void handle_exception(uint64_t intr);
 		unsigned exception_extra_offset(uint8_t intr);
 		void decrement_smp_count();
 
@@ -63,6 +67,11 @@ namespace tinykvm
 		struct kvm_run* kvm_run = nullptr;
 		Machine* m_machine = nullptr;
 		Machine* m_original_machine = nullptr;
+#if defined(TINYKVM_ARCH_ARM64)
+		mutable tinykvm_regs m_cached_regs {};
+		mutable bool m_regs_cached = false;
+		mutable bool m_regs_dirty = false;
+#endif
 
 		uint64_t vcpu_table_addr() const noexcept;
 	};

@@ -49,11 +49,8 @@ void Machine::memzero(address_t addr, size_t len)
 void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool zeroes)
 {
 #ifndef TINYKVM_ARCH_AMD64
-	if (zeroes) {
-		std::memset(memory.safely_at(addr, len), 0, len);
-	} else {
-		std::memcpy(memory.safely_at(addr, len), vsrc, len);
-	}
+	(void)zeroes;
+	std::memcpy(memory.safely_at(addr, len), vsrc, len);
 	return;
 #else
 	auto* src = (const uint8_t *)vsrc;

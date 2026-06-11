@@ -46,6 +46,9 @@ if (TINYKVM_ARCH STREQUAL "AMD64")
 	)
 else()
 	list(APPEND SOURCES
+		tinykvm/machine_env.cpp
+		tinykvm/linux/system_calls.cpp
+		tinykvm/arm64/paging.cpp
 		tinykvm/arm64/vcpu.cpp
 		tinykvm/arm64/vcpu_run.cpp
 		tinykvm/arm64/stubs.cpp

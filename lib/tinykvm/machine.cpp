@@ -53,6 +53,14 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 		throw MachineException("ARM64 stop MMIO address overlaps guest RAM",
 			ARM64_STOP_MMIO_ADDR);
 	}
+	if (memory.within(ARM64_SYSCALL_MMIO_ADDR, vMemory::PageSize())) {
+		throw MachineException("ARM64 syscall MMIO address overlaps guest RAM",
+			ARM64_SYSCALL_MMIO_ADDR);
+	}
+	if (memory.within(ARM64_FATAL_MMIO_ADDR, vMemory::PageSize())) {
+		throw MachineException("ARM64 fatal MMIO address overlaps guest RAM",
+			ARM64_FATAL_MMIO_ADDR);
+	}
 #endif
 
 	install_memory(0, memory.vmem(), false);

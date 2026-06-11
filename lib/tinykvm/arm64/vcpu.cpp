@@ -1,5 +1,7 @@
 #include "../machine.hpp"
 
+#include "memory_layout.hpp"
+#include "paging.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -142,6 +144,16 @@ static void set_one_reg(int fd, uint64_t id, uint64_t value)
 	}
 }
 
+static uint64_t sys_reg_id(unsigned op0, unsigned op1, unsigned crn, unsigned crm, unsigned op2)
+{
+	return KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM64_SYSREG
+		| (((uint64_t)op0 << KVM_REG_ARM64_SYSREG_OP0_SHIFT) & KVM_REG_ARM64_SYSREG_OP0_MASK)
+		| (((uint64_t)op1 << KVM_REG_ARM64_SYSREG_OP1_SHIFT) & KVM_REG_ARM64_SYSREG_OP1_MASK)
+		| (((uint64_t)crn << KVM_REG_ARM64_SYSREG_CRN_SHIFT) & KVM_REG_ARM64_SYSREG_CRN_MASK)
+		| (((uint64_t)crm << KVM_REG_ARM64_SYSREG_CRM_SHIFT) & KVM_REG_ARM64_SYSREG_CRM_MASK)
+		| (((uint64_t)op2 << KVM_REG_ARM64_SYSREG_OP2_SHIFT) & KVM_REG_ARM64_SYSREG_OP2_MASK);
+}
+
 static tinykvm_arm64regs get_arm64_regs(int fd)
 {
 	tinykvm_arm64regs regs {};
@@ -172,21 +184,42 @@ static void set_arm64_regs(int fd, const tinykvm_arm64regs& regs)
 
 const tinykvm_regs& vCPU::registers() const
 {
-	static thread_local tinykvm_arm64regs regs;
-	regs = get_arm64_regs(this->fd);
-	return regs;
+	if (!m_regs_cached) {
+		m_cached_regs = get_arm64_regs(this->fd);
+		m_regs_cached = true;
+	}
+	return m_cached_regs;
 }
 
 tinykvm_regs& vCPU::registers()
 {
-	static thread_local tinykvm_arm64regs regs;
-	regs = get_arm64_regs(this->fd);
-	return regs;
+	if (!m_regs_cached) {
+		m_cached_regs = get_arm64_regs(this->fd);
+		m_regs_cached = true;
+	}
+	m_regs_dirty = true;
+	return m_cached_regs;
 }
 
 void vCPU::set_registers(const struct tinykvm_regs& regs)
 {
-	set_arm64_regs(this->fd, regs);
+	m_cached_regs = regs;
+	m_regs_cached = true;
+	m_regs_dirty = true;
+}
+
+void vCPU::flush_registers() const
+{
+	if (m_regs_cached && m_regs_dirty) {
+		set_arm64_regs(this->fd, m_cached_regs);
+		m_regs_dirty = false;
+	}
+}
+
+void vCPU::invalidate_register_cache() const
+{
+	m_regs_cached = false;
+	m_regs_dirty = false;
 }
 
 tinykvm_fpuregs vCPU::fpu_registers() const
@@ -221,7 +254,8 @@ std::string_view vCPU::io_data() const
 
 void Machine::setup_long_mode(const MachineOptions&)
 {
-	this->m_kernel_end = 0;
+	arm64_setup_el1_mmu(*this, this->vcpu);
+	this->m_kernel_end = PT_ADDR + PT_SIZE;
 }
 
 std::pair<__u64, __u64> Machine::get_fsgs() const
@@ -229,9 +263,10 @@ std::pair<__u64, __u64> Machine::get_fsgs() const
 	return {0, 0};
 }
 
-void Machine::set_tls_base(__u64)
+void Machine::set_tls_base(__u64 baseaddr)
 {
-	throw MachineException("TLS base setup is not implemented on ARM64");
+	const uint64_t TPIDR_EL0 = sys_reg_id(3, 3, 13, 0, 2);
+	set_one_reg(this->vcpu.fd, TPIDR_EL0, baseaddr);
 }
 
 uint64_t vCPU::vcpu_table_addr() const noexcept
@@ -289,7 +324,7 @@ Machine::address_t Machine::preserving_entry_address() const noexcept {
 	return start_address();
 }
 Machine::address_t Machine::exit_address() const noexcept {
-	return 0;
+	return RET_STOP_ADDR;
 }
 
 } // namespace tinykvm

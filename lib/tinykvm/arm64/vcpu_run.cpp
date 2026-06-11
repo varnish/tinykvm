@@ -28,25 +28,27 @@ void tinykvm_timer_signal_handler(int sig) {
 namespace tinykvm {
 static constexpr bool VERBOSE_TIMER = false;
 
-static uint64_t core_reg_id(uint64_t reg)
+static uint64_t sys_reg_id(unsigned op0, unsigned op1, unsigned crn, unsigned crm, unsigned op2)
 {
-	return KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | reg;
+	return KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM64_SYSREG
+		| (((uint64_t)op0 << KVM_REG_ARM64_SYSREG_OP0_SHIFT) & KVM_REG_ARM64_SYSREG_OP0_MASK)
+		| (((uint64_t)op1 << KVM_REG_ARM64_SYSREG_OP1_SHIFT) & KVM_REG_ARM64_SYSREG_OP1_MASK)
+		| (((uint64_t)crn << KVM_REG_ARM64_SYSREG_CRN_SHIFT) & KVM_REG_ARM64_SYSREG_CRN_MASK)
+		| (((uint64_t)crm << KVM_REG_ARM64_SYSREG_CRM_SHIFT) & KVM_REG_ARM64_SYSREG_CRM_MASK)
+		| (((uint64_t)op2 << KVM_REG_ARM64_SYSREG_OP2_SHIFT) & KVM_REG_ARM64_SYSREG_OP2_MASK);
 }
 
-static void advance_pc_one_instruction(int fd)
+static uint64_t get_sysreg(int fd, uint64_t id)
 {
-	__u64 pc = 0;
-	struct kvm_one_reg pc_reg {
-		.id = core_reg_id(KVM_REG_ARM_CORE_REG(regs.pc)),
-		.addr = (uint64_t)&pc,
+	uint64_t value = 0;
+	struct kvm_one_reg reg {
+		.id = id,
+		.addr = (uint64_t)&value,
 	};
-	if (ioctl(fd, KVM_GET_ONE_REG, &pc_reg) < 0) {
-		throw MachineException("KVM_GET_ONE_REG pc failed", errno);
+	if (ioctl(fd, KVM_GET_ONE_REG, &reg) < 0) {
+		throw MachineException("KVM_GET_ONE_REG sysreg failed", errno);
 	}
-	pc += 4;
-	if (ioctl(fd, KVM_SET_ONE_REG, &pc_reg) < 0) {
-		throw MachineException("KVM_SET_ONE_REG pc failed", errno);
-	}
+	return value;
 }
 
 bool vCPU::timed_out() const
@@ -105,7 +107,9 @@ long vCPU::run_once()
 	int result;
 	{
 		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());
+		this->flush_registers();
 		result = ioctl(this->fd, KVM_RUN, 0);
+		this->invalidate_register_cache();
 	}
 	if (UNLIKELY(result < 0)) {
 		if (this->timer_ticks) {
@@ -130,9 +134,38 @@ long vCPU::run_once()
 	case KVM_EXIT_MMIO:
 		if (kvm_run->mmio.phys_addr == ARM64_STOP_MMIO_ADDR
 			&& kvm_run->mmio.is_write) {
-			advance_pc_one_instruction(this->fd);
+			/* KVM advances the MMIO store on the next KVM_RUN entry. Do not
+			   advance here, or a later vmcall/resume can skip its first insn. */
+			this->invalidate_register_cache();
 			this->stopped = true;
 			return 0;
+		}
+		if (kvm_run->mmio.phys_addr == ARM64_SYSCALL_MMIO_ADDR
+			&& kvm_run->mmio.is_write) {
+			const uint64_t ESR_EL1 = sys_reg_id(3, 0, 5, 2, 0);
+			const uint64_t esr = get_sysreg(this->fd, ESR_EL1);
+			const uint8_t ec = esr >> 26;
+			if (ec != 0x15) {
+				handle_exception(ec);
+			}
+			const unsigned syscall =
+				(unsigned)*(const uint64_t*)kvm_run->mmio.data;
+			{
+				ScopedProfiler<MachineProfiling::Syscall> prof(machine().profiling());
+				machine().system_call(*this, syscall);
+			}
+			if (this->timer_ticks && this->timed_out()) {
+				Machine::timeout_exception("Timeout Exception", this->timer_ticks);
+			}
+			if (this->stopped) {
+				return 0;
+			}
+			return 1;
+		}
+		if (kvm_run->mmio.phys_addr >= ARM64_FATAL_MMIO_ADDR
+			&& kvm_run->mmio.phys_addr < ARM64_FATAL_MMIO_ADDR + 0x800
+			&& kvm_run->mmio.is_write) {
+			handle_exception(kvm_run->mmio.phys_addr - ARM64_FATAL_MMIO_ADDR);
 		}
 		Machine::machine_exception("Unhandled ARM64 MMIO exit", kvm_run->mmio.phys_addr);
 	case KVM_EXIT_FAIL_ENTRY:
@@ -174,10 +207,21 @@ void vCPU::print_registers() const
 }
 
 TINYKVM_COLD()
-void vCPU::handle_exception(uint8_t intr)
+void vCPU::handle_exception(uint64_t intr)
 {
+	const uint64_t ESR_EL1 = sys_reg_id(3, 0, 5, 2, 0);
+	const uint64_t FAR_EL1 = sys_reg_id(3, 0, 6, 0, 0);
+	const uint64_t ELR_EL1 = sys_reg_id(3, 0, 4, 0, 1);
+	const uint64_t esr = get_sysreg(this->fd, ESR_EL1);
+	const uint64_t far = get_sysreg(this->fd, FAR_EL1);
+	const uint64_t elr = get_sysreg(this->fd, ELR_EL1);
 	this->print_registers();
-	Machine::machine_exception("ARM64 exception handling is not implemented", intr);
+	const auto& printer = machine().m_printer;
+	char buffer[256];
+	PRINTER(printer, buffer, "ESR_EL1: 0x%016llX EC: 0x%02X FAR_EL1: 0x%016llX ELR_EL1: 0x%016llX\n",
+		(unsigned long long)esr, unsigned(esr >> 26),
+		(unsigned long long)far, (unsigned long long)elr);
+	Machine::machine_exception("Unhandled ARM64 guest exception", intr);
 }
 
 unsigned vCPU::exception_extra_offset(uint8_t)
