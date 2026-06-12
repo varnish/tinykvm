@@ -461,9 +461,18 @@ void Machine::dynamic_linking(std::string_view binary, const MachineOptions& opt
 {
 	(void)binary;
 	(void)options;
+#if defined(TINYKVM_ARCH_ARM64)
+	/* A glibc ET_DYN entered at its own entry point (ld.so, static-PIE)
+	   self-relocates during startup. RELR entries are "*addr += base" —
+	   not idempotent — so pre-applying them here would double-relocate
+	   once the guest applies them again (modern aarch64 ld.so carries
+	   DT_RELR). RELATIVE rela entries are absolute writes the guest
+	   redoes anyway. Leave all relocation to the guest. */
+#else
 	this->relocate_relr_section(".relr.dyn");
 	this->relocate_section(".rela.dyn", ".dynsym");
 	//this->relocate_section(".rela.plt", ".dynsym");
+#endif
 }
 
 }

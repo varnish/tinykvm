@@ -701,7 +701,9 @@ Signals::~Signals() = default;
 
 SignalAction& Signals::get(int sig)
 {
-	return signals.at(sig);
+	if (sig > 0)
+		return signals.at(sig - 1);
+	throw MachineException("Signal 0 invoked", sig);
 }
 
 void Signals::enter(vCPU&, int)

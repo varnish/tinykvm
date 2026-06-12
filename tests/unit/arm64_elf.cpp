@@ -5,10 +5,21 @@
 #include <tinykvm/machine.hpp>
 
 extern std::vector<uint8_t> build_and_load(const std::string& code);
+extern std::pair<std::string, std::vector<uint8_t>>
+	build_and_load_dynamic(const std::string& code, const std::string& args);
+extern std::vector<uint8_t> load_file(const std::string& filename);
 static const uint64_t MAX_MEMORY = 16ul << 20; /* 16MB */
 static const std::vector<std::string> env {
 	"LC_TYPE=C", "LC_ALL=C", "USER=root"
 };
+static const char* LD_LINUX = "/lib/ld-linux-aarch64.so.1";
+
+// The Machine only keeps a view of the binary, so the bytes must outlive it.
+static const std::vector<uint8_t>& ld_linux_binary()
+{
+	static const std::vector<uint8_t> binary = load_file(LD_LINUX);
+	return binary;
+}
 
 static void require_arm64_kvm()
 {
@@ -169,4 +180,100 @@ int main() {
 	fork.reset_to(master, options);
 	fork.vmcall("increment", 7);
 	REQUIRE(fork.return_value() == 1007);
+}
+
+TEST_CASE("ARM64 runs a dynamic ELF via the interpreter", "[arm64][elf]")
+{
+	require_arm64_kvm();
+	const auto [program, binary] = build_and_load_dynamic(R"M(
+#include <string.h>
+int main(int argc, char** argv) {
+	(void)argc;
+	if (strcmp(argv[1], "dynamic!") == 0)
+		return 666;
+	else
+		return -1;
+})M", "-fPIE -pie");
+
+	// Load the dynamic linker as the program, with the real program
+	// as its first argument — the same scheme the amd64 ELF tests use.
+	tinykvm::Machine machine { ld_linux_binary(), {
+		.max_mem = 64ul << 20,
+	} };
+	// Allow the dynamic linker to open the program and its libraries
+	machine.fds().set_open_readable_callback(
+		[] (std::string&) -> bool { return true; });
+	if (getenv("VERBOSE")) {
+		machine.set_verbose_system_calls(true);
+		machine.set_verbose_mmap_syscalls(true);
+	}
+	machine.setup_linux({LD_LINUX, program, "dynamic!"}, env);
+	machine.run(8.0f);
+
+	REQUIRE(machine.return_value() == 666);
+}
+
+TEST_CASE("ARM64 dynamic ELF stdio and heap work", "[arm64][elf]")
+{
+	require_arm64_kvm();
+	const auto [program, binary] = build_and_load_dynamic(R"M(
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+int main() {
+	char* buf = malloc(64);
+	if (!buf) return -1;
+	snprintf(buf, 64, "Hello %s World!", "Dynamic");
+	fputs(buf, stdout);
+	fflush(stdout);
+	free(buf);
+	return 666;
+})M", "-no-pie");
+
+	bool output_matches = false;
+	// A non-PIE dynamic executable must be mapped at its fixed link
+	// address (0x400000 here); move the heap/stack/mmap arena above it.
+	tinykvm::Machine machine { ld_linux_binary(), {
+		.max_mem = 64ul << 20,
+		.heap_address_hint = 16ul << 20,
+	} };
+	machine.fds().set_open_readable_callback(
+		[] (std::string&) -> bool { return true; });
+	machine.setup_linux({LD_LINUX, program}, env);
+	machine.set_printer([&] (const char* data, size_t size) {
+		std::string text{data, data + size};
+		output_matches = (text == "Hello Dynamic World!");
+	});
+	machine.run(8.0f);
+
+	REQUIRE(output_matches);
+	REQUIRE(machine.return_value() == 666);
+}
+
+TEST_CASE("ARM64 runs a dynamic Python guest", "[arm64][elf]")
+{
+	require_arm64_kvm();
+	if (access("/usr/bin/python3", R_OK) != 0) {
+		SKIP("python3 not available on this host");
+	}
+
+	std::string output;
+	tinykvm::Machine machine { ld_linux_binary(), {
+		.max_mem = 512ul << 20,
+	} };
+	machine.fds().set_open_readable_callback(
+		[] (std::string&) -> bool { return true; });
+	if (getenv("VERBOSE")) {
+		machine.set_verbose_system_calls(true);
+		machine.set_verbose_mmap_syscalls(true);
+	}
+	machine.setup_linux({LD_LINUX, "/usr/bin/python3", "-c",
+		"print('Hello Python World!')"}, env);
+	machine.set_printer([&] (const char* data, size_t size) {
+		output.append(data, size);
+	});
+	machine.run(16.0f);
+
+	REQUIRE(output == "Hello Python World!\n");
+	REQUIRE(machine.return_value() == 0);
 }

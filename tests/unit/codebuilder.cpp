@@ -12,6 +12,12 @@ std::string compile_command(const std::string& cc,
 {
 	return cc + " -O2 -static -std=c11 " + arguments + " -x c -o " + outfile + " " + codefile;
 }
+std::string compile_command_dynamic(const std::string& cc,
+	const std::string& outfile, const std::string& codefile,
+	const std::string& arguments)
+{
+	return cc + " -O2 -std=c11 " + arguments + " -x c -o " + outfile + " " + codefile;
+}
 std::string env_with_default(const char* var, const std::string& defval) {
 	std::string value = defval;
 	if (const char* envval = getenv(var); envval) value = std::string(envval);
@@ -38,7 +44,16 @@ std::vector<uint8_t> load_file(const std::string& filename)
 	return result;
 }
 
+static std::string build(const std::string& code, const std::string& compiler_args,
+	bool dynamic);
+
 std::string build(const std::string& code, const std::string& compiler_args)
+{
+	return build(code, compiler_args, false);
+}
+
+static std::string build(const std::string& code, const std::string& compiler_args,
+	bool dynamic)
 {
 	// Create temporary filenames for code and binary
 	char code_filename[64];
@@ -57,12 +72,15 @@ std::string build(const std::string& code, const std::string& compiler_args)
 	}
 	// Compile code to binary file
 	char bin_filename[256];
-	const uint32_t checksum = crc32(code.c_str(), code.size());
+	const std::string checksummed = code + compiler_args;
+	const uint32_t checksum = crc32(checksummed.c_str(), checksummed.size());
 	(void)snprintf(bin_filename, sizeof(bin_filename),
-		"/tmp/binary-%08X", checksum);
+		dynamic ? "/tmp/binary-dyn-%08X" : "/tmp/binary-%08X", checksum);
 
 	auto cc = env_with_default("CC", "gcc");
-	auto command = compile_command(cc, bin_filename, code_filename, compiler_args);
+	auto command = dynamic
+		? compile_command_dynamic(cc, bin_filename, code_filename, compiler_args)
+		: compile_command(cc, bin_filename, code_filename, compiler_args);
 	if constexpr (VERBOSE_COMPILER) {
 		printf("Command: %s\n", command.c_str());
 	}
@@ -87,5 +105,13 @@ std::pair<
 > build_and_load(const std::string& code, const std::string& args)
 {
 	const auto file = build(code, args);
+	return {file, load_file(file)};
+}
+std::pair<
+	std::string,
+	std::vector<uint8_t>
+> build_and_load_dynamic(const std::string& code, const std::string& args)
+{
+	const auto file = build(code, args, true);
 	return {file, load_file(file)};
 }

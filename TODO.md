@@ -43,10 +43,27 @@ Outstanding work on the `arm64` branch, in rough priority order.
   ELF functions, and forked CoW-isolated vmcalls — see `tests/unit/arm64_elf.cpp`
   (6 cases). Bench/reset numbers unchanged (~33 µs reset).
 
-- [ ] **ARM64 dynamic ELF (interpreter) path.** Needed for a real Python
-  "agents.py" guest: load `ld-linux-aarch64.so.1` with the program as argv,
-  as the amd64 `elf.cpp` tests do (`mmap_backed_files`, openat of guest
-  libraries). Untested on ARM64; likely needs mmap-range + protection work.
+- [x] **ARM64 dynamic ELF (interpreter) path — done.** `ld-linux-aarch64.so.1`
+  is loaded as the machine binary with the real program as argv, exactly like
+  the amd64 `elf.cpp` tests. The mmap/protection machinery was already
+  arch-clean (small files go through plain `preadv`); the real bugs were:
+  1. *RELR double-relocation.* `dynamic_linking` pre-applied `.relr.dyn`
+     (`*addr += base`, not idempotent) — but a glibc ET_DYN entered at its own
+     entry point self-relocates, and modern aarch64 ld.so carries `DT_RELR`,
+     so init_array/cpu_list pointers got `image_base` added twice → guest
+     crash. ARM64 now leaves all relocation to the guest
+     (`machine_elf.cpp`); the amd64 path is untouched.
+  2. *Signal-table off-by-one.* The arm64 `Signals::get` stub indexed
+     `at(sig)` instead of `at(sig-1)`, so CPython's rt_sigaction sweep
+     (signals 1..64) threw out of the host. Also `rt_sigaction` now returns
+     `-EINVAL` for sig > 64 (glibc `_NSIG` is 65) instead of crashing.
+  Non-PIE dynamic executables (this gcc's default!) need
+  `heap_address_hint` above the fixed link address, or ld.so's MAP_FIXED at
+  0x400000 collides with the mmap arena — covered by a test. End-to-end:
+  PIE + non-PIE C guests and a real `python3 -c "print(...)"` guest
+  (512 MB, stdout via printer, clean exit) — `tests/unit/arm64_elf.cpp`
+  (9 cases). `mmap_backed_files` (file-backed regions for >4 MB mmaps)
+  remains untested on ARM64.
 
 - [x] **Write-prefetch optimization (Option A) — done.** New
   `Machine::prefetch_pages(pages)` API (declared in `machine.hpp`, implemented

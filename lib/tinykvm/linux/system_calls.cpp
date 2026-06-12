@@ -562,6 +562,15 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					sig, g_act, g_oldact, regs.sysret());
 				return;
 			}
+			/* Out-of-range signals: the kernel only knows 1..64, but
+			   guests probe beyond that (glibc _NSIG is 65). */
+			if (sig < 0 || sig > 64) {
+				regs.sysret() = -EINVAL;
+				cpu.set_registers(regs);
+				SYSPRINT("rt_sigaction(signum=%x, act=0x%lX, oldact=0x%lx) = 0x%llX (EINVAL)\n",
+					sig, g_act, g_oldact, regs.sysret());
+				return;
+			}
 
 			auto& sigact = cpu.machine().sigaction(sig);
 
