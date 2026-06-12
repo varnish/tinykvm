@@ -25,6 +25,10 @@ static constexpr uint64_t DESC_PXN = 1ULL << 53;
 static constexpr uint64_t DESC_UXN = 1ULL << 54;
 static constexpr uint64_t DESC_DIRTY = 1ULL << 55;
 static constexpr uint64_t DESC_CLONEABLE = 1ULL << 56;
+// Software-defined "accessed since fork" bit, used only by get_accessed_pages().
+// Kept separate from DESC_DIRTY because DESC_DIRTY also signals "has content"
+// for copy-on-write (see cow_page), and so must not be reset at fork time.
+static constexpr uint64_t DESC_ACCESSED = 1ULL << 57;
 static constexpr uint64_t ATTR_NORMAL = 0ULL << 2;
 static constexpr uint64_t ATTR_DEVICE = 1ULL << 2;
 static constexpr uint64_t L1_BLOCK_SIZE = 1ULL << 30;
@@ -162,6 +166,14 @@ static void install_vectors(Machine& machine)
 		0xd69f03e0, // eret
 		0xd2be0009, // movz x9, #0xf000, lsl #16
 		0xf910013f, // str xzr, [x9, #0x2000 + vector]
+		// The host has rewritten the faulting stage-1 PTE (CoW). Invalidate the
+		// stale read-only translation for the faulting VA before retrying, or
+		// the eret below may re-fault on a cached entry and loop until timeout.
+		0xd5386009, // mrs x9, far_el1
+		0xd34cfd29, // lsr x9, x9, #12
+		0xd5088769, // tlbi vaae1, x9
+		0xd5033b9f, // dsb ish
+		0xd5033fdf, // isb
 		0xd538d089, // mrs x9, tpidr_el1
 		0xd69f03e0, // eret
 	};
@@ -180,6 +192,21 @@ static void install_vectors(Machine& machine)
 	};
 	std::memcpy(&vectors[(RET_STOP_ADDR - VECTORS_ADDR) / sizeof(uint32_t)],
 		return_stop, sizeof(return_stop));
+
+	// Stage-1 TLB entries survive a host-side TTBR0_EL1 write, so after the
+	// page tables are rebuilt (fork reset) the guest must invalidate them
+	// itself before resuming, or it keeps translating through recycled bank
+	// pages. Entered at EL1 by arm64_flush_guest_tlb().
+	const uint32_t tlb_flush[] {
+		0xd5033a9f, // dsb ishst (page-table writes visible to the walker)
+		0xd508831f, // tlbi vmalle1is
+		0xd5033b9f, // dsb ish
+		0xd5033fdf, // isb
+		0xd2be0009, // movz x9, #0xf000, lsl #16
+		0xf900013f, // str xzr, [x9] (STOP MMIO)
+	};
+	std::memcpy(&vectors[(TLB_FLUSH_ADDR - VECTORS_ADDR) / sizeof(uint32_t)],
+		tlb_flush, sizeof(tlb_flush));
 
 	std::memcpy(machine.unsafe_memory_at(VECTORS_ADDR, vectors.size() * sizeof(uint32_t)),
 		vectors.data(), vectors.size() * sizeof(uint32_t));
@@ -299,12 +326,23 @@ void foreach_page_makecow(vMemory& memory, uint64_t kernel_end,
 			&& is_writable(entry) && (entry & ATTR_DEVICE) != ATTR_DEVICE) {
 			entry |= DESC_AP_RO | DESC_CLONEABLE;
 		}
+		// Reset access tracking for all pages so get_accessed_pages() reports
+		// only the pages touched after this fork point.
+		entry &= ~DESC_ACCESSED;
 	});
 }
 
-std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages(const vMemory&)
+std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages(const vMemory& memory)
 {
-	return {};
+	std::vector<std::pair<uint64_t, uint64_t>> accessed_pages;
+	foreach_page(memory,
+	[&accessed_pages] (uint64_t addr, uint64_t& entry, size_t size) {
+		const unsigned level = size == L3_PAGE_SIZE ? 3 : (size == L2_BLOCK_SIZE ? 2 : 1);
+		if (is_leaf(entry, level) && (entry & DESC_ACCESSED)) {
+			accessed_pages.push_back({addr, size});
+		}
+	}, false);
+	return accessed_pages;
 }
 
 void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback, bool ignore_missing)
@@ -405,7 +443,9 @@ char* readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags)
 
 void WritablePage::set_dirty()
 {
-	entry |= DESC_DIRTY;
+	// A host/guest write is the only access signal we have (DESC_AF is always
+	// pre-set, so reads do not fault); record it for get_accessed_pages() too.
+	entry |= DESC_DIRTY | DESC_ACCESSED;
 }
 
 void WritablePage::set_protections(int prot)
@@ -424,9 +464,71 @@ void WritablePage::set_protections(int prot)
 		entry |= DESC_UXN | DESC_PXN;
 }
 
-size_t paging_merge_leaf_pages_into_hugepages(vMemory&, bool)
+size_t paging_merge_leaf_pages_into_hugepages(vMemory& memory, bool merge_if_dirty)
 {
-	return 0;
+	size_t merged_pages = 0;
+	auto* l1 = memory.page_at(memory.page_tables);
+
+	for (uint64_t i = 0; i < 512; i++) {
+		if (!is_valid(l1[i]) || is_leaf(l1[i], 1))
+			continue;
+
+		const uint64_t l2_mem = l1[i] & DESC_ADDR_MASK;
+		auto* l2 = memory.page_at(l2_mem);
+
+		for (uint64_t j = 0; j < 512; j++) {
+			if (!is_table(l2[j]))
+				continue;
+
+			const uint64_t l3_mem = l2[j] & DESC_ADDR_MASK;
+			auto* l3 = memory.page_at(l3_mem);
+
+			if (!is_leaf(l3[0], 3))
+				continue;
+
+			const uint64_t first_addr = l3[0] & DESC_ADDR_MASK;
+			if ((first_addr & (L2_BLOCK_SIZE - 1)) != 0)
+				continue;
+
+			// Dirty and accessed bits vary per page and must not block a merge.
+			const uint64_t merge_flag_mask =
+				DESC_FLAGS_MASK & ~(DESC_PAGE | DESC_DIRTY | DESC_ACCESSED);
+			const uint64_t first_flags = l3[0] & merge_flag_mask;
+			bool can_merge = true;
+			bool any_dirty = (l3[0] & DESC_DIRTY) != 0;
+			bool all_dirty = (l3[0] & DESC_DIRTY) != 0;
+			bool any_accessed = (l3[0] & DESC_ACCESSED) != 0;
+			uint64_t expected_addr = first_addr;
+
+			for (size_t k = 1; k < 512; k++) {
+				expected_addr += L3_PAGE_SIZE;
+				if (!is_leaf(l3[k], 3)
+					|| (l3[k] & DESC_ADDR_MASK) != expected_addr
+					|| (l3[k] & merge_flag_mask) != first_flags) {
+					can_merge = false;
+					break;
+				}
+
+				if (l3[k] & DESC_DIRTY)
+					any_dirty = true;
+				else
+					all_dirty = false;
+				if (l3[k] & DESC_ACCESSED)
+					any_accessed = true;
+			}
+
+			if (can_merge && (merge_if_dirty || !any_dirty || all_dirty)) {
+				l2[j] = first_addr | first_flags;
+				if (any_dirty)
+					l2[j] |= DESC_DIRTY;
+				if (any_accessed)
+					l2[j] |= DESC_ACCESSED;
+				merged_pages += 512;
+			}
+		}
+	}
+
+	return merged_pages;
 }
 
 uint64_t paging_default_usermode_flags(bool executable_heap)

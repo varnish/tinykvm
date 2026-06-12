@@ -225,6 +225,33 @@ static void set_arm64_regs(int fd, const tinykvm_arm64regs& regs)
 	set_one_reg(fd, core_reg_id(sp_reg), regs.sp);
 }
 
+/* Run the EL1 TLB-flush stub for one VM entry. The host cannot invalidate
+   the guest's stage-1 TLB through KVM, so after rewriting page tables or
+   switching TTBR0_EL1 the vCPU would keep using translations from the
+   previous run (e.g. CoW pages in recycled memory banks after reset_to).
+   Only PC, PSTATE and x9 are clobbered by the stub; save/restore just
+   those with raw one-reg ioctls to keep the reset path cheap. */
+static void arm64_flush_guest_tlb(vCPU& cpu)
+{
+	const uint64_t PC_ID = core_reg_id(KVM_REG_ARM_CORE_REG(regs.pc));
+	const uint64_t PSTATE_ID = core_reg_id(KVM_REG_ARM_CORE_REG(regs.pstate));
+	const uint64_t X9_ID = core_gpr_reg_id(9);
+
+	cpu.flush_registers();
+	__u64 saved_pc = 0, saved_pstate = 0, saved_x9 = 0;
+	get_one_reg(cpu.fd, PC_ID, saved_pc);
+	get_one_reg(cpu.fd, PSTATE_ID, saved_pstate);
+	get_one_reg(cpu.fd, X9_ID, saved_x9);
+
+	set_one_reg(cpu.fd, PC_ID, TLB_FLUSH_ADDR);
+	set_one_reg(cpu.fd, PSTATE_ID, ARM64_PSTATE_EL1H | 0x3C0 /* DAIF masked */);
+	cpu.run(0);
+
+	set_one_reg(cpu.fd, PC_ID, saved_pc);
+	set_one_reg(cpu.fd, PSTATE_ID, saved_pstate);
+	set_one_reg(cpu.fd, X9_ID, saved_x9);
+}
+
 static uint64_t clone_arm64_page_table(vMemory& dst, const vMemory& src,
 	uint64_t table_addr, unsigned level)
 {
@@ -388,6 +415,7 @@ void Machine::prepare_copy_on_write(size_t max_work_mem,
 		foreach_page_makecow(this->memory, kernel_end_address(),
 			shared_memory_boundary, split_accessed_hugepages);
 		set_one_reg(this->vcpu.fd, sys_reg_id(3, 0, 2, 0, 0), memory.page_tables);
+		arm64_flush_guest_tlb(this->vcpu);
 		return;
 	}
 
@@ -421,6 +449,8 @@ void Machine::setup_cow_mode(const Machine* other)
 			set_one_reg(cpu.fd, sys_reg_id(3, 0, 2, 0, 0), ttbr0);
 		});
 	}
+	/* The stub broadcasts (tlbi vmalle1is), covering SMP vCPUs too. */
+	arm64_flush_guest_tlb(this->vcpu);
 }
 
 void Machine::print_pagetables() const

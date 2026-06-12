@@ -158,8 +158,14 @@ long vCPU::run_once()
 	case KVM_EXIT_MMIO:
 		if (kvm_run->mmio.phys_addr == ARM64_STOP_MMIO_ADDR
 			&& kvm_run->mmio.is_write) {
-			/* KVM advances the MMIO store on the next KVM_RUN entry. Do not
-			   advance here, or a later vmcall/resume can skip its first insn. */
+			/* KVM advances the guest PC past the MMIO store only on the next
+			   KVM_RUN entry -- against whatever PC is loaded then, so a later
+			   set-PC + run (vmcall, reset) would skip its first instruction.
+			   Complete the MMIO now: an immediate_exit run never enters the
+			   guest, and KVM commits the pending PC increment on its way out. */
+			kvm_run->immediate_exit = 1;
+			ioctl(this->fd, KVM_RUN, 0);
+			kvm_run->immediate_exit = 0;
 			this->invalidate_register_cache();
 			this->stopped = true;
 			return 0;
@@ -187,6 +193,14 @@ long vCPU::run_once()
 				Machine::timeout_exception("Timeout Exception", this->timer_ticks);
 			}
 			if (this->stopped) {
+				/* Same deferred PC increment hazard as the stop exit above.
+				   The handler may have modified registers; flush them so the
+				   increment commits against the final PC. */
+				this->flush_registers();
+				kvm_run->immediate_exit = 1;
+				ioctl(this->fd, KVM_RUN, 0);
+				kvm_run->immediate_exit = 0;
+				this->invalidate_register_cache();
 				return 0;
 			}
 			return 1;

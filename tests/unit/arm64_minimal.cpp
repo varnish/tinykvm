@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <tinykvm/arm64/memory_layout.hpp>
 #include <tinykvm/machine.hpp>
+#include <tinykvm/paging.hpp>
 
 static constexpr uint64_t MAX_MEMORY = 2ul << 20;
 static constexpr uint64_t CODE_ADDR = 0x100000;
@@ -43,6 +44,17 @@ static const std::array<uint32_t, 4> cow_guest {
 	0xF9000060, // str x0, [x3]
 	0xF9000080, // str x0, [x4]
 };
+
+static bool contains_page(const std::vector<std::pair<uint64_t, uint64_t>>& pages,
+	uint64_t addr)
+{
+	for (const auto& [base, size] : pages) {
+		if (base <= addr && addr < base + size) {
+			return true;
+		}
+	}
+	return false;
+}
 
 static void require_arm64_kvm()
 {
@@ -91,7 +103,8 @@ TEST_CASE("ARM64 raw guest exits through TinyKVM MMIO ABI", "[arm64]")
 	REQUIRE(stored == 42);
 	REQUIRE(out_regs.regs[0] == 42);
 	REQUIRE(out_regs.sp == STACK_ADDR);
-	REQUIRE(out_regs.pc == CODE_ADDR + (minimal_guest.size() - 1) * sizeof(minimal_guest[0]));
+	// The stop MMIO store is completed eagerly, so PC is past the last insn.
+	REQUIRE(out_regs.pc == CODE_ADDR + minimal_guest.size() * sizeof(minimal_guest[0]));
 }
 
 TEST_CASE("ARM64 SVC guest exits through TinyKVM syscall MMIO ABI", "[arm64]")
@@ -134,7 +147,7 @@ TEST_CASE("ARM64 SVC guest exits through TinyKVM syscall MMIO ABI", "[arm64]")
 	REQUIRE(machine.stopped());
 	REQUIRE(first == 0x111);
 	REQUIRE(second == 0x121);
-	REQUIRE(machine.registers().pc == CODE_ADDR + (syscall_guest.size() - 1) * sizeof(syscall_guest[0]));
+	REQUIRE(machine.registers().pc == CODE_ADDR + syscall_guest.size() * sizeof(syscall_guest[0]));
 }
 
 TEST_CASE("ARM64 vmcall returns through LR stop stub", "[arm64]")
@@ -206,10 +219,105 @@ TEST_CASE("ARM64 fork uses copy-on-write for guest stores", "[arm64]")
 	REQUIRE(fork_value == 0xABCDEF);
 	REQUIRE(observed == 0xABCDEF);
 	REQUIRE(master_value == original);
+	REQUIRE(contains_page(fork.get_accessed_pages(), DATA_ADDR));
 
 	fork.reset_to(master, options);
 	fork.copy_from_guest(&fork_value, DATA_ADDR, sizeof(fork_value));
 	REQUIRE(fork_value == original);
+}
+
+TEST_CASE("ARM64 fork re-runs correctly after reset_to", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	const tinykvm::MachineOptions options {
+		.max_mem = MAX_MEMORY,
+		.max_cow_mem = 2u << 20,
+		.split_hugepages = true,
+	};
+
+	tinykvm::Machine master {empty_binary, options};
+	master.copy_to_guest(CODE_ADDR, cow_guest.data(),
+		cow_guest.size() * sizeof(cow_guest[0]));
+	const uint64_t original = 0x1234;
+	master.copy_to_guest(DATA_ADDR, &original, sizeof(original));
+	master.prepare_copy_on_write(options.max_cow_mem);
+
+	tinykvm::Machine fork {master, options};
+	for (int i = 0; i < 4; i++) {
+		const uint64_t value = 0xABCDEF00 + i;
+		auto regs = fork.registers();
+		regs.pc = CODE_ADDR;
+		regs.sp = STACK_ADDR;
+		regs.pstate = 0x3c5;
+		regs.regs[1] = value;
+		regs.regs[2] = DATA_ADDR;
+		regs.regs[3] = DATA_ADDR + sizeof(uint64_t);
+		regs.regs[4] = tinykvm::ARM64_STOP_MMIO_ADDR;
+		fork.set_registers(regs);
+
+		fork.run(1.0f);
+
+		uint64_t fork_value = 0;
+		uint64_t observed = 0;
+		uint64_t master_value = 0;
+		fork.copy_from_guest(&fork_value, DATA_ADDR, sizeof(fork_value));
+		fork.copy_from_guest(&observed, DATA_ADDR + sizeof(uint64_t), sizeof(observed));
+		master.copy_from_guest(&master_value, DATA_ADDR, sizeof(master_value));
+		REQUIRE(fork_value == value);
+		REQUIRE(observed == value);
+		REQUIRE(master_value == original);
+
+		fork.reset_to(master, options);
+		fork.copy_from_guest(&fork_value, DATA_ADDR, sizeof(fork_value));
+		REQUIRE(fork_value == original);
+	}
+}
+
+TEST_CASE("ARM64 reports dirty pages written through host API", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	tinykvm::Machine machine {empty_binary, { .max_mem = MAX_MEMORY }};
+	const uint64_t value = 0xA55A;
+	machine.copy_to_guest(DATA_ADDR, &value, sizeof(value));
+
+	REQUIRE(contains_page(machine.get_accessed_pages(), DATA_ADDR));
+}
+
+TEST_CASE("ARM64 merges uniform 4 KiB leaves into an L2 block", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	tinykvm::Machine machine {empty_binary, {
+		.max_mem = MAX_MEMORY,
+		.max_cow_mem = tinykvm::vMemory::PageSize(),
+	}};
+	auto& memory = machine.main_memory();
+	const uint64_t addr_mask = tinykvm::paging_address_mask();
+	const uint64_t block_addr = DATA_ADDR & ~((1ULL << 21) - 1);
+
+	tinykvm::page_at(memory, block_addr,
+	[&memory, addr_mask] (uint64_t, uint64_t& entry, size_t size) {
+		REQUIRE(size == (1ULL << 21));
+		auto page = memory.new_page();
+		const uint64_t base = entry & addr_mask;
+		const uint64_t flags = entry & ~addr_mask;
+		for (size_t i = 0; i < 512; i++) {
+			page.pmem[i] = (base + i * tinykvm::vMemory::PageSize()) | flags | (1ULL << 1);
+		}
+		entry = page.addr | 0x3ULL;
+	});
+
+	REQUIRE(memory.merge_leaf_pages_into_hugepages() == 512);
+
+	tinykvm::page_at(memory, block_addr,
+	[] (uint64_t, uint64_t&, size_t size) {
+		REQUIRE(size == (1ULL << 21));
+	});
 }
 
 TEST_CASE("ARM64 snapshot restores CPU and memory state", "[arm64]")
