@@ -249,6 +249,11 @@ struct Machine
 	bool is_forked() const noexcept { return m_forked; }
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
 	std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages() const;
+	/* Pre-CoW a set of (address, size) ranges — typically the accessed set
+	   harvested from a warmup fork — so the next run takes no per-page
+	   write-fault VM exits. CoW state is rebuilt by every fork/reset_to,
+	   so re-apply after each. Returns the number of pages made writable. */
+	size_t prefetch_pages(const std::vector<std::pair<uint64_t, uint64_t>>& pages);
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);

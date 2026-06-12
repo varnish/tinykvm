@@ -532,6 +532,27 @@ std::vector<std::pair<uint64_t, uint64_t>> Machine::get_accessed_pages() const
 {
 	return tinykvm::get_accessed_pages(this->main_memory());
 }
+size_t Machine::prefetch_pages(const std::vector<std::pair<uint64_t, uint64_t>>& pages)
+{
+	// Same minimal verification and dirty semantics as the CoW write-fault
+	// path, so a prefetched page is indistinguishable from a faulted one.
+#ifdef TINYKVM_ARCH_AMD64
+	constexpr uint64_t flags = PDE64_PRESENT;
+#else
+	constexpr uint64_t flags = 1ULL; // DESC_VALID
+#endif
+	const uint64_t pagesize = vMemory::PageSize();
+	size_t count = 0;
+	for (const auto& [base, size] : pages) {
+		// Entries can be block-sized (e.g. a 2 MiB leaf); walking them at
+		// page granularity splits the block and CoWs each page beneath it.
+		for (uint64_t offset = 0; offset < size; offset += pagesize) {
+			memory.get_writable_page(base + offset, flags, false, true);
+			count++;
+		}
+	}
+	return count;
+}
 size_t Machine::banked_memory_pages() const noexcept
 {
 	size_t count = 0;

@@ -275,6 +275,76 @@ TEST_CASE("ARM64 fork re-runs correctly after reset_to", "[arm64]")
 	}
 }
 
+TEST_CASE("ARM64 prefetch_pages pre-CoWs a harvested write set", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	const tinykvm::MachineOptions options {
+		.max_mem = MAX_MEMORY,
+		.max_cow_mem = 2u << 20,
+		.split_hugepages = true,
+	};
+
+	tinykvm::Machine master {empty_binary, options};
+	master.copy_to_guest(CODE_ADDR, cow_guest.data(),
+		cow_guest.size() * sizeof(cow_guest[0]));
+	const uint64_t original = 0x1234;
+	master.copy_to_guest(DATA_ADDR, &original, sizeof(original));
+	master.prepare_copy_on_write(options.max_cow_mem);
+
+	auto run_guest = [&] (tinykvm::Machine& m, uint64_t value) {
+		auto regs = m.registers();
+		regs.pc = CODE_ADDR;
+		regs.sp = STACK_ADDR;
+		regs.pstate = 0x3c5;
+		regs.regs[1] = value;
+		regs.regs[2] = DATA_ADDR;
+		regs.regs[3] = DATA_ADDR + sizeof(uint64_t);
+		regs.regs[4] = tinykvm::ARM64_STOP_MMIO_ADDR;
+		m.set_registers(regs);
+		m.run(1.0f);
+		uint64_t stored = 0;
+		m.copy_from_guest(&stored, DATA_ADDR, sizeof(stored));
+		REQUIRE(stored == value);
+	};
+
+	// Warmup fork: run once and harvest the write working set.
+	std::vector<std::pair<uint64_t, uint64_t>> write_set;
+	{
+		tinykvm::Machine warmup {master, options};
+		run_guest(warmup, 0xAAAA);
+		write_set = warmup.get_accessed_pages();
+	}
+	REQUIRE(contains_page(write_set, DATA_ADDR));
+
+	// Steady-state fork: replaying the set pre-CoWs the pages (they show as
+	// accessed before any guest run) and the run takes zero write faults.
+	tinykvm::Machine fork {master, options};
+	REQUIRE(fork.prefetch_pages(write_set) >= 1);
+	REQUIRE(contains_page(fork.get_accessed_pages(), DATA_ADDR));
+
+	fork.set_profiling(true);
+	run_guest(fork, 0xBBBB);
+	const auto& faults =
+		fork.profiling()->times.at(tinykvm::MachineProfiling::PageFault);
+	REQUIRE(faults.empty());
+
+	// Same through the fast-reset path used by the per-agent loop.
+	fork.reset_to(master, options);
+	uint64_t after_reset = 0;
+	fork.copy_from_guest(&after_reset, DATA_ADDR, sizeof(after_reset));
+	REQUIRE(after_reset == original);
+	fork.prefetch_pages(write_set);
+
+	fork.set_profiling(false); // fresh profiler for the post-reset run
+	fork.set_profiling(true);
+	run_guest(fork, 0xCCCC);
+	const auto& reset_faults =
+		fork.profiling()->times.at(tinykvm::MachineProfiling::PageFault);
+	REQUIRE(reset_faults.empty());
+}
+
 TEST_CASE("ARM64 reports dirty pages written through host API", "[arm64]")
 {
 	require_arm64_kvm();
