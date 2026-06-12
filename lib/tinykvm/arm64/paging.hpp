@@ -1,5 +1,5 @@
 #pragma once
-#include <cstdint>
+#include "../paging.hpp"
 
 namespace tinykvm {
 	struct Machine;

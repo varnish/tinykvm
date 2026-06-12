@@ -8,11 +8,11 @@
 #include <string>
 #include <unistd.h>
 #include <unordered_set>
+#include "paging.hpp"
 #include "page_streaming.hpp"
 #ifdef TINYKVM_ARCH_AMD64
 #include "amd64/amd64.hpp"
 #include "amd64/memory_layout.hpp"
-#include "amd64/paging.hpp"
 #else
 #include "arm64/memory_layout.hpp"
 #endif
@@ -488,30 +488,17 @@ MemoryBank::Page vMemory::new_hugepage()
 
 size_t vMemory::merge_leaf_pages_into_hugepages()
 {
-#ifdef TINYKVM_ARCH_AMD64
 	return paging_merge_leaf_pages_into_hugepages(*this);
-#else
-	return 0;
-#endif
 }
 
 char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, bool dirty)
 {
-	(void)flags;
-	(void)dirty;
 //	printf("*** Need a writable page at 0x%lX  (%s)\n", addr, (zeroes) ? "zeroed" : "copy");
 	if (machine.has_remote() && machine.is_foreign_address(addr)) {
 		// When connected to a remote VM, we can access the remote kernel memory
 		return machine.remote().main_memory().get_writable_page(addr, flags, zeroes, dirty);
 	}
 
-#ifndef TINYKVM_ARCH_AMD64
-	auto* page = safely_at(addr, PAGE_SIZE);
-	if (zeroes) {
-		std::memset(page, 0, PAGE_SIZE);
-	}
-	return page;
-#else
 	WritablePageOptions zero_opts;
 	zero_opts.zeroes = zeroes;
 	auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
@@ -519,7 +506,6 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, boo
 		writable_page.set_dirty();
 	}
 	return writable_page.page;
-#endif
 }
 
 char* vMemory::get_kernelpage_at(uint64_t addr) const
@@ -530,10 +516,10 @@ char* vMemory::get_kernelpage_at(uint64_t addr) const
 	}
 #ifdef TINYKVM_ARCH_AMD64
 	constexpr uint64_t flags = PDE64_PRESENT;
-	return readable_page_at(*this, addr, flags);
 #else
-	return const_cast<char*>(safely_at(addr, PAGE_SIZE));
+	constexpr uint64_t flags = 1ULL;
 #endif
+	return readable_page_at(*this, addr, flags);
 }
 
 char* vMemory::get_userpage_at(uint64_t addr) const
@@ -544,19 +530,15 @@ char* vMemory::get_userpage_at(uint64_t addr) const
 	}
 #ifdef TINYKVM_ARCH_AMD64
 	constexpr uint64_t flags = PDE64_PRESENT | PDE64_USER;
-	return readable_page_at(*this, addr, flags);
 #else
-	return const_cast<char*>(safely_at(addr, PAGE_SIZE));
+	constexpr uint64_t flags = 1ULL | (1ULL << 6);
 #endif
+	return readable_page_at(*this, addr, flags);
 }
 
 std::vector<std::pair<uint64_t, uint64_t>> Machine::get_accessed_pages() const
 {
-#ifdef TINYKVM_ARCH_AMD64
 	return tinykvm::get_accessed_pages(this->main_memory());
-#else
-	return {};
-#endif
 }
 size_t Machine::banked_memory_pages() const noexcept
 {
@@ -646,14 +628,7 @@ MemoryBank::Page vMemory::allocate_unmapped_kernelpage()
 
 uint64_t vMemory::expectedUsermodeFlags() const noexcept
 {
-#ifndef TINYKVM_ARCH_AMD64
-	return 0;
-#else
-	uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
-	if (!this->executable_heap)
-		flags |= PDE64_NX;
-	return flags;
-#endif
+	return paging_default_usermode_flags(this->executable_heap);
 }
 
 } // namespace tinykvm

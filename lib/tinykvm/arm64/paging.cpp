@@ -1,11 +1,14 @@
 #include "paging.hpp"
 
 #include "../machine.hpp"
+#include "../page_streaming.hpp"
 #include "memory_layout.hpp"
 #include <array>
+#include <cassert>
 #include <cerrno>
 #include <cstring>
 #include <linux/kvm.h>
+#include <sys/mman.h>
 #include <sys/ioctl.h>
 
 namespace tinykvm {
@@ -13,12 +16,40 @@ namespace {
 
 static constexpr uint64_t DESC_VALID = 1ULL << 0;
 static constexpr uint64_t DESC_TABLE = 1ULL << 1;
+static constexpr uint64_t DESC_PAGE = 1ULL << 1;
 static constexpr uint64_t DESC_AF = 1ULL << 10;
 static constexpr uint64_t DESC_SH_INNER = 3ULL << 8;
+static constexpr uint64_t DESC_AP_USER = 1ULL << 6;
+static constexpr uint64_t DESC_AP_RO = 1ULL << 7;
+static constexpr uint64_t DESC_PXN = 1ULL << 53;
+static constexpr uint64_t DESC_UXN = 1ULL << 54;
+static constexpr uint64_t DESC_DIRTY = 1ULL << 55;
+static constexpr uint64_t DESC_CLONEABLE = 1ULL << 56;
 static constexpr uint64_t ATTR_NORMAL = 0ULL << 2;
 static constexpr uint64_t ATTR_DEVICE = 1ULL << 2;
 static constexpr uint64_t L1_BLOCK_SIZE = 1ULL << 30;
 static constexpr uint64_t L2_BLOCK_SIZE = 1ULL << 21;
+static constexpr uint64_t L3_PAGE_SIZE = 1ULL << 12;
+static constexpr uint64_t DESC_ADDR_MASK = 0x0000FFFFFFFFF000ULL;
+static constexpr uint64_t DESC_FLAGS_MASK = ~DESC_ADDR_MASK;
+
+static inline uint64_t l1_index(uint64_t addr) { return (addr >> 30) & 511; }
+static inline uint64_t l2_index(uint64_t addr) { return (addr >> 21) & 511; }
+static inline uint64_t l3_index(uint64_t addr) { return (addr >> 12) & 511; }
+
+static inline bool is_valid(uint64_t entry) { return (entry & DESC_VALID) != 0; }
+static inline bool is_table(uint64_t entry) { return (entry & (DESC_VALID | DESC_TABLE)) == (DESC_VALID | DESC_TABLE); }
+static inline bool is_leaf(uint64_t entry, unsigned level)
+{
+	if (!is_valid(entry))
+		return false;
+	return level == 3 ? ((entry & DESC_PAGE) != 0) : ((entry & DESC_TABLE) == 0);
+}
+static inline bool is_writable(uint64_t entry) { return (entry & DESC_AP_RO) == 0; }
+static inline bool has_flags(uint64_t entry, uint64_t flags)
+{
+	return (entry & flags) == flags;
+}
 
 static uint64_t sys_reg_id(unsigned op0, unsigned op1, unsigned crn, unsigned crm, unsigned op2)
 {
@@ -48,7 +79,54 @@ static uint64_t table_desc(uint64_t addr)
 
 static uint64_t block_desc(uint64_t addr, uint64_t attr)
 {
-	return (addr & ~0x1FFFFFULL) | attr | DESC_AF | DESC_SH_INNER | DESC_VALID;
+	uint64_t prot = DESC_AP_USER | DESC_UXN | DESC_PXN;
+	return (addr & ~0x1FFFFFULL) | attr | prot | DESC_AF | DESC_SH_INNER | DESC_VALID;
+}
+
+static uint64_t page_desc(uint64_t addr, uint64_t flags)
+{
+	return (addr & ~0xFFFULL) | flags | DESC_PAGE | DESC_AF | DESC_SH_INNER | ATTR_NORMAL | DESC_VALID;
+}
+
+static void memory_exception(const char* msg, uint64_t addr, uint64_t sz)
+{
+	throw MemoryException(msg, addr, sz);
+}
+
+static void split_l2_block(vMemory& memory, uint64_t& entry)
+{
+	const uint64_t base = entry & DESC_ADDR_MASK;
+	const uint64_t flags = entry & DESC_FLAGS_MASK;
+	auto page = memory.new_page();
+	for (size_t i = 0; i < 512; i++) {
+		page.pmem[i] = page_desc(base + (i << 12), flags);
+	}
+	entry = (page.addr & DESC_ADDR_MASK) | DESC_TABLE | DESC_VALID;
+}
+
+static void cow_page(vMemory& memory, uint64_t addr, uint64_t& entry, uint64_t*& data,
+	WritablePageOptions options)
+{
+	if ((entry & DESC_CLONEABLE) == 0)
+		return;
+	if (memory.main_memory_writes) {
+		entry &= ~DESC_CLONEABLE;
+		entry &= ~DESC_AP_RO;
+		memory.increment_unlocked_pages(1);
+		return;
+	}
+	auto page = memory.new_page();
+	assert((page.addr & ~DESC_ADDR_MASK) == 0);
+	if (options.zeroes || (entry & DESC_DIRTY) == 0) {
+		if (page.dirty)
+			page_memzero(page.pmem);
+	} else {
+		page_duplicate(page.pmem, data);
+	}
+	entry = page.addr | (entry & (DESC_FLAGS_MASK & ~(DESC_CLONEABLE | DESC_AP_RO))) | DESC_VALID | DESC_PAGE;
+	data = page.pmem;
+	if (entry & DESC_AP_USER)
+		memory.record_cow_leaf_user_page(addr);
 }
 
 static void install_vectors(Machine& machine)
@@ -141,6 +219,206 @@ void arm64_setup_el1_mmu(Machine& machine, vCPU& cpu)
 		(1ULL << 0) | (1ULL << 2) | (1ULL << 12) |
 		(1ULL << 11) | (1ULL << 20) | (1ULL << 22) |
 		(1ULL << 28) | (1ULL << 29));
+}
+
+void print_pagetables(const vMemory& memory)
+{
+	foreach_page(memory, [] (uint64_t addr, uint64_t& entry, size_t size) {
+		printf("ARM64 PT 0x%016lX size 0x%zX -> 0x%016lX flags 0x%016lX\n",
+			addr, size, entry & DESC_ADDR_MASK, entry & ~DESC_ADDR_MASK);
+	});
+}
+
+void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addresses)
+{
+	auto* l1 = memory.page_at(memory.page_tables);
+	for (uint64_t i = 0; i < 512; i++) {
+		if (!is_valid(l1[i]))
+			continue;
+		const uint64_t l1_base = i << 30;
+		callback(l1_base, l1[i], L1_BLOCK_SIZE);
+		if (is_leaf(l1[i], 1))
+			continue;
+		const uint64_t l2_mem = l1[i] & DESC_ADDR_MASK;
+		if (skip_oob_addresses && l2_mem >= memory.physbase + memory.size)
+			continue;
+		auto* l2 = memory.page_at(l2_mem);
+		for (uint64_t j = 0; j < 512; j++) {
+			if (!is_valid(l2[j]))
+				continue;
+			const uint64_t l2_base = l1_base | (j << 21);
+			callback(l2_base, l2[j], L2_BLOCK_SIZE);
+			if (is_leaf(l2[j], 2))
+				continue;
+			const uint64_t l3_mem = l2[j] & DESC_ADDR_MASK;
+			if (skip_oob_addresses && l3_mem >= memory.physbase + memory.size)
+				continue;
+			auto* l3 = memory.page_at(l3_mem);
+			for (uint64_t k = 0; k < 512; k++) {
+				if (is_valid(l3[k])) {
+					callback(l2_base | (k << 12), l3[k], L3_PAGE_SIZE);
+				}
+			}
+		}
+	}
+}
+
+void foreach_page(const vMemory& memory, foreach_page_t callback, bool skip_oob_addresses)
+{
+	foreach_page(const_cast<vMemory&>(memory), std::move(callback), skip_oob_addresses);
+}
+
+void foreach_page_makecow(vMemory& memory, uint64_t kernel_end,
+	uint64_t shared_memory_boundary, bool)
+{
+	if (shared_memory_boundary < kernel_end)
+		memory_exception("Shared memory boundary was illegal (zero)", shared_memory_boundary, 0);
+	foreach_page(memory, [=] (uint64_t addr, uint64_t& entry, size_t size) {
+		if (addr < shared_memory_boundary && is_leaf(entry, size == L3_PAGE_SIZE ? 3 : 2)
+			&& is_writable(entry)) {
+			entry |= DESC_AP_RO | DESC_CLONEABLE;
+		}
+	});
+}
+
+std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages(const vMemory&)
+{
+	return {};
+}
+
+void page_at(vMemory& memory, uint64_t addr, foreach_page_t callback, bool ignore_missing)
+{
+	auto* l1 = memory.page_at(memory.page_tables);
+	uint64_t& e1 = l1[l1_index(addr)];
+	if (!is_valid(e1)) {
+		if (ignore_missing) return;
+		memory_exception("page_at: l1 entry not present", addr, L1_BLOCK_SIZE);
+	}
+	if (is_leaf(e1, 1)) {
+		callback(addr & ~(L1_BLOCK_SIZE - 1), e1, L1_BLOCK_SIZE);
+		return;
+	}
+	auto* l2 = memory.page_at(e1 & DESC_ADDR_MASK);
+	uint64_t& e2 = l2[l2_index(addr)];
+	if (!is_valid(e2)) {
+		if (ignore_missing) return;
+		memory_exception("page_at: l2 entry not present", addr, L2_BLOCK_SIZE);
+	}
+	if (is_leaf(e2, 2)) {
+		callback(addr & ~(L2_BLOCK_SIZE - 1), e2, L2_BLOCK_SIZE);
+		return;
+	}
+	auto* l3 = memory.page_at(e2 & DESC_ADDR_MASK);
+	uint64_t& e3 = l3[l3_index(addr)];
+	if (!is_valid(e3)) {
+		if (ignore_missing) return;
+		memory_exception("page_at: l3 entry not present", addr, L3_PAGE_SIZE);
+	}
+	callback(addr & ~(L3_PAGE_SIZE - 1), e3, L3_PAGE_SIZE);
+}
+
+WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_flags,
+	WritablePageOptions options)
+{
+	auto* l1 = memory.page_at(memory.page_tables);
+	uint64_t& e1 = l1[l1_index(addr)];
+	if (!is_valid(e1))
+		memory_exception("writable_page_at: l1 entry not present", addr, L1_BLOCK_SIZE);
+	if (is_leaf(e1, 1))
+		memory_exception("writable_page_at: 1GB blocks are not writable through host API", addr, L1_BLOCK_SIZE);
+	auto* l2 = memory.page_at(e1 & DESC_ADDR_MASK);
+	uint64_t& e2 = l2[l2_index(addr)];
+	if (!is_valid(e2))
+		memory_exception("writable_page_at: l2 entry not present", addr, L2_BLOCK_SIZE);
+	if (is_leaf(e2, 2)) {
+		if ((e2 & DESC_CLONEABLE) && memory.split_hugepages)
+			split_l2_block(memory, e2);
+		else if (!has_flags(e2, verify_flags) || !is_writable(e2))
+			memory_exception("writable_page_at: l2 entry not writable", addr, e2);
+		else {
+			auto* data = memory.page_at(e2 & DESC_ADDR_MASK);
+			return WritablePage{
+				.page = (char*)data + (addr & (L2_BLOCK_SIZE - 1)),
+				.entry = e2,
+				.size = L2_BLOCK_SIZE,
+			};
+		}
+	}
+	auto* l3 = memory.page_at(e2 & DESC_ADDR_MASK);
+	uint64_t& e3 = l3[l3_index(addr)];
+	if (!is_valid(e3))
+		memory_exception("writable_page_at: l3 entry not present", addr, L3_PAGE_SIZE);
+	auto* data = memory.page_at(e3 & DESC_ADDR_MASK);
+	cow_page(memory, addr, e3, data, options);
+	if (!has_flags(e3, verify_flags) || !is_writable(e3))
+		memory_exception("writable_page_at: l3 entry not writable", addr, e3);
+	return WritablePage{.page = (char*)data, .entry = e3, .size = L3_PAGE_SIZE};
+}
+
+char* readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags)
+{
+	auto* l1 = memory.page_at(memory.page_tables);
+	const uint64_t e1 = l1[l1_index(addr)];
+	if (!is_valid(e1))
+		memory_exception("readable_page_at: l1 entry not present", addr, L1_BLOCK_SIZE);
+	if (is_leaf(e1, 1)) {
+		if (!has_flags(e1, flags))
+			memory_exception("readable_page_at: l1 entry not readable", addr, e1);
+		return (char*)memory.page_at(e1 & DESC_ADDR_MASK) + (addr & (L1_BLOCK_SIZE - 1));
+	}
+	auto* l2 = memory.page_at(e1 & DESC_ADDR_MASK);
+	const uint64_t e2 = l2[l2_index(addr)];
+	if (!is_valid(e2))
+		memory_exception("readable_page_at: l2 entry not present", addr, L2_BLOCK_SIZE);
+	if (is_leaf(e2, 2)) {
+		if (!has_flags(e2, flags))
+			memory_exception("readable_page_at: l2 entry not readable", addr, e2);
+		return (char*)memory.page_at(e2 & DESC_ADDR_MASK) + (addr & (L2_BLOCK_SIZE - 1));
+	}
+	auto* l3 = memory.page_at(e2 & DESC_ADDR_MASK);
+	const uint64_t e3 = l3[l3_index(addr)];
+	if (!has_flags(e3, flags))
+		memory_exception("readable_page_at: l3 entry not readable", addr, e3);
+	return (char*)memory.page_at(e3 & DESC_ADDR_MASK);
+}
+
+void WritablePage::set_dirty()
+{
+	entry |= DESC_DIRTY;
+}
+
+void WritablePage::set_protections(int prot)
+{
+	if (prot & PROT_READ)
+		entry |= DESC_VALID;
+	else
+		entry &= ~DESC_VALID;
+	if (prot & PROT_WRITE)
+		entry &= ~DESC_AP_RO;
+	else
+		entry |= DESC_AP_RO;
+	if (prot & PROT_EXEC)
+		entry &= ~(DESC_UXN | DESC_PXN);
+	else
+		entry |= DESC_UXN | DESC_PXN;
+}
+
+size_t paging_merge_leaf_pages_into_hugepages(vMemory&, bool)
+{
+	return 0;
+}
+
+uint64_t paging_default_usermode_flags(bool executable_heap)
+{
+	uint64_t flags = DESC_VALID | DESC_AP_USER;
+	if (!executable_heap)
+		flags |= DESC_UXN | DESC_PXN;
+	return flags;
+}
+
+uint64_t paging_address_mask()
+{
+	return DESC_ADDR_MASK;
 }
 
 } // namespace tinykvm
