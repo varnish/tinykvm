@@ -182,6 +182,25 @@ int main() {
 	REQUIRE(fork.return_value() == 1007);
 }
 
+TEST_CASE("ARM64 fatal guest signal terminates the VM cleanly", "[arm64][elf]")
+{
+	require_arm64_kvm();
+	// abort() raises SIGABRT via tgkill. Signal-handler entry is not
+	// implemented on ARM64; the VM must terminate with the conventional
+	// 128+sig exit status instead of throwing a host-side exception.
+	const auto binary = build_and_load(R"M(
+#include <stdlib.h>
+int main() {
+	abort();
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"abort"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 128 + 6 /* SIGABRT */);
+}
+
 TEST_CASE("ARM64 runs a dynamic ELF via the interpreter", "[arm64][elf]")
 {
 	require_arm64_kvm();

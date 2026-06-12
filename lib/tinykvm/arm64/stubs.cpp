@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <csignal>
 #include <linux/futex.h>
 #include <linux/kvm.h>
 #include <linux/sched.h>
@@ -687,12 +688,27 @@ void Machine::setup_multithreading()
 		131, [] (vCPU& cpu) { // tgkill
 			auto& regs = cpu.registers();
 			const int sig = regs.sysarg(2);
-			if (sig == 0) {
+			/* Signal-handler entry is not implemented on ARM64, so match
+			   the kernel's default dispositions instead: sig 0 is an
+			   existence probe, default-ignored signals are dropped, and
+			   everything else terminates the VM — even if the guest
+			   registered a handler. glibc's raise()/abort() arrive here.
+			   The exit status follows the shell convention 128+sig,
+			   readable via Machine::return_value(). */
+			switch (sig) {
+			case 0:
+			case SIGCHLD:
+			case SIGCONT:
+			case SIGURG:
+			case SIGWINCH:
 				regs.sysret() = 0;
 				cpu.set_registers(regs);
-			} else {
-				cpu.machine().signals().enter(cpu, sig);
+				return;
 			}
+			THPRINT(">>> tgkill: VM terminated by signal %d\n", sig);
+			regs.sysret() = 128 + sig;
+			cpu.set_registers(regs);
+			cpu.stop();
 		});
 }
 
