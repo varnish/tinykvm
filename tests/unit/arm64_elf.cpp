@@ -258,8 +258,11 @@ TEST_CASE("ARM64 runs a dynamic Python guest", "[arm64][elf]")
 	}
 
 	std::string output;
+	// libpython3.13 is >4MB, so with mmap_backed_files its mmap is served
+	// by a host-mmap'd file-backed memory region instead of preadv.
 	tinykvm::Machine machine { ld_linux_binary(), {
 		.max_mem = 512ul << 20,
+		.mmap_backed_files = true,
 	} };
 	machine.fds().set_open_readable_callback(
 		[] (std::string&) -> bool { return true; });
@@ -276,4 +279,7 @@ TEST_CASE("ARM64 runs a dynamic Python guest", "[arm64][elf]")
 
 	REQUIRE(output == "Hello Python World!\n");
 	REQUIRE(machine.return_value() == 0);
+	// libpython must have been served by a file-backed memory region,
+	// not the preadv fallback.
+	REQUIRE(!machine.main_memory().mmap_ranges.empty());
 }

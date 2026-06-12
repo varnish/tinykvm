@@ -62,8 +62,13 @@ Outstanding work on the `arm64` branch, in rough priority order.
   0x400000 collides with the mmap arena — covered by a test. End-to-end:
   PIE + non-PIE C guests and a real `python3 -c "print(...)"` guest
   (512 MB, stdout via printer, clean exit) — `tests/unit/arm64_elf.cpp`
-  (9 cases). `mmap_backed_files` (file-backed regions for >4 MB mmaps)
-  remains untested on ARM64.
+  (9 cases). `mmap_backed_files` works too: the Python test runs with it
+  enabled and asserts libpython (5.9 MB) was served by a file-backed
+  region. That needed two physical-address fixes: `MMAP_PHYS_BASE` moved
+  from 256 GB to 32 GB on ARM64 (Apple-Silicon KVM caps stage-2 IPA at
+  36 bits / 64 GB), and `TCR_EL1.IPS` widened from its implicit 4 GB to
+  the VM's actual IPA size (was fine before only because every physical
+  address — RAM, banks at 2 GB — sat below 4 GB).
 
 - [x] **Write-prefetch optimization (Option A) — done.** New
   `Machine::prefetch_pages(pages)` API (declared in `machine.hpp`, implemented

@@ -32,6 +32,12 @@ struct ksigevent
 
 namespace tinykvm {
 static long vcpu_mmap_size = 0;
+static int vm_ipa_bits = 40; /* KVM's legacy default IPA size */
+
+int arm64_vm_ipa_bits()
+{
+	return vm_ipa_bits;
+}
 static constexpr uint64_t ARM64_PSTATE_MODE_MASK = 0xFULL;
 static constexpr uint64_t ARM64_PSTATE_EL0T = 0x0;
 static constexpr uint64_t ARM64_PSTATE_EL1H = 0x5;
@@ -45,6 +51,13 @@ void initialize_vcpu_stuff(int kvm_fd)
 	vcpu_mmap_size = ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
 	if (vcpu_mmap_size <= 0) {
 		throw MachineException("Failed to KVM_GET_VCPU_MMAP_SIZE");
+	}
+	/* VMs are created with the host's maximum IPA size (create_kvm_vm);
+	   TCR_EL1.IPS must be programmed to match or stage-1 walks fault on
+	   physical outputs above 4GB (file-backed mmap regions, &c). */
+	const int ipa = ioctl(kvm_fd, KVM_CHECK_EXTENSION, KVM_CAP_ARM_VM_IPA_SIZE);
+	if (ipa > 0) {
+		vm_ipa_bits = ipa;
 	}
 }
 

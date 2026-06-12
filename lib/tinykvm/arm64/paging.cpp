@@ -289,8 +289,18 @@ void arm64_setup_el1_mmu(Machine& machine, vCPU& cpu)
 	const uint64_t CPACR_EL1 = sys_reg_id(3, 0, 1, 0, 2);
 	const uint64_t VBAR_EL1 = sys_reg_id(3, 0, 12, 0, 0);
 
+	/* TCR_EL1.IPS caps stage-1 physical outputs; the identity-mapped RAM
+	   sits below 4GB, but file-backed mmap regions are installed at
+	   vMemory::MMAP_PHYS_BASE (32GB), so widen IPS to what the VM's
+	   stage-2 actually supports. */
+	const int pa_bits = arm64_vm_ipa_bits();
+	const uint64_t ips =
+		(pa_bits >= 48) ? 5 : (pa_bits >= 44) ? 4 : (pa_bits >= 42) ? 3 :
+		(pa_bits >= 40) ? 2 : (pa_bits >= 36) ? 1 : 0;
+
 	set_sysreg(cpu, MAIR_EL1, 0x00000000000000FFULL);
-	set_sysreg(cpu, TCR_EL1, 32ULL | (1ULL << 8) | (1ULL << 10) | (3ULL << 12));
+	set_sysreg(cpu, TCR_EL1, 32ULL | (1ULL << 8) | (1ULL << 10) | (3ULL << 12)
+		| (ips << 32));
 	set_sysreg(cpu, TTBR0_EL1, PT_ADDR);
 	set_sysreg(cpu, VBAR_EL1, VECTORS_ADDR);
 	set_sysreg(cpu, CPACR_EL1, 3ULL << 20);
