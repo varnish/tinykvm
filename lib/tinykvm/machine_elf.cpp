@@ -379,10 +379,25 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 			if (rtype == R_X86_64_RELATIVE) {
 				*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + rela_addr[i].r_addend;
 			} else {
-				/* Best-effort bootstrap handling for IFUNC relocations.
-				   A full implementation must evaluate the resolver and write
-				   its return value. */
-				*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + rela_addr[i].r_addend;
+				switch (this->m_irelative_mode)
+				{
+					case MachineOptions::IRelativeMode::StrictFail:
+						throw MachineException(
+							"R_X86_64_IRELATIVE encountered in strict mode", rela_addr[i].r_offset);
+					case MachineOptions::IRelativeMode::BestEffort:
+						/* Bootstrap fallback for IFUNC relocations.
+						   Full correctness requires executing the guest resolver and
+						   storing its return value. */
+						*(address_t*) memory.safely_at(addr, sizeof(address_t)) = this->m_image_base + rela_addr[i].r_addend;
+						break;
+					case MachineOptions::IRelativeMode::ExecuteResolver:
+						/* Defer resolver execution until long mode/register setup is complete. */
+						this->m_pending_irelative.push_back(PendingIRelative{
+							addr,
+							this->m_image_base + rela_addr[i].r_addend,
+						});
+						break;
+				}
 			}
 		} else {
 			if constexpr (VERBOSE_LOADER) {
@@ -391,6 +406,44 @@ bool Machine::relocate_section(const char* section_name, const char* sym_section
 		}
 	}
 	return true;
+}
+
+void Machine::execute_pending_irelative_resolvers(const MachineOptions& options)
+{
+	if (this->m_pending_irelative.empty()) {
+		return;
+	}
+
+	if (this->m_irelative_mode != MachineOptions::IRelativeMode::ExecuteResolver) {
+		this->m_pending_irelative.clear();
+		return;
+	}
+
+	for (const auto& pending : this->m_pending_irelative)
+	{
+		if (!memory.safely_within(pending.target_addr, sizeof(address_t))) {
+			throw MachineException("IRELATIVE target is outside guest memory", pending.target_addr);
+		}
+		if (!memory.safely_within(pending.resolver_addr, 1)) {
+			throw MachineException("IRELATIVE resolver is outside guest memory", pending.resolver_addr);
+		}
+
+		/* Execute resolver in guest context and write returned function address. */
+		this->timed_vmcall(pending.resolver_addr, 0.25f);
+		const auto regs = this->registers();
+		const address_t resolved = regs.rax;
+
+		*(address_t*) memory.safely_at(pending.target_addr, sizeof(address_t)) = resolved;
+
+		if (options.verbose_loader) {
+			printf("* IRELATIVE resolver %p -> %p written to %p\n",
+				(void*) pending.resolver_addr,
+				(void*) resolved,
+				(void*) pending.target_addr);
+		}
+	}
+
+	this->m_pending_irelative.clear();
 }
 
 bool Machine::relocate_relr_section(const char* section_name)
@@ -451,6 +504,7 @@ void Machine::dynamic_linking(std::string_view binary, const MachineOptions& opt
 {
 	(void)binary;
 	(void)options;
+	this->m_pending_irelative.clear();
 	this->relocate_relr_section(".relr.dyn");
 	this->relocate_section(".rela.dyn", ".dynsym");
 	//this->relocate_section(".rela.plt", ".dynsym");

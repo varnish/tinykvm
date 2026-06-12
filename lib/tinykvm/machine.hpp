@@ -324,6 +324,7 @@ private:
 	void elf_loader(std::string_view binary, const MachineOptions&);
 	void elf_load_ph(std::string_view binary, const MachineOptions&, const void*);
 	void dynamic_linking(std::string_view binary, const MachineOptions&);
+	void execute_pending_irelative_resolvers(const MachineOptions&);
 	bool relocate_section(const char* section_name, const char* sym_section);
 	bool relocate_relr_section(const char* section_name);
 	void setup_long_mode(const MachineOptions&);
@@ -350,9 +351,15 @@ private:
 	bool  m_verbose_system_calls = false;
 	bool  m_verbose_mmap_syscalls = false;
 	bool  m_verbose_thread_syscalls = false;
+	MachineOptions::IRelativeMode m_irelative_mode = MachineOptions::IRelativeMode::StrictFail;
 	void* m_userdata = nullptr;
 
 	std::string_view m_binary;
+	struct PendingIRelative {
+		address_t target_addr;
+		address_t resolver_addr;
+	};
+	std::vector<PendingIRelative> m_pending_irelative;
 
 	vMemory memory;  // guest memory
 
