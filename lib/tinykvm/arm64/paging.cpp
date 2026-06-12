@@ -79,7 +79,7 @@ static uint64_t table_desc(uint64_t addr)
 
 static uint64_t block_desc(uint64_t addr, uint64_t attr)
 {
-	uint64_t prot = DESC_AP_USER | DESC_UXN | DESC_PXN;
+	uint64_t prot = DESC_UXN;
 	return (addr & ~0x1FFFFFULL) | attr | prot | DESC_AF | DESC_SH_INNER | DESC_VALID;
 }
 
@@ -143,15 +143,36 @@ static void install_vectors(Machine& machine)
 		vectors[off + 1] = 0xf900013f | (((0x2000 + byte_offset) / 8) << 10);
 	}
 
-	const uint32_t sync_current_el_spx[] {
+	uint32_t sync_aarch64[] {
 		0xd518d089, // msr tpidr_el1, x9
+		0xd5385209, // mrs x9, esr_el1
+		0xd35afd29, // lsr x9, x9, #26
+		0xf100553f, // cmp x9, #0x15 (SVC64)
+		0x54000100, // b.eq +0x20
+		0xf100913f, // cmp x9, #0x24 (data abort, same EL)
+		0x54000140, // b.eq +0x28
+		0xf100953f, // cmp x9, #0x25 (data abort, lower EL)
+		0x54000100, // b.eq +0x20
 		0xd2be0009, // movz x9, #0xf000, lsl #16
-		0xf9080128, // str x8, [x9, #0x1000]
+		0xf910013f, // str xzr, [x9, #0x2000 + vector]
+		0x14000000, // b .
+		0xd2be0009, // movz x9, #0xf000, lsl #16
+		0xf9080128, // str x8, [x9, #0x1000] (syscall)
+		0xd538d089, // mrs x9, tpidr_el1
+		0xd69f03e0, // eret
+		0xd2be0009, // movz x9, #0xf000, lsl #16
+		0xf910013f, // str xzr, [x9, #0x2000 + vector]
 		0xd538d089, // mrs x9, tpidr_el1
 		0xd69f03e0, // eret
 	};
+	sync_aarch64[10] = 0xf900013f | (((0x2000 + 0x200) / 8) << 10);
+	sync_aarch64[17] = sync_aarch64[10];
 	std::memcpy(&vectors[0x200 / sizeof(uint32_t)],
-		sync_current_el_spx, sizeof(sync_current_el_spx));
+		sync_aarch64, sizeof(sync_aarch64));
+	sync_aarch64[10] = 0xf900013f | (((0x2000 + 0x400) / 8) << 10);
+	sync_aarch64[17] = sync_aarch64[10];
+	std::memcpy(&vectors[0x400 / sizeof(uint32_t)],
+		sync_aarch64, sizeof(sync_aarch64));
 
 	const uint32_t return_stop[] {
 		0xd2be0009, // movz x9, #0xf000, lsl #16
@@ -275,7 +296,7 @@ void foreach_page_makecow(vMemory& memory, uint64_t kernel_end,
 		memory_exception("Shared memory boundary was illegal (zero)", shared_memory_boundary, 0);
 	foreach_page(memory, [=] (uint64_t addr, uint64_t& entry, size_t size) {
 		if (addr < shared_memory_boundary && is_leaf(entry, size == L3_PAGE_SIZE ? 3 : 2)
-			&& is_writable(entry)) {
+			&& is_writable(entry) && (entry & ATTR_DEVICE) != ATTR_DEVICE) {
 			entry |= DESC_AP_RO | DESC_CLONEABLE;
 		}
 	});
@@ -410,9 +431,9 @@ size_t paging_merge_leaf_pages_into_hugepages(vMemory&, bool)
 
 uint64_t paging_default_usermode_flags(bool executable_heap)
 {
-	uint64_t flags = DESC_VALID | DESC_AP_USER;
+	uint64_t flags = DESC_VALID;
 	if (!executable_heap)
-		flags |= DESC_UXN | DESC_PXN;
+		flags |= DESC_UXN;
 	return flags;
 }
 

@@ -57,6 +57,9 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 		// Copy data to the page
 		char* page_data = page.page;
 		std::memcpy(&page_data[offset], src, size);
+#if defined(TINYKVM_ARCH_ARM64)
+		__builtin___clear_cache(&page_data[offset], &page_data[offset + size]);
+#endif
 
 		addr += size;
 		src += size;

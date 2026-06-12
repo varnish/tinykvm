@@ -51,6 +51,30 @@ static uint64_t get_sysreg(int fd, uint64_t id)
 	return value;
 }
 
+static bool handle_cow_data_abort(vCPU& cpu)
+{
+	const uint64_t ESR_EL1 = sys_reg_id(3, 0, 5, 2, 0);
+	const uint64_t FAR_EL1 = sys_reg_id(3, 0, 6, 0, 0);
+	const uint64_t esr = get_sysreg(cpu.fd, ESR_EL1);
+	const uint8_t ec = esr >> 26;
+	if (ec != 0x24 && ec != 0x25) {
+		return false;
+	}
+
+	const uint32_t iss = esr & 0x01FFFFFFu;
+	const uint32_t dfsc = iss & 0x3Fu;
+	const bool write = (iss & (1u << 6)) != 0;
+	if (!write || dfsc < 0x0D || dfsc > 0x0F) {
+		return false;
+	}
+
+	const uint64_t far = get_sysreg(cpu.fd, FAR_EL1);
+	ScopedProfiler<MachineProfiling::PageFault> prof(cpu.machine().profiling());
+	cpu.machine().main_memory().get_writable_page(far & ~PageMask(), 1ULL, false, true);
+	cpu.last_fault_address = far;
+	return true;
+}
+
 bool vCPU::timed_out() const
 {
 	if (timer_was_triggered) {
@@ -145,6 +169,11 @@ long vCPU::run_once()
 			const uint64_t ESR_EL1 = sys_reg_id(3, 0, 5, 2, 0);
 			const uint64_t esr = get_sysreg(this->fd, ESR_EL1);
 			const uint8_t ec = esr >> 26;
+			if (ec == 0x24 || ec == 0x25) {
+				if (handle_cow_data_abort(*this)) {
+					return 1;
+				}
+			}
 			if (ec != 0x15) {
 				handle_exception(ec);
 			}
@@ -165,6 +194,9 @@ long vCPU::run_once()
 		if (kvm_run->mmio.phys_addr >= ARM64_FATAL_MMIO_ADDR
 			&& kvm_run->mmio.phys_addr < ARM64_FATAL_MMIO_ADDR + 0x800
 			&& kvm_run->mmio.is_write) {
+			if (handle_cow_data_abort(*this)) {
+				return 1;
+			}
 			handle_exception(kvm_run->mmio.phys_addr - ARM64_FATAL_MMIO_ADDR);
 		}
 		Machine::machine_exception("Unhandled ARM64 MMIO exit", kvm_run->mmio.phys_addr);

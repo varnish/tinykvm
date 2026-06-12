@@ -170,9 +170,10 @@ inline void Machine::prepare_vmresume(address_t fsbase, bool reload_pagetables)
 	regs.rip = this->preserving_entry_address();
 	vcpu.set_registers(regs);
 #else
-	(void)fsbase;
 	(void)reload_pagetables;
-	throw MachineException("vmresume is not implemented on ARM64");
+	if (fsbase != 0) {
+		this->set_tls_base(fsbase);
+	}
 #endif
 }
 

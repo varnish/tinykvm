@@ -162,12 +162,6 @@ void vMemory::record_cow_leaf_user_page(uint64_t addr)
 
 bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 {
-#ifndef TINYKVM_ARCH_AMD64
-	(void)main_vm;
-	banks.reset(options);
-	cow_written_pages.clear();
-	return true;
-#else
 	if (options.reset_keep_all_work_memory) {
 		// With this method, instead of resetting the memory banks,
 		// and the pagetables, which requires an expensive mov cr3,
@@ -194,8 +188,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 		try {
 		for (const uint64_t addr : cow_written_pages) {
 			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
-				static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
-				const uint64_t bank_addr = entry & PDE64_ADDR_MASK;
+				const uint64_t bank_addr = entry & tinykvm::paging_address_mask();
 				//fprintf(stderr, "Copying virtual page %016lx from physical %016lx with size %lu\n",
 				//	addr, bank_addr, page_size);
 
@@ -218,7 +211,6 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 	banks.reset(options);
 	cow_written_pages.clear();
 	return true;
-#endif
 }
 void vMemory::fork_reset(const vMemory& other, const MachineOptions& options)
 {
@@ -531,7 +523,7 @@ char* vMemory::get_userpage_at(uint64_t addr) const
 #ifdef TINYKVM_ARCH_AMD64
 	constexpr uint64_t flags = PDE64_PRESENT | PDE64_USER;
 #else
-	constexpr uint64_t flags = 1ULL | (1ULL << 6);
+	constexpr uint64_t flags = 1ULL;
 #endif
 	return readable_page_at(*this, addr, flags);
 }

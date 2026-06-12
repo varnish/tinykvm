@@ -50,7 +50,11 @@ struct MemoryBank {
 
 struct MemoryBanks {
 	static constexpr unsigned FIRST_BANK_IDX = 2;
+#ifdef TINYKVM_ARCH_ARM64
+	static constexpr uint64_t ARENA_BASE_ADDRESS = 0x80000000;
+#else
 	static constexpr uint64_t ARENA_BASE_ADDRESS = 0x7000000000;
+#endif
 
 	MemoryBanks(Machine&, const MachineOptions&);
 	void init_from(const MemoryBanks&);
