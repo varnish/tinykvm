@@ -46,4 +46,9 @@ elseif (TINYKVM_ARCH STREQUAL "ARM64")
 		src/arm64_demo.cpp
 	)
 	target_link_libraries(arm64_demo tinykvm)
+
+	add_executable(arm64_bench
+		src/arm64_bench.cpp
+	)
+	target_link_libraries(arm64_bench tinykvm)
 endif()
