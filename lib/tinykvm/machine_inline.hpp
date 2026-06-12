@@ -107,7 +107,8 @@ void Machine::setup_call(tinykvm_regs& regs,
 #elif defined(TINYKVM_ARCH_ARM64)
 	regs.pc = addr;
 	regs.sp = rsp & ~0xFULL;
-	regs.pstate = 0x3c5;
+	/* EL0t with DAIF masked: vmcalls run in usermode. */
+	regs.pstate = 0x3c0;
 	regs.regs[30] = exit_address();
 	[[maybe_unused]] unsigned iargs = 0;
 	([&] {
@@ -189,7 +190,7 @@ inline void Machine::setup_clone(tinykvm_regs& regs, address_t stack)
 #else
 	regs.sp = stack;
 	regs.pc = this->entry_address();
-	regs.pstate = 0x3c5;
+	regs.pstate = 0x3c0;
 #endif
 }
 

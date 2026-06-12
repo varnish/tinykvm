@@ -27,10 +27,26 @@ Outstanding work on the `arm64` branch, in rough priority order.
 
 ## Features
 
-- [ ] **ARM64 ELF / dynamic-loading path.** Backend only runs raw hand-assembled
-  guests today (`lib/tinykvm/arm64/` has no ELF handling, only stubs). Needed to
-  run a real Python "agents.py" guest and get end-to-end numbers instead of
-  synthetic microbenchmarks.
+- [x] **ARM64 static-ELF path — done.** The shared loader/`setup_linux`/syscall
+  table were already arch-clean; the real gap was that guest RAM had no EL0
+  access bits, so nothing could run in usermode. Guests now run at EL0
+  (required for CoW integrity: an EL1 guest could rewrite its own stage-1
+  tables and strip the read-only bits protecting master memory). RAM is
+  user-RWX with a new L3 table for the first 2 MB (vectors page user-RO so it
+  stays EL1-executable, PT/vCPU-table pages EL1-only, pages below 0x8000
+  unmapped as a null-deref guard); the MMIO trap block is user-accessible so
+  EL0 hits the stop/syscall MMIO directly. SCTLR gains SPAN/DZE/UCT/UCI/
+  nTWI/nTWE for glibc string routines and PAN-safe vectors. `setup_linux`
+  masks HWCAP_SVE/HWCAP_CPUID/HWCAP2_SME (host caps the vCPU lacks; CPUID
+  invites EL0 ID-register reads our vectors treat as fatal). Static glibc
+  binaries run end-to-end: argv/env, write(), heap (`dc zva`), `vmcall` into
+  ELF functions, and forked CoW-isolated vmcalls — see `tests/unit/arm64_elf.cpp`
+  (6 cases). Bench/reset numbers unchanged (~33 µs reset).
+
+- [ ] **ARM64 dynamic ELF (interpreter) path.** Needed for a real Python
+  "agents.py" guest: load `ld-linux-aarch64.so.1` with the program as argv,
+  as the amd64 `elf.cpp` tests do (`mmap_backed_files`, openat of guest
+  libraries). Untested on ARM64; likely needs mmap-range + protection work.
 
 - [x] **Write-prefetch optimization (Option A) — done.** New
   `Machine::prefetch_pages(pages)` API (declared in `machine.hpp`, implemented

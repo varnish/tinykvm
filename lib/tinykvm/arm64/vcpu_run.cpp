@@ -257,7 +257,9 @@ void vCPU::handle_exception(uint64_t intr)
 {
 	const uint64_t ESR_EL1 = sys_reg_id(3, 0, 5, 2, 0);
 	const uint64_t FAR_EL1 = sys_reg_id(3, 0, 6, 0, 0);
-	const uint64_t ELR_EL1 = sys_reg_id(3, 0, 4, 0, 1);
+	/* ELR_EL1 is a core register in KVM, not a sysreg. */
+	const uint64_t ELR_EL1 = KVM_REG_ARM64 | KVM_REG_SIZE_U64
+		| KVM_REG_ARM_CORE | (offsetof(struct kvm_regs, elr_el1) / sizeof(__u32));
 	const uint64_t esr = get_sysreg(this->fd, ESR_EL1);
 	const uint64_t far = get_sysreg(this->fd, FAR_EL1);
 	const uint64_t elr = get_sysreg(this->fd, ELR_EL1);

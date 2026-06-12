@@ -81,9 +81,8 @@ static uint64_t table_desc(uint64_t addr)
 	return (addr & ~0xFFFULL) | DESC_TABLE | DESC_VALID;
 }
 
-static uint64_t block_desc(uint64_t addr, uint64_t attr)
+static uint64_t block_desc(uint64_t addr, uint64_t attr, uint64_t prot)
 {
-	uint64_t prot = DESC_UXN;
 	return (addr & ~0x1FFFFFULL) | attr | prot | DESC_AF | DESC_SH_INNER | DESC_VALID;
 }
 
@@ -217,23 +216,53 @@ static void install_identity_map(Machine& machine)
 	std::array<uint64_t, 512> l1 {};
 	std::array<uint64_t, 512> l2 {};
 	std::array<uint64_t, 512> l2_trap {};
+	std::array<uint64_t, 512> l3_low {};
+
+	/* Guest RAM is EL0-accessible so that loaded programs run in usermode.
+	   Usermode is load-bearing for CoW integrity: an EL1 guest could rewrite
+	   its own stage-1 tables and strip the read-only bits that protect the
+	   master VM's memory. A user-writable page is implicitly PXN at EL1;
+	   set it explicitly as well. UXN stays clear: program code is loaded
+	   into plain RAM and there are no per-segment protections (yet). */
+	const uint64_t USER_RWX = DESC_AP_USER | DESC_PXN;
 
 	l1[0] = table_desc(PT_ADDR + 0x1000);
 	for (size_t i = 1; i < 4; i++) {
-		l1[i] = block_desc(i * L1_BLOCK_SIZE, ATTR_NORMAL);
+		l1[i] = block_desc(i * L1_BLOCK_SIZE, ATTR_NORMAL, USER_RWX);
 	}
 	l1[ARM64_STOP_MMIO_ADDR / L1_BLOCK_SIZE] = table_desc(PT_ADDR + 0x2000);
 
-	for (size_t i = 0; i < l2.size(); i++) {
+	l2[0] = table_desc(PT_ADDR + 0x3000);
+	for (size_t i = 1; i < l2.size(); i++) {
 		const uint64_t addr = i * L2_BLOCK_SIZE;
-		l2[i] = block_desc(addr, ATTR_NORMAL);
+		l2[i] = block_desc(addr, ATTR_NORMAL, USER_RWX);
 	}
+
+	/* The first 2MB at page granularity: the vectors page must remain
+	   EL1-executable, which requires it to be user-read-only (user-writable
+	   forces PXN). It is also EL0-executable so usermode guests can return
+	   through the RET_STOP stub. The page tables and vCPU table are EL1-only.
+	   Pages below the vectors page stay unmapped to catch null dereferences. */
+	l3_low[VECTORS_ADDR >> 12] = page_desc(VECTORS_ADDR, DESC_AP_USER | DESC_AP_RO);
+	for (uint64_t addr = VECTORS_ADDR + 0x1000;
+		addr < VCPU_TABLE_ADDR + VCPU_TABLE_SIZE; addr += 0x1000) {
+		l3_low[addr >> 12] = page_desc(addr, DESC_UXN | DESC_PXN);
+	}
+	for (uint64_t addr = VCPU_TABLE_ADDR + VCPU_TABLE_SIZE;
+		addr < L2_BLOCK_SIZE; addr += 0x1000) {
+		l3_low[addr >> 12] = page_desc(addr, USER_RWX);
+	}
+
 	const uint64_t trap_l1_base = (ARM64_STOP_MMIO_ADDR / L1_BLOCK_SIZE) * L1_BLOCK_SIZE;
 	for (size_t i = 0; i < l2_trap.size(); i++) {
 		const uint64_t addr = trap_l1_base + i * L2_BLOCK_SIZE;
 		const bool is_trap_block =
 			addr <= ARM64_STOP_MMIO_ADDR && ARM64_STOP_MMIO_ADDR < addr + L2_BLOCK_SIZE;
-		l2_trap[i] = block_desc(addr, is_trap_block ? ATTR_DEVICE : ATTR_NORMAL);
+		/* The trap block is user-accessible: EL0 guests stop through the
+		   RET_STOP stub's store to the stop-MMIO address. */
+		l2_trap[i] = block_desc(addr,
+			is_trap_block ? ATTR_DEVICE : ATTR_NORMAL,
+			is_trap_block ? (DESC_AP_USER | DESC_UXN | DESC_PXN) : USER_RWX);
 	}
 
 	std::memcpy(machine.unsafe_memory_at(PT_ADDR, l1.size() * sizeof(uint64_t)),
@@ -242,6 +271,8 @@ static void install_identity_map(Machine& machine)
 		l2.data(), l2.size() * sizeof(uint64_t));
 	std::memcpy(machine.unsafe_memory_at(PT_ADDR + 0x2000, l2_trap.size() * sizeof(uint64_t)),
 		l2_trap.data(), l2_trap.size() * sizeof(uint64_t));
+	std::memcpy(machine.unsafe_memory_at(PT_ADDR + 0x3000, l3_low.size() * sizeof(uint64_t)),
+		l3_low.data(), l3_low.size() * sizeof(uint64_t));
 }
 
 } // namespace
@@ -263,10 +294,17 @@ void arm64_setup_el1_mmu(Machine& machine, vCPU& cpu)
 	set_sysreg(cpu, TTBR0_EL1, PT_ADDR);
 	set_sysreg(cpu, VBAR_EL1, VECTORS_ADDR);
 	set_sysreg(cpu, CPACR_EL1, 3ULL << 20);
+	/* Beyond MMU+caches and the RES1 bits, EL0 guests need: SPAN keeps
+	   PSTATE.PAN clear on exception entry (the vectors store to the
+	   user-accessible MMIO trap pages); DZE/UCT/UCI allow EL0 `dc zva`,
+	   CTR_EL0 reads and cache maintenance (glibc string routines);
+	   nTWI/nTWE make EL0 wfi/wfe non-trapping. */
 	set_sysreg(cpu, SCTLR_EL1,
 		(1ULL << 0) | (1ULL << 2) | (1ULL << 12) |
 		(1ULL << 11) | (1ULL << 20) | (1ULL << 22) |
-		(1ULL << 28) | (1ULL << 29));
+		(1ULL << 28) | (1ULL << 29) |
+		(1ULL << 14) | (1ULL << 15) | (1ULL << 16) |
+		(1ULL << 18) | (1ULL << 23) | (1ULL << 26));
 }
 
 void print_pagetables(const vMemory& memory)
@@ -531,12 +569,12 @@ size_t paging_merge_leaf_pages_into_hugepages(vMemory& memory, bool merge_if_dir
 	return merged_pages;
 }
 
-uint64_t paging_default_usermode_flags(bool executable_heap)
+uint64_t paging_default_usermode_flags(bool)
 {
-	uint64_t flags = DESC_VALID;
-	if (!executable_heap)
-		flags |= DESC_UXN;
-	return flags;
+	/* Used only to verify writability on this arch. UXN must not be part of
+	   the check: user pages are mapped executable (no per-segment protections
+	   yet), so requiring it would reject every ordinary RAM page. */
+	return DESC_VALID;
 }
 
 uint64_t paging_address_mask()

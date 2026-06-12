@@ -364,7 +364,8 @@ void Machine::setup_registers(tinykvm_regs& regs)
 #elif defined(TINYKVM_ARCH_ARM64)
 	regs.pc = this->start_address();
 	regs.sp = this->stack_address();
-	regs.pstate = 0x3c5;
+	/* EL0t with DAIF masked: guests run in usermode. */
+	regs.pstate = 0x3c0;
 #endif
 }
 

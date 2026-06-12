@@ -145,8 +145,18 @@ void Machine::setup_linux(__u64& rsp,
 	const address_t entry_address = this->m_image_base + binary_ehdr->e_entry;
 	push_aux(argv, {AT_BASE, base_address});
 	push_aux(argv, {AT_ENTRY, entry_address});
+#if defined(TINYKVM_ARCH_ARM64)
+	/* Hide host capabilities the guest cannot use: the vCPU is created
+	   without the optional SVE/SME features, and HWCAP_CPUID would invite
+	   EL0 ID-register reads (normally emulated by the kernel) that our EL1
+	   vectors treat as fatal. glibc ifunc resolvers check all three. */
+	push_aux(argv, {AT_HWCAP,  getauxval(AT_HWCAP)
+		& ~((1UL << 22) | (1UL << 11))});  /* HWCAP_SVE, HWCAP_CPUID */
+	push_aux(argv, {AT_HWCAP2, getauxval(AT_HWCAP2) & ~(1UL << 23)}); /* HWCAP2_SME */
+#else
 	push_aux(argv, {AT_HWCAP,  getauxval(AT_HWCAP)});
 	push_aux(argv, {AT_HWCAP2, getauxval(AT_HWCAP2)});
+#endif
 #ifdef AT_HWCAP3
 	push_aux(argv, {AT_HWCAP3, getauxval(AT_HWCAP3)});
 # ifdef AT_HWCAP4

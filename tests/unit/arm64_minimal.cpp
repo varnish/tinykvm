@@ -87,7 +87,7 @@ TEST_CASE("ARM64 raw guest exits through TinyKVM MMIO ABI", "[arm64]")
 	auto regs = machine.registers();
 	regs.pc = CODE_ADDR;
 	regs.sp = STACK_ADDR;
-	regs.pstate = 0x3c5;
+	regs.pstate = 0x3c0;
 	regs.regs[1] = 35;
 	regs.regs[2] = DATA_ADDR;
 	regs.regs[3] = tinykvm::ARM64_STOP_MMIO_ADDR;
@@ -130,7 +130,7 @@ TEST_CASE("ARM64 SVC guest exits through TinyKVM syscall MMIO ABI", "[arm64]")
 	auto regs = machine.registers();
 	regs.pc = CODE_ADDR;
 	regs.sp = STACK_ADDR;
-	regs.pstate = 0x3c5;
+	regs.pstate = 0x3c0;
 	regs.regs[2] = DATA_ADDR;
 	regs.regs[3] = DATA_ADDR + sizeof(uint64_t);
 	regs.regs[4] = tinykvm::ARM64_STOP_MMIO_ADDR;
@@ -200,7 +200,7 @@ TEST_CASE("ARM64 fork uses copy-on-write for guest stores", "[arm64]")
 	auto regs = fork.registers();
 	regs.pc = CODE_ADDR;
 	regs.sp = STACK_ADDR;
-	regs.pstate = 0x3c5;
+	regs.pstate = 0x3c0;
 	regs.regs[1] = 0xABCDEF;
 	regs.regs[2] = DATA_ADDR;
 	regs.regs[3] = DATA_ADDR + sizeof(uint64_t);
@@ -250,7 +250,7 @@ TEST_CASE("ARM64 fork re-runs correctly after reset_to", "[arm64]")
 		auto regs = fork.registers();
 		regs.pc = CODE_ADDR;
 		regs.sp = STACK_ADDR;
-		regs.pstate = 0x3c5;
+		regs.pstate = 0x3c0;
 		regs.regs[1] = value;
 		regs.regs[2] = DATA_ADDR;
 		regs.regs[3] = DATA_ADDR + sizeof(uint64_t);
@@ -297,7 +297,7 @@ TEST_CASE("ARM64 prefetch_pages pre-CoWs a harvested write set", "[arm64]")
 		auto regs = m.registers();
 		regs.pc = CODE_ADDR;
 		regs.sp = STACK_ADDR;
-		regs.pstate = 0x3c5;
+		regs.pstate = 0x3c0;
 		regs.regs[1] = value;
 		regs.regs[2] = DATA_ADDR;
 		regs.regs[3] = DATA_ADDR + sizeof(uint64_t);
@@ -368,7 +368,9 @@ TEST_CASE("ARM64 merges uniform 4 KiB leaves into an L2 block", "[arm64]")
 	}};
 	auto& memory = machine.main_memory();
 	const uint64_t addr_mask = tinykvm::paging_address_mask();
-	const uint64_t block_addr = DATA_ADDR & ~((1ULL << 21) - 1);
+	// The first 2MB region is an L3 table (kernel pages + null guard), so use
+	// the next region, which is a plain identity-mapped 2MB block.
+	const uint64_t block_addr = 1ULL << 21;
 
 	tinykvm::page_at(memory, block_addr,
 	[&memory, addr_mask] (uint64_t, uint64_t& entry, size_t size) {
@@ -413,7 +415,7 @@ TEST_CASE("ARM64 snapshot restores CPU and memory state", "[arm64]")
 		auto regs = machine.registers();
 		regs.pc = CODE_ADDR;
 		regs.sp = STACK_ADDR;
-		regs.pstate = 0x3c5;
+		regs.pstate = 0x3c0;
 		regs.regs[0] = 0x12345678;
 		machine.set_registers(regs);
 		machine.save_snapshot_state_now();
