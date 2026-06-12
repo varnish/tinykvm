@@ -155,7 +155,9 @@ void Machine::setup_linux(__u64& rsp,
 	push_aux(argv, {AT_EGID, 0});
 	push_aux(argv, {AT_SECURE, 0});
 	push_aux(argv, {AT_PLATFORM, platform_addr});
+#ifdef AT_MINSIGSTKSZ
 	push_aux(argv, {AT_MINSIGSTKSZ, getauxval(AT_MINSIGSTKSZ)});
+#endif
 
 	push_aux(argv, {AT_DCACHEBSIZE, getauxval(AT_DCACHEBSIZE)});
 	push_aux(argv, {AT_ICACHEBSIZE, getauxval(AT_ICACHEBSIZE)});
