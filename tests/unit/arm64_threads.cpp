@@ -106,19 +106,14 @@ int main() {
 	REQUIRE(machine.return_value() == 666);
 }
 
-// 3. Condition-variable producer/consumer. This is the case the TODO flags as
-//    a real blocking hand-off (consumer waits, producer signals).
-//
-//    KNOWN-FAILING (tagged !shouldfail so it does not break the suite): this
-//    deadlocks today. glibc's condvar uses FUTEX_WAIT_BITSET/FUTEX_WAKE, and
-//    the ARM64 futex handler wakes "the next suspended thread regardless of
-//    which address it waited on". Under the condvar/join handshake a wakeup is
-//    delivered to the wrong waiter, the consumer misses a signal, and both
-//    threads end up parked (consumer in cond_wait, main in pthread_join) ->
-//    Timeout. The fix is address-aware futex wake (track the wait address per
-//    suspended thread). When that lands, this test passes and the tag must be
-//    removed (Catch2 reports a passing !shouldfail test as a failure).
-TEST_CASE("ARM64 condition variable producer/consumer", "[arm64][threads][!shouldfail]")
+// 3. Condition-variable producer/consumer: a real blocking hand-off (consumer
+//    waits, producer signals). glibc's condvar uses FUTEX_WAIT_BITSET/
+//    FUTEX_WAKE, so this exercises address-aware futex wake: the signal must
+//    reach the thread blocked on the condvar word, and — because the scheduler
+//    is cooperative and the producer never blocks on the mutex on its own — the
+//    waker must yield to the woken consumer so the flag-based handshake
+//    alternates one-for-one instead of the producer racing to completion.
+TEST_CASE("ARM64 condition variable producer/consumer", "[arm64][threads]")
 {
 	require_arm64_kvm();
 	const auto [program, binary] = build_and_load(R"M(
@@ -159,7 +154,7 @@ int main() {
 		machine.set_verbose_thread_syscalls(true);
 	}
 	machine.setup_linux({"threads"}, env);
-	machine.run(3.0f); // deadlocks today; keep the !shouldfail wait short
+	machine.run(8.0f);
 
 	REQUIRE(machine.return_value() == 666);
 }

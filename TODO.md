@@ -30,34 +30,39 @@ guest threads cooperatively on one vCPU too, so this matches the warm-fork
 design.
 
 A real pthread test (`tests/unit/arm64_threads.cpp`) now exercises it.
-**pthread create/join and mutex-contended counters work** end to end; getting
-there fixed three bugs the engine had been hiding (see Done). The remaining
-gap is condition variables (deadlock — see futex item below).
+**pthread create/join, mutex-contended counters, and condition-variable
+producer/consumer all work** end to end; getting there fixed three scheduler
+bugs plus the futex wake (see Done). The remaining gap before Python/Node is
+guest signal-handler delivery (see below).
 
 ## Gating Python / Node
 
-- [x] **Threading test coverage — added; create/join + mutex pass.**
+- [x] **Threading test coverage — create/join + mutex + condvar all pass.**
   `tests/unit/arm64_threads.cpp` has a raw pthread create/join + shared-memory
-  test and a 4-thread mutex-contended counter, both passing. Writing them
-  surfaced and fixed three real bugs (see Done): a swapped-arg `prlimit64`, an
-  arm64 `memzero` dirty-bit mismatch, and — the big one — the cooperative
-  scheduler switching the wrong banked SP. A condvar producer/consumer test is
-  also present but tagged `[!shouldfail]` (deadlocks; see futex item). Still
-  to add once condvars work: a real Node and a threaded-Python guest.
+  test, a 4-thread mutex-contended counter, and a condition-variable
+  producer/consumer — all passing. Writing them surfaced and fixed three real
+  bugs (see Done): a swapped-arg `prlimit64`, an arm64 `memzero` dirty-bit
+  mismatch, and — the big one — the cooperative scheduler switching the wrong
+  banked SP; plus the address-aware futex wake below. Still to add: a real
+  Node and a threaded-Python guest (gated on signal delivery).
 
-- [ ] **`futex` wake is not address-aware → condvars deadlock.** The
-  condvar test (`arm64_threads.cpp`, `[!shouldfail]`) deadlocks. Trace shows
-  glibc using `FUTEX_WAIT_BITSET`/`FUTEX_WAKE` (ops we handle), but
-  `FUTEX_WAKE` resumes the *next* suspended thread regardless of which address
-  it waited on. Under the condvar/`pthread_join` handshake a wakeup lands on
-  the wrong waiter, the consumer misses its signal, and both threads park
-  (consumer in `cond_wait`, main in `join`). Fix: track the wait address per
-  suspended thread and wake an address-matching waiter (honouring the `val`
-  count). The same front-based `wakeup_next()` exists in the shared amd64
-  scheduler (`linux/threads.cpp`), so the fix likely belongs there too. Still
-  unhandled and likely needed next: `FUTEX_CMP_REQUEUE` (4) / `FUTEX_WAKE_OP`
-  (5) (still throw), timed waits, and `FUTEX_PRIVATE`/`FUTEX_CLOCK_REALTIME`
-  flag handling.
+- [x] **`futex` wake is now address-aware → condvars work.** The condvar test
+  used to deadlock: `FUTEX_WAKE` resumed the *next* suspended thread regardless
+  of which address it waited on, so a signal landed on the wrong waiter.
+  Fixed by tagging each suspended thread with the address it blocked on
+  (`Thread::futex_addr`, shared `linux/threads.hpp`): `FUTEX_WAIT` blocks on
+  the address and the scheduler only resumes *runnable* threads (`futex_addr
+  == 0`); `FUTEX_WAKE` marks up to `val` address-matching waiters runnable.
+  Second, crucial part: the waker **yields to the woken thread**. The scheduler
+  is cooperative and a producer never blocks on the mutex on its own (nothing
+  else is running to hold it), so a non-yielding waker would run a flag-based
+  producer to completion before the consumer ran once — lost-wakeup deadlock.
+  Thread exit now also does a `FUTEX_WAKE` on `clear_tid` so `pthread_join`
+  wakes properly. Mirrored into the shared amd64 scheduler (`linux/threads.cpp`
+  — inspected, but not compile-run here: this Asahi host has no x86 KVM headers
+  / cross-toolchain). Still unhandled and likely needed for Node/CPython:
+  `FUTEX_CMP_REQUEUE` (4) / `FUTEX_WAKE_OP` (5) (still throw), timed waits, and
+  `FUTEX_PRIVATE`/`FUTEX_CLOCK_REALTIME` flag handling.
 
 - [ ] **Guest signal handler delivery is stubbed.** `Signals::enter` throws
   ("Guest signals are not implemented on ARM64"). Today any non-ignored signal
