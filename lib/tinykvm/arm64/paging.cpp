@@ -592,4 +592,9 @@ uint64_t paging_address_mask()
 	return DESC_ADDR_MASK;
 }
 
+uint64_t paging_dirty_bit()
+{
+	return DESC_DIRTY;
+}
+
 } // namespace tinykvm

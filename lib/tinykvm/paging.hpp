@@ -35,6 +35,11 @@ extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags);
 extern size_t paging_merge_leaf_pages_into_hugepages(vMemory&, bool merge_if_dirty = false);
 extern uint64_t paging_default_usermode_flags(bool executable_heap);
 extern uint64_t paging_address_mask();
+/* The page-table descriptor bit that marks a leaf as written/dirty. Arch
+   specific: amd64 PDE64_DIRTY (bit 6) vs arm64 DESC_DIRTY (bit 55). Bit 6 on
+   arm64 is AP[1] (user access), so the mask must not be hardcoded in shared
+   code (e.g. Machine::memzero). */
+extern uint64_t paging_dirty_bit();
 
 static inline bool page_is_zeroed(const uint64_t* page) {
 	for (size_t i = 0; i < 512; i += 8) {

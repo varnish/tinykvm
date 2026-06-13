@@ -216,12 +216,24 @@ static tinykvm_arm64regs get_arm64_regs(int fd)
 	for (size_t i = 0; i < 31; i++) {
 		get_one_reg(fd, core_gpr_reg_id(i), regs.regs[i]);
 	}
-	get_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.pc)), regs.pc);
 	get_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.pstate)), regs.pstate);
-	const auto sp_reg = ((regs.pstate & ARM64_PSTATE_MODE_MASK) == ARM64_PSTATE_EL1H)
-		? KVM_REG_ARM_CORE_REG(sp_el1)
-		: KVM_REG_ARM_CORE_REG(regs.sp);
-	get_one_reg(fd, core_reg_id(sp_reg), regs.sp);
+	/* tinykvm guests run user code at EL0. When the host inspects registers
+	   it is almost always servicing a trap, i.e. the vCPU is parked at EL1h in
+	   the exception vector. The EL0 user context the host (and the cooperative
+	   thread scheduler) cares about then lives in:
+	     - regs.pc  <- ELR_EL1   (the core PC is the vector stub at 0x84xx)
+	     - regs.sp  <- SP_EL0     (== user_pt_regs.sp; sp_el1 is vector scratch)
+	   At EL0t (e.g. a stopped guest before vmcall/reset) the core PC/SP already
+	   hold the user values. Reading sp_el1 here was a latent bug: harmless for
+	   single-threaded guests (handlers only touch GPRs) but it made the thread
+	   scheduler switch the wrong banked SP, so cloned threads ran on the
+	   parent's stack. */
+	const bool el1h = (regs.pstate & ARM64_PSTATE_MODE_MASK) == ARM64_PSTATE_EL1H;
+	const auto pc_reg = el1h
+		? KVM_REG_ARM_CORE_REG(elr_el1)
+		: KVM_REG_ARM_CORE_REG(regs.pc);
+	get_one_reg(fd, core_reg_id(pc_reg), regs.pc);
+	get_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.sp)), regs.sp);
 	return regs;
 }
 
@@ -230,12 +242,16 @@ static void set_arm64_regs(int fd, const tinykvm_arm64regs& regs)
 	for (size_t i = 0; i < 31; i++) {
 		set_one_reg(fd, core_gpr_reg_id(i), regs.regs[i]);
 	}
-	set_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.pc)), regs.pc);
 	set_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.pstate)), regs.pstate);
-	const auto sp_reg = ((regs.pstate & ARM64_PSTATE_MODE_MASK) == ARM64_PSTATE_EL1H)
-		? KVM_REG_ARM_CORE_REG(sp_el1)
-		: KVM_REG_ARM_CORE_REG(regs.sp);
-	set_one_reg(fd, core_reg_id(sp_reg), regs.sp);
+	/* Mirror get_arm64_regs(): at EL1h the user PC/SP are ELR_EL1 and SP_EL0,
+	   and the core PC must be left pointing at the exception vector so it
+	   eret's back to the (possibly host-modified) ELR_EL1. */
+	const bool el1h = (regs.pstate & ARM64_PSTATE_MODE_MASK) == ARM64_PSTATE_EL1H;
+	const auto pc_reg = el1h
+		? KVM_REG_ARM_CORE_REG(elr_el1)
+		: KVM_REG_ARM_CORE_REG(regs.pc);
+	set_one_reg(fd, core_reg_id(pc_reg), regs.pc);
+	set_one_reg(fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.sp)), regs.sp);
 }
 
 /* Run the EL1 TLB-flush stub for one VM entry. The host cannot invalidate

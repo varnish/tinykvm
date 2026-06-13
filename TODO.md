@@ -2,7 +2,110 @@
 
 Outstanding work on the `arm64` branch, in rough priority order.
 
-## Bugs
+## Goal
+
+Run tinykvm guests on **ARM64** under KVM. The port already runs on
+Apple-Silicon arm64 (Asahi); broad arm64 is the target. BlueField 4 (NVIDIA
+DPU) is a bonus deployment, not a gate. Target guest workloads are **Python and
+Node**, which means the cooperative multithreading path has to be real and
+tested — not just present.
+
+## State of the port
+
+The warm-fork CoW sandbox path is functionally complete and tested:
+static + dynamic (ld.so) ELF, CoW fork / `reset_to` (~33 µs fast reset),
+file-backed mmap, write-prefetch, accessed-page harvesting, EL0 usermode with
+CoW-integrity protection, and clean VM teardown on fatal guest signals. A real
+`python3 -c` guest runs end-to-end (single-threaded). 20 tests pass
+(`arm64_minimal`, `arm64_elf`).
+
+The cooperative multithreading engine is **implemented and partly verified** on
+arm64 (`arm64/stubs.cpp`): `clone`/`clone3`/`futex`/`gettid`/`set_tid_address`/
+`sched_yield`/`exit`/`tgkill` and the full `MultiThreading` scheduler, using
+arch-neutral accessors (`stackptr()`/`sysret()`/`sysarg()`, `set_tls_base` →
+TPIDR_EL0). It mirrors the amd64 model: one vCPU, green-thread cooperative
+scheduling (a thread runs until it blocks on a futex/yield, then hands off).
+True SMP (parallel vCPUs) is intentionally **not** implemented — amd64 runs
+guest threads cooperatively on one vCPU too, so this matches the warm-fork
+design.
+
+A real pthread test (`tests/unit/arm64_threads.cpp`) now exercises it.
+**pthread create/join and mutex-contended counters work** end to end; getting
+there fixed three bugs the engine had been hiding (see Done). The remaining
+gap is condition variables (deadlock — see futex item below).
+
+## Gating Python / Node
+
+- [x] **Threading test coverage — added; create/join + mutex pass.**
+  `tests/unit/arm64_threads.cpp` has a raw pthread create/join + shared-memory
+  test and a 4-thread mutex-contended counter, both passing. Writing them
+  surfaced and fixed three real bugs (see Done): a swapped-arg `prlimit64`, an
+  arm64 `memzero` dirty-bit mismatch, and — the big one — the cooperative
+  scheduler switching the wrong banked SP. A condvar producer/consumer test is
+  also present but tagged `[!shouldfail]` (deadlocks; see futex item). Still
+  to add once condvars work: a real Node and a threaded-Python guest.
+
+- [ ] **`futex` wake is not address-aware → condvars deadlock.** The
+  condvar test (`arm64_threads.cpp`, `[!shouldfail]`) deadlocks. Trace shows
+  glibc using `FUTEX_WAIT_BITSET`/`FUTEX_WAKE` (ops we handle), but
+  `FUTEX_WAKE` resumes the *next* suspended thread regardless of which address
+  it waited on. Under the condvar/`pthread_join` handshake a wakeup lands on
+  the wrong waiter, the consumer misses its signal, and both threads park
+  (consumer in `cond_wait`, main in `join`). Fix: track the wait address per
+  suspended thread and wake an address-matching waiter (honouring the `val`
+  count). The same front-based `wakeup_next()` exists in the shared amd64
+  scheduler (`linux/threads.cpp`), so the fix likely belongs there too. Still
+  unhandled and likely needed next: `FUTEX_CMP_REQUEUE` (4) / `FUTEX_WAKE_OP`
+  (5) (still throw), timed waits, and `FUTEX_PRIVATE`/`FUTEX_CLOCK_REALTIME`
+  flag handling.
+
+- [ ] **Guest signal handler delivery is stubbed.** `Signals::enter` throws
+  ("Guest signals are not implemented on ARM64"). Today any non-ignored signal
+  terminates the VM via `tgkill` even if the guest registered a handler. Node
+  and CPython both install handlers (SIGPIPE, SIGINT, SIGCHLD). Port the
+  `linux/signals.cpp` `enter()` path to arm64 so guests can handle signals
+  instead of dying.
+
+## Performance
+
+- [ ] **Validate beyond Apple Silicon.** Current numbers are from an
+  Asahi/Apple-Silicon dev box — real arm64, but one microarchitecture. Shape
+  holds (reads free, each CoW write ≈ one ~3 µs VM-exit, prefetch removes
+  exits), but absolute µs will differ on arm64 servers (Graviton/Ampere) and on
+  BlueField 4. DPU cores are likely slower per-core, which would make the
+  prefetch win larger. Not a gate — a confidence check.
+
+- [ ] **Reduce fixed per-fork cost (~88 µs).** Page-table setup per fork is a
+  flat overhead independent of workload — a separate lever if per-agent latency
+  matters.
+
+## Done
+
+- [x] **Threading worked once the tests surfaced three hidden bugs.** Adding
+  `arm64_threads.cpp` turned "threading is implemented" into create/join +
+  mutex passing, by fixing — in order of discovery:
+  1. *`prlimit64` had `new_limit`/`old_limit` swapped* (`linux/system_calls.cpp`,
+     shared with amd64). A `RLIMIT_STACK` *read* (`new=NULL, old=&buf`) was
+     misread as a *set*, so glibc's buffer was never filled — it then sized
+     thread stacks from stack garbage and tried to `mmap` a ~4 GB stack.
+  2. *`Machine::memzero` used amd64's dirty bit on arm64* (`machine_utils.cpp`).
+     The "only zero dirty pages" check tested bit 6 = `PDE64_DIRTY` on amd64,
+     but bit 6 on arm64 is `DESC_AP_USER` (set on *every* user page), so a
+     large `PROT_NONE` mmap reservation (glibc's 128 MB malloc arena) was
+     walked page-by-page off the end of guest RAM. Added arch-neutral
+     `paging_dirty_bit()` (`paging.hpp` + both `*/paging.cpp`); arm64 returns
+     `DESC_DIRTY` (bit 55).
+  3. *The cooperative scheduler switched the wrong banked SP* (`arm64/vcpu.cpp`,
+     the real fix). During a syscall the vCPU is at EL1h, so `registers()`
+     returned the EL1 vector context: `pc` = the vector stub and `sp` =
+     `sp_el1` (vector scratch). The thread scheduler switches stacks via
+     `regs.sp`, so cloned threads got `sp_el1` set instead of their EL0 stack
+     and ran on the **parent's** stack (glibc's `advise_stack_range` then
+     aborted; futex resume restored the wrong context). Fix: at EL1h
+     `get/set_arm64_regs` now map `regs.pc`↔`ELR_EL1` and `regs.sp`↔`SP_EL0`
+     (`user_pt_regs.sp`, the EL0 user stack) instead of the vector PC and
+     `sp_el1`. Harmless for single-threaded guests (handlers only touch GPRs),
+     and `arm64_minimal`/`arm64_elf` (52 + 17 assertions) still pass.
 
 - [x] **`reset_to` broke re-runs — fixed; root causes were not the page tables.**
   The tables were always rebuilt correctly (`setup_cow_mode` re-clones them).
@@ -25,9 +128,7 @@ Outstanding work on the `arm64` branch, in rough priority order.
   `tests/unit/arm64_minimal.cpp`. Bench now has `mixed+reset` configs:
   fast reset ≈ 33 µs vs ≈ 120 µs fresh fork per iteration.
 
-## Features
-
-- [x] **ARM64 static-ELF path — done.** The shared loader/`setup_linux`/syscall
+- [x] **ARM64 static-ELF path.** The shared loader/`setup_linux`/syscall
   table were already arch-clean; the real gap was that guest RAM had no EL0
   access bits, so nothing could run in usermode. Guests now run at EL0
   (required for CoW integrity: an EL1 guest could rewrite its own stage-1
@@ -43,7 +144,7 @@ Outstanding work on the `arm64` branch, in rough priority order.
   ELF functions, and forked CoW-isolated vmcalls — see `tests/unit/arm64_elf.cpp`
   (6 cases). Bench/reset numbers unchanged (~33 µs reset).
 
-- [x] **ARM64 dynamic ELF (interpreter) path — done.** `ld-linux-aarch64.so.1`
+- [x] **ARM64 dynamic ELF (interpreter) path.** `ld-linux-aarch64.so.1`
   is loaded as the machine binary with the real program as argv, exactly like
   the amd64 `elf.cpp` tests. The mmap/protection machinery was already
   arch-clean (small files go through plain `preadv`); the real bugs were:
@@ -70,7 +171,7 @@ Outstanding work on the `arm64` branch, in rough priority order.
   the VM's actual IPA size (was fine before only because every physical
   address — RAM, banks at 2 GB — sat below 4 GB).
 
-- [x] **Write-prefetch optimization (Option A) — done.** New
+- [x] **Write-prefetch optimization (Option A).** New
   `Machine::prefetch_pages(pages)` API (declared in `machine.hpp`, implemented
   in `memory.cpp`, cross-arch) batch pre-CoWs an `(addr, size)` range list with
   the same flags/dirty semantics as the write-fault path; block-sized entries
@@ -84,35 +185,28 @@ Outstanding work on the `arm64` branch, in rough priority order.
   Note: prefetching marks pages accessed, so a re-harvest from a prefetched
   fork never shrinks the set — harvest once from a clean warmup fork.
 
-## Performance
-
-- [ ] **Run `arm64_bench` on BlueField 4.** Current numbers are from an
-  Apple-Silicon/Asahi dev box. Shape holds (reads free, each CoW write ≈ one
-  ~3 µs VM-exit, prefetch removes exits), but absolute µs will differ; DPU cores
-  are likely slower per-core, which would make the prefetch win larger.
-
-- [ ] **Reduce fixed per-fork cost (~88 µs).** Page-table setup per fork is a
-  flat overhead independent of workload — a separate lever if per-agent latency
-  matters.
+- [x] **`get_accessed_pages` decoupled onto `DESC_ACCESSED` bit (Option A).**
+  Separate from `DESC_DIRTY` so the fork reset can't corrupt CoW's
+  duplicate-vs-zero decision. Builds clean, 27/27 arm64 tests pass.
 
 ## Decided / not doing (kept for context)
 
-- [x] **`get_accessed_pages` decoupled onto `DESC_ACCESSED` bit (Option A).**
-  Done — separate from `DESC_DIRTY` so the fork reset can't corrupt CoW's
-  duplicate-vs-zero decision. Builds clean, 27/27 arm64 tests pass.
 - [ ] **Option B (read-access tracking via AF faults): not worth building** for
   the warm-fork model — reads never fault (benchmark: 256 reads → 0 faults), so
   there is nothing to prefetch. Only revisit if the harness switches to a
   demand-paged / snapshot-restore memory model.
 
-## CI / housekeeping
+- [ ] **True SMP (parallel vCPUs): not planned.** The warm-fork model is one
+  vCPU per agent; guest threads run cooperatively on that vCPU, matching amd64.
+
+## Housekeeping (low priority)
 
 - [ ] **`unittests.yml` jobs are green no-ops on hosted runners.** Both jobs use
   `runs-on: ubuntu-latest` (x86_64, no `/dev/kvm`), so the KVM gate skips all
   build/test steps and PRs show passing checks with zero tests run. Needs
   self-hosted KVM runners (x86_64 and aarch64) or the green check is misleading.
 
-- [ ] **Optional: document `get_accessed_pages` semantics** in `paging.hpp` —
+- [ ] **Document `get_accessed_pages` semantics** in `paging.hpp` —
   arm64 reports written (not read) pages, reset per fork; reads untracked by
   design (AF pre-set).
 

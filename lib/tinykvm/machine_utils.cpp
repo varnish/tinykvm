@@ -14,14 +14,20 @@ namespace tinykvm {
 
 void Machine::memzero(address_t addr, size_t len)
 {
+	/* Only pages that already hold content (the dirty bit is set) need
+	   zeroing; clean/identity-mapped pages read as zero already. The dirty
+	   bit is arch specific — hardcoding amd64's bit 6 here zeroed every
+	   user page on arm64 (bit 6 is AP[1] there), so a large PROT_NONE mmap
+	   reservation walked off the end of guest RAM. */
+	const uint64_t dirty_bit = paging_dirty_bit();
 	while (len != 0)
 	{
 		const size_t offset = addr & PageMask();
 		const size_t size = std::min(vMemory::PageSize() - offset, len);
 		bool must_be_zeroed = false;
 		page_at(memory, addr & ~PageMask(),
-			[&must_be_zeroed] (address_t /*page_addr*/, uint64_t flags, size_t /*page_size*/) {
-				if ((flags & (1UL << 6)) == 0) {
+			[&must_be_zeroed, dirty_bit] (address_t /*page_addr*/, uint64_t flags, size_t /*page_size*/) {
+				if ((flags & dirty_bit) == 0) {
 					/* This is not a dirty page, so we can skip zeroing it */
 					must_be_zeroed = false;
 				} else {

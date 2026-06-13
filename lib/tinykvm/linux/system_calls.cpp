@@ -2792,8 +2792,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 	Machine::install_syscall_handler(
 		SYS_prlimit64, [](vCPU& cpu) { // prlimit64
 			auto& regs = cpu.registers();
-			const auto oldptr = regs.sysarg(2);
-			const auto newptr = regs.sysarg(3);
+			/* prlimit64(pid, resource, const rlimit64* new_limit,
+			   rlimit64* old_limit): the new limit is arg2, the old-limit
+			   output buffer is arg3. (Previously swapped, which left the
+			   caller's RLIMIT_STACK buffer uninitialised — glibc then read
+			   garbage and tried to mmap a multi-GB thread stack.) */
+			const auto newptr = regs.sysarg(2);
+			const auto oldptr = regs.sysarg(3);
 
 			switch (regs.sysarg(1))
 			{
