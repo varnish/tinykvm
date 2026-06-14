@@ -438,7 +438,12 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 	if (!is_valid(e2))
 		memory_exception("writable_page_at: l2 entry not present", addr, L2_BLOCK_SIZE);
 	if (is_leaf(e2, 2)) {
-		if ((e2 & DESC_CLONEABLE) && memory.split_hugepages)
+		// Split a cloneable *or* read-only block so the specific 4KB page is
+		// resolved (and, where needed, copy-on-write'd) in the L3 path below.
+		// A read-only, non-cloneable block is a plain mapping -- e.g. a
+		// file-backed .so hugepage installed by mmap_backed_area -- that the
+		// host or guest now needs to write to.
+		if (((e2 & DESC_CLONEABLE) || !is_writable(e2)) && memory.split_hugepages)
 			split_l2_block(memory, e2);
 		else if (!has_flags(e2, verify_flags) || !is_writable(e2))
 			memory_exception("writable_page_at: l2 entry not writable", addr, e2);
@@ -457,6 +462,31 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 		memory_exception("writable_page_at: l3 entry not present", addr, L3_PAGE_SIZE);
 	auto* data = memory.page_at(e3 & DESC_ADDR_MASK);
 	cow_page(memory, addr, e3, data, options);
+	// A present, read-only, non-cloneable page is not a copy-on-write clone
+	// source, so cow_page() leaves it untouched -- but the caller still needs to
+	// write here (filling a fresh mmap that overlaps a file-backed mapping, or a
+	// guest store to it). Promote it: on the identity-mapped master in place
+	// (makecow re-marks it copy-on-write at snapshot); on a fork via a private
+	// copy, so the write cannot bleed into the shared master page.
+	if (is_valid(e3) && !is_writable(e3) && (e3 & DESC_CLONEABLE) == 0) {
+		if (memory.machine.is_forked()) {
+			auto page = memory.new_page();
+			if (options.zeroes || (e3 & DESC_DIRTY) == 0) {
+				if (page.dirty)
+					page_memzero(page.pmem);
+			} else {
+				page_duplicate(page.pmem, data);
+			}
+			e3 = page.addr
+				| (e3 & (DESC_FLAGS_MASK & ~(DESC_CLONEABLE | DESC_AP_RO)))
+				| DESC_VALID | DESC_PAGE;
+			data = page.pmem;
+			if (e3 & DESC_AP_USER)
+				memory.record_cow_leaf_user_page(addr);
+		} else {
+			e3 &= ~DESC_AP_RO;
+		}
+	}
 	if (!has_flags(e3, verify_flags) || !is_writable(e3))
 		memory_exception("writable_page_at: l3 entry not writable", addr, e3);
 	return WritablePage{.page = (char*)data, .entry = e3, .size = L3_PAGE_SIZE};
@@ -506,10 +536,18 @@ void WritablePage::set_protections(int prot)
 		entry &= ~DESC_AP_RO;
 	else
 		entry |= DESC_AP_RO;
+	// Execute permission (EL0). Guest RAM is uniformly EL0-executable: the
+	// identity map sets no UXN, and mprotect() is a no-op on this port, so the
+	// PROT_EXEC that a loader applies after mapping a segment PROT_READ can
+	// never take effect. Setting UXN here (for a file-backed mapping installed
+	// by mmap_backed_area) would therefore leave a .so text segment permanently
+	// non-executable and fault on first instruction fetch. Keep UXN clear and
+	// let PXN alone track PROT_EXEC as EL1 defence in depth.
+	entry &= ~DESC_UXN;
 	if (prot & PROT_EXEC)
-		entry &= ~(DESC_UXN | DESC_PXN);
+		entry &= ~DESC_PXN;
 	else
-		entry |= DESC_UXN | DESC_PXN;
+		entry |= DESC_PXN;
 }
 
 size_t paging_merge_leaf_pages_into_hugepages(vMemory& memory, bool merge_if_dirty)

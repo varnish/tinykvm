@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string_view>
 #include <vector>
+#include <sys/mman.h>
 #include <unistd.h>
 #include <tinykvm/arm64/memory_layout.hpp>
 #include <tinykvm/machine.hpp>
@@ -434,4 +435,122 @@ TEST_CASE("ARM64 snapshot restores CPU and memory state", "[arm64]")
 	REQUIRE(restored.registers().regs[0] == 0x12345678);
 
 	unlink(path);
+}
+
+// Bit layout of an ARM64 stage-1 descriptor (mirrors arm64/paging.cpp).
+static constexpr uint64_t TEST_DESC_AP_RO    = 1ULL << 7;
+static constexpr uint64_t TEST_DESC_CLONEABLE = 1ULL << 56;
+
+TEST_CASE("ARM64 host write promotes a read-only non-cloneable block", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	tinykvm::Machine machine {empty_binary, {
+		.max_mem = 8ull << 20,
+		.max_cow_mem = 4u << 20,
+		.split_hugepages = true,
+	}};
+	auto& memory = machine.main_memory();
+
+	// Second 2MB region: a plain identity-mapped L2 block (the first 2MB is an
+	// L3 table holding the kernel pages + null guard).
+	const uint64_t block_addr = 1ULL << 21;            // 0x200000
+	const uint64_t write_addr = block_addr + 0x50000;  // unaligned into the block
+
+	// Reproduce the page shape that crashed master boot: a valid, read-only,
+	// NON-cloneable 2MB block. That is exactly what mmap_backed_area installs
+	// for a large PROT_READ (.so) mapping, and which makecow then leaves alone
+	// because it only marks *writable* pages copy-on-write.
+	tinykvm::page_at(memory, block_addr,
+	[] (uint64_t, uint64_t& entry, size_t size) {
+		REQUIRE(size == (1ULL << 21));
+		entry |= TEST_DESC_AP_RO;
+		entry &= ~TEST_DESC_CLONEABLE;
+	});
+
+	// The mmap syscall handler fills a freshly-mapped region that overlaps this
+	// span with a host-side write (memzero / preadv -> writable_buffers_from_range
+	// -> writable_page_at). That must promote the page, not throw
+	// "writable_page_at: l2 entry not writable".
+	const uint64_t value = 0xC0FFEE1234ull;
+	REQUIRE_NOTHROW(machine.copy_to_guest(write_addr, &value, sizeof(value)));
+
+	uint64_t readback = 0;
+	machine.copy_from_guest(&readback, write_addr, sizeof(readback));
+	REQUIRE(readback == value);
+}
+
+TEST_CASE("ARM64 fork write to a read-only non-cloneable page stays private", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	const tinykvm::MachineOptions options {
+		.max_mem = 8ull << 20,
+		.max_cow_mem = 4u << 20,
+		.split_hugepages = true,
+	};
+	const uint64_t block_addr = 1ULL << 21;
+	const uint64_t write_addr = block_addr + 0x50000;
+	const uint64_t original = 0x1111111111111111ull;
+
+	tinykvm::Machine master {empty_binary, options};
+	master.copy_to_guest(write_addr, &original, sizeof(original));
+	// Make the block read-only + non-cloneable (the file-backed .so shape).
+	// makecow leaves it untouched because it is not writable, so the fork
+	// inherits a page that points at the *shared* master memory.
+	tinykvm::page_at(master.main_memory(), block_addr,
+	[] (uint64_t, uint64_t& entry, size_t) {
+		entry |= TEST_DESC_AP_RO;
+		entry &= ~TEST_DESC_CLONEABLE;
+	});
+	master.prepare_copy_on_write(options.max_cow_mem);
+
+	tinykvm::Machine fork {master, options};
+	const uint64_t updated = 0x2222222222222222ull;
+	REQUIRE_NOTHROW(fork.copy_to_guest(write_addr, &updated, sizeof(updated)));
+
+	uint64_t fork_value = 0;
+	uint64_t master_value = 0;
+	fork.copy_from_guest(&fork_value, write_addr, sizeof(fork_value));
+	master.copy_from_guest(&master_value, write_addr, sizeof(master_value));
+
+	// The fork sees its own write; the shared master page must be untouched.
+	// (Invariant: no cross-session bleed through a read-only shared page.)
+	REQUIRE(fork_value == updated);
+	REQUIRE(master_value == original);
+}
+
+TEST_CASE("ARM64 read-only file-backed protections stay EL0-executable", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	tinykvm::Machine machine {empty_binary, {
+		.max_mem = 8ull << 20,
+		.max_cow_mem = 4u << 20,
+		.split_hugepages = true,
+	}};
+	auto& memory = machine.main_memory();
+
+	constexpr uint64_t DESC_UXN = 1ULL << 54;
+	const uint64_t addr = (1ULL << 21) + 0x1000;
+
+	// mmap_backed_area protects a large .so's PROT_READ reservation via
+	// set_protections(PROT_READ). Because mprotect() is a no-op on this port and
+	// guest RAM is otherwise uniformly EL0-executable, that must NOT mark the
+	// page execute-never (UXN): a .so text segment loaded through this path
+	// would then fault (EC 0x20, instruction abort) on first fetch, with no way
+	// for the loader's later PROT_EXEC mprotect() to recover.
+	tinykvm::WritablePage page =
+		writable_page_at(memory, addr, tinykvm::paging_default_usermode_flags(false));
+	page.set_protections(PROT_READ);
+
+	bool uxn_set = false;
+	tinykvm::page_at(memory, addr,
+	[&] (uint64_t, uint64_t& entry, size_t) {
+		uxn_set = (entry & DESC_UXN) != 0;
+	});
+	REQUIRE(!uxn_set);
 }
