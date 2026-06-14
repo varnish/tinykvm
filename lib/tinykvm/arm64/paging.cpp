@@ -315,6 +315,15 @@ void arm64_setup_el1_mmu(Machine& machine, vCPU& cpu)
 		(1ULL << 28) | (1ULL << 29) |
 		(1ULL << 14) | (1ULL << 15) | (1ULL << 16) |
 		(1ULL << 18) | (1ULL << 23) | (1ULL << 26));
+
+	/* CNTKCTL_EL1.EL0VCTEN|EL0PCTEN: let EL0 read the generic-timer counters
+	   (CNTVCT_EL0 / CNTPCT_EL0) directly. Without this an `mrs x, cntvct_el0`
+	   -- emitted inline by ordinary timing/benchmark code, e.g. numpy's bundled
+	   OpenBLAS during CPU detection -- traps to EL1 (ESR EC=0x18) and, with no
+	   handler, aborts the guest. The counter is the host's, so it advances and
+	   varies per fork (it is not frozen like the gettimeofday path). */
+	const uint64_t CNTKCTL_EL1 = sys_reg_id(3, 0, 14, 1, 0);
+	set_sysreg(cpu, CNTKCTL_EL1, (1ULL << 0) | (1ULL << 1));
 }
 
 void print_pagetables(const vMemory& memory)

@@ -46,6 +46,12 @@ static const std::array<uint32_t, 4> cow_guest {
 	0xF9000080, // str x0, [x4]
 };
 
+static const std::array<uint32_t, 3> cntvct_guest {
+	0xD53BE040, // mrs x0, cntvct_el0
+	0xF9000040, // str x0, [x2]   (DATA_ADDR)
+	0xF9000060, // str x0, [x3]   (STOP MMIO -> exit)
+};
+
 static bool contains_page(const std::vector<std::pair<uint64_t, uint64_t>>& pages,
 	uint64_t addr)
 {
@@ -553,4 +559,33 @@ TEST_CASE("ARM64 read-only file-backed protections stay EL0-executable", "[arm64
 		uxn_set = (entry & DESC_UXN) != 0;
 	});
 	REQUIRE(!uxn_set);
+}
+
+TEST_CASE("ARM64 EL0 reads cntvct_el0 without trapping", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	tinykvm::Machine machine {empty_binary, { .max_mem = MAX_MEMORY }};
+	machine.copy_to_guest(CODE_ADDR, cntvct_guest.data(),
+		cntvct_guest.size() * sizeof(cntvct_guest[0]));
+
+	auto regs = machine.registers();
+	regs.pc = CODE_ADDR;
+	regs.sp = STACK_ADDR;
+	regs.pstate = 0x3c0;       // EL0t
+	regs.regs[0] = 0xDEADBEEF; // sentinel the MRS must overwrite
+	regs.regs[2] = DATA_ADDR;
+	regs.regs[3] = tinykvm::ARM64_STOP_MMIO_ADDR;
+	machine.set_registers(regs);
+
+	// `mrs x0, cntvct_el0` from EL0 traps (ESR EC=0x18) and aborts the guest
+	// unless CNTKCTL_EL1.EL0VCTEN is set. Ordinary timing code (e.g. numpy's
+	// bundled OpenBLAS during CPU detection) emits exactly this instruction.
+	REQUIRE_NOTHROW(machine.run(1.0f));
+
+	uint64_t counter = 0;
+	machine.copy_from_guest(&counter, DATA_ADDR, sizeof(counter));
+	REQUIRE(machine.stopped());
+	REQUIRE(counter != 0xDEADBEEF); // the counter read actually executed
 }
