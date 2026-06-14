@@ -516,6 +516,47 @@ void Machine::enter_usermode()
 	vcpu.enter_usermode();
 }
 
+tinykvm_regs vCPU::usermode_frame_from_syscall() const
+{
+	/* Build a resumable EL0 (usermode) register frame from a vCPU that is
+	   currently parked *inside* a syscall handler (EL1). This MUST be called
+	   while the handler is on the stack -- i.e. from a syscall/fds callback --
+	   because the general-purpose registers x0..x30 still hold the user's
+	   pristine values then. (After the run loop returns, the deferred
+	   PC-increment re-enters the EL1 trampoline, which clobbers scratch
+	   registers like x1.) The user's return PC and stack are banked in ELR_EL1
+	   and SP_EL0; the GP registers are not banked, so we keep them as-is. */
+	auto regs = this->registers();
+	__u64 user_pc = 0, user_sp = 0;
+	get_one_reg(this->fd, core_reg_id(KVM_REG_ARM_CORE_REG(elr_el1)), user_pc);
+	get_one_reg(this->fd, core_reg_id(KVM_REG_ARM_CORE_REG(regs.sp)), user_sp);
+	regs.pc     = user_pc;   // ELR_EL1: instruction after the user's SVC
+	regs.sp     = user_sp;   // SP_EL0:  the user stack (unchanged by the trap)
+	regs.pstate = (regs.pstate & ~ARM64_PSTATE_MODE_MASK) | ARM64_PSTATE_EL0T;
+	return regs;
+}
+
+tinykvm_regs Machine::usermode_frame_from_syscall() const
+{
+	return vcpu.usermode_frame_from_syscall();
+}
+
+uint64_t Machine::tpidr_el0() const
+{
+	__u64 t = 0;
+	get_one_reg(this->vcpu.fd, sys_reg_id(3, 3, 13, 0, 2), t);
+	return t;
+}
+
+void Machine::set_tpidr_el0(uint64_t value)
+{
+	/* The user-space thread pointer (TLS base). A fork's MultiThreading reset
+	   rebuilds thread state and clears this; for a fork resumed directly into
+	   EL0 user code (not via vmcall) it must be restored to the master's value
+	   or the guest's first TLS access (errno, &c) faults. */
+	set_one_reg(this->vcpu.fd, sys_reg_id(3, 3, 13, 0, 2), value);
+}
+
 Machine::address_t Machine::entry_address() const noexcept {
 	return start_address();
 }

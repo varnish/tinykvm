@@ -34,6 +34,11 @@ namespace tinykvm
 		bool is_usermode() const;
 		bool is_kernelmode() const;
 		void enter_usermode();
+		/* ARM64: build a resumable EL0 usermode register frame from a vCPU
+		   parked inside a syscall handler (PC<-ELR_EL1, SP<-SP_EL0, pstate=EL0T,
+		   GP regs kept). Call from within the handler, before the run loop
+		   returns, while x0..x30 are still the user's pristine values. */
+		tinykvm_regs usermode_frame_from_syscall() const;
 
 		void print_registers() const;
 		void handle_exception(uint64_t intr);

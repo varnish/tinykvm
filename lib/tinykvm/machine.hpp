@@ -32,6 +32,15 @@ struct Machine
 	void run(float timeout_secs = 0.f);
 	void run_in_usermode(float timeout_secs = 0.f);
 	void enter_usermode();
+	/* ARM64: build a resumable EL0 usermode register frame from a vCPU parked
+	   inside a syscall handler, so a fork/snapshot can resume in userspace.
+	   PC<-ELR_EL1, SP<-SP_EL0, pstate=EL0T, GP regs kept. Call from within the
+	   handler (e.g. an fds() callback) while x0..x30 are still pristine. */
+	tinykvm_regs usermode_frame_from_syscall() const;
+	/* ARM64: read/write the EL0 thread pointer (TPIDR_EL0 / TLS base). Needed
+	   to carry the TLS base into a fork resumed directly into usermode. */
+	uint64_t tpidr_el0() const;
+	void set_tpidr_el0(uint64_t value);
 
 	/* Make a SYSV function call into the VM, with no timeout */
 	template <typename... Args>
