@@ -13,8 +13,17 @@
 
 #define TINYKVM_COLD()   __attribute__ ((cold))
 
-#include <array>
 #include <cstdint>
+
+#ifndef PAGE_SIZE
+#define PAGE_SIZE 4096
+#endif
+
+static constexpr inline uint64_t PageMask() {
+	return PAGE_SIZE - 1UL;
+}
+
+#include <array>
 #include <exception>
 #include <string>
 #include <string_view>

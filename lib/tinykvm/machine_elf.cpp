@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <elf.h>
 #include <stdexcept>
 #ifdef TINYKVM_ARCH_AMD64
 #include "amd64/idt.hpp" // interrupt_header()
@@ -61,6 +62,15 @@ void Machine::elf_loader(std::string_view binary, const MachineOptions& options)
 	if (UNLIKELY(!validate_header(elf))) {
 		throw MachineException("Invalid ELF header! Not a 64-bit program?");
 	}
+#if defined(TINYKVM_ARCH_AMD64)
+	if (UNLIKELY(elf->e_machine != EM_X86_64)) {
+		throw MachineException("ELF machine type is not x86-64", elf->e_machine);
+	}
+#elif defined(TINYKVM_ARCH_ARM64)
+	if (UNLIKELY(elf->e_machine != EM_AARCH64)) {
+		throw MachineException("ELF machine type is not AArch64", elf->e_machine);
+	}
+#endif
 	const DynamicElf elf_dynamic = is_dynamic_elf(binary);
 	const bool is_dynamic = elf_dynamic.is_dynamic;
 	if (UNLIKELY(elf_dynamic.has_interpreter())) {
@@ -451,9 +461,18 @@ void Machine::dynamic_linking(std::string_view binary, const MachineOptions& opt
 {
 	(void)binary;
 	(void)options;
+#if defined(TINYKVM_ARCH_ARM64)
+	/* A glibc ET_DYN entered at its own entry point (ld.so, static-PIE)
+	   self-relocates during startup. RELR entries are "*addr += base" —
+	   not idempotent — so pre-applying them here would double-relocate
+	   once the guest applies them again (modern aarch64 ld.so carries
+	   DT_RELR). RELATIVE rela entries are absolute writes the guest
+	   redoes anyway. Leave all relocation to the guest. */
+#else
 	this->relocate_relr_section(".relr.dyn");
 	this->relocate_section(".rela.dyn", ".dynsym");
 	//this->relocate_section(".rela.plt", ".dynsym");
+#endif
 }
 
 }

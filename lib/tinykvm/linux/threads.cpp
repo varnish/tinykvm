@@ -3,7 +3,9 @@
 #include "../machine.hpp"
 #include <linux/kvm.h>
 #include <linux/futex.h>
+#include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <stdexcept>
 #define THPRINT(fmt, ...) \
 	if (UNLIKELY(cpu.machine().m_verbose_thread_syscalls)) fprintf(stderr, fmt, __VA_ARGS__);
@@ -21,7 +23,8 @@ Thread::Thread(MultiThreading& mtr, const Thread& other)
 	: mt(mtr), tid(other.tid),
 	  stored_regs{other.stored_regs},
 	  fsbase{other.fsbase},
-	  clear_tid{other.clear_tid}
+	  clear_tid{other.clear_tid},
+	  futex_addr{other.futex_addr}
 {}
 
 void Thread::suspend(uint64_t return_value)
@@ -66,6 +69,11 @@ void Thread::exit()
 		mt.machine.copy_to_guest(this->clear_tid, &value, sizeof(value));
 	}
 	auto& thr = this->mt;
+	// Wake any joiner blocked on this thread's TID (pthread_join FUTEX_WAITs
+	// on the same CLONE_CHILD_CLEARTID address we just zeroed above).
+	if (this->clear_tid) {
+		thr.wake_futex(this->clear_tid, SIZE_MAX);
+	}
 	// delete this thread
 	thr.erase_thread(this->tid);
 
@@ -115,6 +123,12 @@ void MultiThreading::set_to_and_suspend_others(int tid)
 {
 	this->m_suspended.clear();
 	for (auto& [otid, thread] : m_threads) {
+		// Forcing a thread set establishes a fresh schedule: every thread is
+		// runnable (a thread restored from a snapshot while futex-blocked
+		// re-checks its predicate on resume and blocks again cleanly). This
+		// also upholds the invariant that the current thread is never marked
+		// futex-blocked.
+		thread.futex_addr = 0;
 		if (otid != tid) {
 			m_suspended.push_back(&thread);
 		}
@@ -166,18 +180,56 @@ Thread& MultiThreading::create(
 
 	return thread;
 }
-bool MultiThreading::suspend_and_yield(int64_t result)
+Thread* MultiThreading::next_runnable()
 {
+	// Peek the first runnable (non-futex-blocked) thread in FIFO order without
+	// removing it; switch_to/wakeup_next remove it once committed.
+	for (auto* t : m_suspended) {
+		if (t->futex_addr == 0)
+			return t;
+	}
+	return nullptr;
+}
+void MultiThreading::switch_to(Thread* next, int64_t result, uint64_t block_addr)
+{
+	// Suspend the current thread (blocked on block_addr, or runnable when 0)
+	// and resume `next`, which must already be in the suspended set. Suspending
+	// before removing `next` keeps the scheduler consistent if push_back throws.
 	auto& thread = get_thread();
-	// don't go through the ardous yielding process when alone
-	if (m_suspended.empty()) {
+	thread.suspend(result);
+	thread.futex_addr = block_addr;
+	auto it = std::find(m_suspended.begin(), m_suspended.end(), next);
+	assert(it != m_suspended.end());
+	m_suspended.erase(it);
+	next->resume();
+}
+bool MultiThreading::suspend_and_yield(int64_t result, uint64_t block_addr)
+{
+	// Find a runnable thread to switch to (skipping futex-blocked ones).
+	Thread* next = next_runnable();
+	if (next == nullptr) {
 		return false;
 	}
-	// suspend current thread, and return 0 when resumed
-	thread.suspend(result);
-	// resume some other thread
-	this->wakeup_next();
+	switch_to(next, result, block_addr);
 	return true;
+}
+std::pair<size_t, Thread*> MultiThreading::wake_futex(uint64_t addr, size_t max_count)
+{
+	size_t woken = 0;
+	Thread* first = nullptr;
+	if (addr == 0)
+		return {0, nullptr};
+	for (auto* t : m_suspended) {
+		if (woken >= max_count)
+			break;
+		if (t->futex_addr == addr) {
+			t->futex_addr = 0; // now runnable
+			if (first == nullptr)
+				first = t;
+			woken += 1;
+		}
+	}
+	return {woken, first};
 }
 void MultiThreading::erase_thread(int tid)
 {
@@ -189,8 +241,18 @@ void MultiThreading::wakeup_next()
 {
 	// resume a waiting thread
 	assert(!m_suspended.empty());
-	auto* next = m_suspended.front();
-	m_suspended.erase(m_suspended.begin());
+	Thread* next = next_runnable();
+	if (next != nullptr) {
+		auto it = std::find(m_suspended.begin(), m_suspended.end(), next);
+		m_suspended.erase(it);
+	} else {
+		// Every suspended thread is futex-blocked (e.g. a missed wake). Rather
+		// than hang, force-run the front thread; it will re-check its condition
+		// and, if still unsatisfied, hit the FUTEX_WAIT deadlock fallback.
+		next = m_suspended.front();
+		next->futex_addr = 0;
+		m_suspended.erase(m_suspended.begin());
+	}
 	// resume next thread
 	next->resume();
 }
@@ -356,25 +418,34 @@ void Machine::setup_multithreading()
 				cpu.machine().copy_from_guest(&futexVal, addr, sizeof(futexVal));
 				THPRINT("FUTEX: Waiting for unlock... uaddr=%u val=%u\n", futexVal, val);
 				if (futexVal == val) {
-					if (cpu.machine().threads().suspend_and_yield(-EAGAIN)) {
+					// Block this thread on `addr` and run a runnable thread; it
+					// resumes (returning 0) when a FUTEX_WAKE targets `addr`.
+					if (cpu.machine().threads().suspend_and_yield(0, addr)) {
 						return;
 					}
-					// Deadlock reached. XXX: Force-unlock to continue
+					// No other runnable thread. XXX: Force-unlock to continue
 					// execution.
 					THPRINT("FUTEX: Deadlock reached on uaddr=0x%lX, val=%u\n", (long) addr, val);
 					futexVal = 0;
 					cpu.machine().copy_to_guest(addr, &futexVal, sizeof(futexVal));
-					regs.rax = 0;
 					//throw std::runtime_error("DEADLOCK_REACHED");
-				} else {
-					regs.rax = 0;
-				}
-			} else if ((futex_op & 0xF) == FUTEX_WAKE || (futex_op & 0xF) == FUTEX_WAKE_BITSET) {
-				THPRINT("FUTEX: Waking others on uaddr=0x%lX, val=%u\n", (long) addr, val);
-				if (cpu.machine().threads().suspend_and_yield(0)) {
-					return;
 				}
 				regs.rax = 0;
+			} else if ((futex_op & 0xF) == FUTEX_WAKE || (futex_op & 0xF) == FUTEX_WAKE_BITSET) {
+				THPRINT("FUTEX: Waking others on uaddr=0x%lX, val=%u\n", (long) addr, val);
+				// Mark up to `val` threads blocked on this address as runnable,
+				// then hand control to the FIRST one woken. The cooperative
+				// scheduler never preempts, so a waker that did not yield could
+				// run to completion before a signalled waiter ever runs — a
+				// lost-wakeup deadlock for flag-based condvar handshakes. The
+				// waker stays runnable and resumes (returning the woken count)
+				// after the woken thread blocks again.
+				const auto [woken, first] = cpu.machine().threads().wake_futex(addr, val);
+				if (first != nullptr) {
+					cpu.machine().threads().switch_to(first, woken);
+					return;
+				}
+				regs.rax = woken; // woken == 0: nothing was waiting
 			}
 			else {
 				throw std::runtime_error("Unimplemented futex op: " + std::to_string(futex_op & 0xF));

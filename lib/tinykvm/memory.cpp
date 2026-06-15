@@ -8,11 +8,11 @@
 #include <string>
 #include <unistd.h>
 #include <unordered_set>
+#include "paging.hpp"
 #include "page_streaming.hpp"
 #ifdef TINYKVM_ARCH_AMD64
 #include "amd64/amd64.hpp"
 #include "amd64/memory_layout.hpp"
-#include "amd64/paging.hpp"
 #else
 #include "arm64/memory_layout.hpp"
 #endif
@@ -188,8 +188,7 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 		try {
 		for (const uint64_t addr : cow_written_pages) {
 			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
-				static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
-				const uint64_t bank_addr = entry & PDE64_ADDR_MASK;
+				const uint64_t bank_addr = entry & tinykvm::paging_address_mask();
 				//fprintf(stderr, "Copying virtual page %016lx from physical %016lx with size %lu\n",
 				//	addr, bank_addr, page_size);
 
@@ -509,10 +508,10 @@ char* vMemory::get_kernelpage_at(uint64_t addr) const
 	}
 #ifdef TINYKVM_ARCH_AMD64
 	constexpr uint64_t flags = PDE64_PRESENT;
-	return readable_page_at(*this, addr, flags);
 #else
-#error "Implement me!"
+	constexpr uint64_t flags = 1ULL;
 #endif
+	return readable_page_at(*this, addr, flags);
 }
 
 char* vMemory::get_userpage_at(uint64_t addr) const
@@ -523,15 +522,36 @@ char* vMemory::get_userpage_at(uint64_t addr) const
 	}
 #ifdef TINYKVM_ARCH_AMD64
 	constexpr uint64_t flags = PDE64_PRESENT | PDE64_USER;
-	return readable_page_at(*this, addr, flags);
 #else
-#error "Implement me!"
+	constexpr uint64_t flags = 1ULL;
 #endif
+	return readable_page_at(*this, addr, flags);
 }
 
 std::vector<std::pair<uint64_t, uint64_t>> Machine::get_accessed_pages() const
 {
 	return tinykvm::get_accessed_pages(this->main_memory());
+}
+size_t Machine::prefetch_pages(const std::vector<std::pair<uint64_t, uint64_t>>& pages)
+{
+	// Same minimal verification and dirty semantics as the CoW write-fault
+	// path, so a prefetched page is indistinguishable from a faulted one.
+#ifdef TINYKVM_ARCH_AMD64
+	constexpr uint64_t flags = PDE64_PRESENT;
+#else
+	constexpr uint64_t flags = 1ULL; // DESC_VALID
+#endif
+	const uint64_t pagesize = vMemory::PageSize();
+	size_t count = 0;
+	for (const auto& [base, size] : pages) {
+		// Entries can be block-sized (e.g. a 2 MiB leaf); walking them at
+		// page granularity splits the block and CoWs each page beneath it.
+		for (uint64_t offset = 0; offset < size; offset += pagesize) {
+			memory.get_writable_page(base + offset, flags, false, true);
+			count++;
+		}
+	}
+	return count;
 }
 size_t Machine::banked_memory_pages() const noexcept
 {
@@ -575,6 +595,9 @@ void vMemory::increment_unlocked_pages(size_t pages)
 
 MemoryBank::Page vMemory::allocate_unmapped_kernelpage()
 {
+#ifndef TINYKVM_ARCH_AMD64
+	memory_exception("Unmapped kernel pages are not implemented on ARM64", 0, 0);
+#else
 	if (this->machine.is_forked()) {
 		// It's too dangerous as forked VMs may have active
 		// TLB entries that user memory mappings that will
@@ -613,14 +636,12 @@ MemoryBank::Page vMemory::allocate_unmapped_kernelpage()
 	}
 	//printf("*** Allocated unmapped kernel page at 0x%lX\n", result.addr);
 	return result;
+#endif
 }
 
 uint64_t vMemory::expectedUsermodeFlags() const noexcept
 {
-	uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
-	if (!this->executable_heap)
-		flags |= PDE64_NX;
-	return flags;
+	return paging_default_usermode_flags(this->executable_heap);
 }
 
 } // namespace tinykvm

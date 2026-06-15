@@ -979,6 +979,24 @@ void WritablePage::set_protections(int prot)
 	}
 }
 
+uint64_t paging_default_usermode_flags(bool executable_heap)
+{
+	uint64_t flags = PDE64_PRESENT | PDE64_USER | PDE64_RW;
+	if (!executable_heap)
+		flags |= PDE64_NX;
+	return flags;
+}
+
+uint64_t paging_address_mask()
+{
+	return PDE64_ADDR_MASK;
+}
+
+uint64_t paging_dirty_bit()
+{
+	return PDE64_DIRTY;
+}
+
 size_t paging_merge_leaf_pages_into_hugepages(vMemory& memory, bool merge_if_dirty)
 {
 	unsigned merged_pages = 0;

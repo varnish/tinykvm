@@ -499,7 +499,7 @@ void vCPU::print_registers() const
 }
 
 TINYKVM_COLD()
-void vCPU::handle_exception(uint8_t intr)
+void vCPU::handle_exception(uint64_t intr)
 {
 	const auto& regs = registers();
 	char buffer[1024];

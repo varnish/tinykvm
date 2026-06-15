@@ -6,7 +6,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
-#include "amd64/paging.hpp"
+#include "paging.hpp"
 #include "util/scoped_profiler.hpp"
 static constexpr bool VERBOSE_FILE_BACKED_MMAP = false;
 
@@ -14,14 +14,20 @@ namespace tinykvm {
 
 void Machine::memzero(address_t addr, size_t len)
 {
+	/* Only pages that already hold content (the dirty bit is set) need
+	   zeroing; clean/identity-mapped pages read as zero already. The dirty
+	   bit is arch specific — hardcoding amd64's bit 6 here zeroed every
+	   user page on arm64 (bit 6 is AP[1] there), so a large PROT_NONE mmap
+	   reservation walked off the end of guest RAM. */
+	const uint64_t dirty_bit = paging_dirty_bit();
 	while (len != 0)
 	{
 		const size_t offset = addr & PageMask();
 		const size_t size = std::min(vMemory::PageSize() - offset, len);
 		bool must_be_zeroed = false;
 		page_at(memory, addr & ~PageMask(),
-			[&must_be_zeroed] (address_t /*page_addr*/, uint64_t flags, size_t /*page_size*/) {
-				if ((flags & (1UL << 6)) == 0) {
+			[&must_be_zeroed, dirty_bit] (address_t /*page_addr*/, uint64_t flags, size_t /*page_size*/) {
+				if ((flags & dirty_bit) == 0) {
 					/* This is not a dirty page, so we can skip zeroing it */
 					must_be_zeroed = false;
 				} else {
@@ -57,6 +63,9 @@ void Machine::copy_to_guest(address_t addr, const void* vsrc, size_t len, bool z
 		// Copy data to the page
 		char* page_data = page.page;
 		std::memcpy(&page_data[offset], src, size);
+#if defined(TINYKVM_ARCH_ARM64)
+		__builtin___clear_cache(&page_data[offset], &page_data[offset + size]);
+#endif
 
 		addr += size;
 		src += size;
@@ -315,25 +324,24 @@ bool Machine::mmap_backed_area(
 		// we'll do it the slow way by allocating the same range and for each page redirect it to the new phys
 		for (address_t i = 0; i < size_memory; )
 		{
-			static constexpr address_t PDE64_USER = (1UL << 2);
 			const address_t phys = mmap_phys_base + i;
 			const address_t virt = virt_base + i;
-			WritablePage writable_page = writable_page_at(memory, virt, PDE64_USER | 1);
+			WritablePage writable_page = writable_page_at(memory, virt, memory.expectedUsermodeFlags());
 			if (writable_page.page == nullptr) {
 				throw MemoryException("Failed to allocate writable page for mmap", virt, vMemory::PageSize());
 			}
 
-			static constexpr uint64_t PDE64_ADDR_MASK = ~0x8000000000000FFF;
+			const uint64_t addr_mask = paging_address_mask();
 			if (writable_page.size != vMemory::PageSize()) {
-				const address_t pv = writable_page.entry & PDE64_ADDR_MASK;
+				const address_t pv = writable_page.entry & addr_mask;
 				// Check if the page is unaligned
 				if ((pv & (writable_page.size - 1)) != 0) {
 					throw MemoryException("Unaligned page for mmap (cannot use)", virt, writable_page.size);
 				}
 			}
 
-			writable_page.entry &= ~PDE64_ADDR_MASK; // Clear the address bits
-			writable_page.entry |= (phys & PDE64_ADDR_MASK); // Set the new physical
+			writable_page.entry &= ~addr_mask; // Clear the address bits
+			writable_page.entry |= (phys & addr_mask); // Set the new physical
 			writable_page.set_protections(prot);
 			writable_page.set_dirty(); // Mark the page as dirty
 			if constexpr (VERBOSE_FILE_BACKED_MMAP) {

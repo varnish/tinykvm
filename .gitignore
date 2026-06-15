@@ -1,4 +1,5 @@
 **/build_*
+**/build-*
 **/build
 **/.build
 .vscode/

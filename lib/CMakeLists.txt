@@ -17,25 +17,25 @@ set (SOURCES
 	tinykvm/machine.cpp
 	tinykvm/machine_debug.cpp
 	tinykvm/machine_elf.cpp
-	tinykvm/machine_env.cpp
-	tinykvm/machine_state.cpp
 	tinykvm/machine_utils.cpp
 	tinykvm/memory.cpp
 	tinykvm/memory_bank.cpp
 	tinykvm/memory_maps.cpp
-	tinykvm/page_streaming.cpp
-	tinykvm/remote.cpp
-	tinykvm/smp.cpp
-	tinykvm/vcpu.cpp
-	tinykvm/vcpu_run.cpp
 
 	tinykvm/linux/fds.cpp
-	tinykvm/linux/signals.cpp
-	tinykvm/linux/system_calls.cpp
-	tinykvm/linux/threads.cpp
 	)
 if (TINYKVM_ARCH STREQUAL "AMD64")
 	list(APPEND SOURCES
+		tinykvm/page_streaming.cpp
+		tinykvm/machine_env.cpp
+		tinykvm/machine_state.cpp
+		tinykvm/remote.cpp
+		tinykvm/smp.cpp
+		tinykvm/vcpu.cpp
+		tinykvm/vcpu_run.cpp
+		tinykvm/linux/signals.cpp
+		tinykvm/linux/system_calls.cpp
+		tinykvm/linux/threads.cpp
 		tinykvm/amd64/gdt.cpp
 		tinykvm/amd64/idt.cpp
 		tinykvm/amd64/tss.cpp
@@ -44,17 +44,31 @@ if (TINYKVM_ARCH STREQUAL "AMD64")
 		tinykvm/amd64/vdso.cpp
 		tinykvm/rsp_client.cpp
 	)
+else()
+	list(APPEND SOURCES
+		tinykvm/machine_env.cpp
+		tinykvm/linux/system_calls.cpp
+		tinykvm/arm64/paging.cpp
+		tinykvm/arm64/vcpu.cpp
+		tinykvm/arm64/vcpu_run.cpp
+		tinykvm/arm64/stubs.cpp
+	)
 endif()
 
 add_library(tinykvm STATIC ${SOURCES})
+target_compile_definitions(tinykvm PUBLIC
+	TINYKVM_ARCH_${TINYKVM_ARCH}=1
+	TINYKVM_ARCH="${TINYKVM_ARCH}")
 target_compile_definitions(tinykvm PUBLIC _GNU_SOURCE=1)
 target_include_directories(tinykvm PUBLIC .)
 target_compile_features(tinykvm PUBLIC cxx_std_20)
 target_link_libraries(tinykvm PUBLIC pthread rt)
 
-set_source_files_properties(
-	tinykvm/page_streaming.cpp
-	PROPERTIES COMPILE_FLAGS -mavx2)
+if (TINYKVM_ARCH STREQUAL "AMD64")
+	set_source_files_properties(
+		tinykvm/page_streaming.cpp
+		PROPERTIES COMPILE_FLAGS -mavx2)
+endif()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 	target_compile_options(tinykvm PUBLIC -O0 -ggdb3)

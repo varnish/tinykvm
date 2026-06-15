@@ -11,7 +11,13 @@ struct Machine;
 struct MemoryBanks;
 
 struct vMemory {
+#ifdef TINYKVM_ARCH_ARM64
+	/* Must stay within a 36-bit IPA, the smallest stage-2 seen in
+	   practice (Apple Silicon hosts cap guest-physical at 64GB). */
+	static constexpr uint64_t MMAP_PHYS_BASE = 0x800000000; /* 32GB */
+#else
 	static constexpr uint64_t MMAP_PHYS_BASE = 0x4000000000;
+#endif
 	static constexpr uint64_t PageSize() {
 		return 4096u;
 	}

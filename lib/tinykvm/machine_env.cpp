@@ -66,9 +66,9 @@ void Machine::setup_argv(
 	const std::vector<std::string>& args,
 	const std::vector<std::string>& env)
 {
-	struct tinykvm_x86regs regs {};
+	struct tinykvm_regs regs {};
 	this->setup_registers(regs);
-	this->setup_argv(regs.rsp, args, env);
+	this->setup_argv(regs.stackptr(), args, env);
 	// Set registers back
 	this->set_registers(regs);
 }
@@ -88,7 +88,11 @@ void Machine::setup_linux(__u64& rsp,
 	push_down(*this, dst, canary.data(), canary.size());
 	const auto canary_addr = dst;
 
+#if defined(TINYKVM_ARCH_ARM64)
+	const char platform[] = "aarch64";
+#else
 	const char platform[] = "x86_64";
+#endif
 	push_down(*this, dst, platform, sizeof(platform));
 	const auto platform_addr = dst;
 
@@ -141,8 +145,18 @@ void Machine::setup_linux(__u64& rsp,
 	const address_t entry_address = this->m_image_base + binary_ehdr->e_entry;
 	push_aux(argv, {AT_BASE, base_address});
 	push_aux(argv, {AT_ENTRY, entry_address});
+#if defined(TINYKVM_ARCH_ARM64)
+	/* Hide host capabilities the guest cannot use: the vCPU is created
+	   without the optional SVE/SME features, and HWCAP_CPUID would invite
+	   EL0 ID-register reads (normally emulated by the kernel) that our EL1
+	   vectors treat as fatal. glibc ifunc resolvers check all three. */
+	push_aux(argv, {AT_HWCAP,  getauxval(AT_HWCAP)
+		& ~((1UL << 22) | (1UL << 11))});  /* HWCAP_SVE, HWCAP_CPUID */
+	push_aux(argv, {AT_HWCAP2, getauxval(AT_HWCAP2) & ~(1UL << 23)}); /* HWCAP2_SME */
+#else
 	push_aux(argv, {AT_HWCAP,  getauxval(AT_HWCAP)});
 	push_aux(argv, {AT_HWCAP2, getauxval(AT_HWCAP2)});
+#endif
 #ifdef AT_HWCAP3
 	push_aux(argv, {AT_HWCAP3, getauxval(AT_HWCAP3)});
 # ifdef AT_HWCAP4
@@ -159,17 +173,39 @@ void Machine::setup_linux(__u64& rsp,
 	push_aux(argv, {AT_MINSIGSTKSZ, getauxval(AT_MINSIGSTKSZ)});
 #endif
 
+#ifdef AT_DCACHEBSIZE
 	push_aux(argv, {AT_DCACHEBSIZE, getauxval(AT_DCACHEBSIZE)});
+#endif
+#ifdef AT_ICACHEBSIZE
 	push_aux(argv, {AT_ICACHEBSIZE, getauxval(AT_ICACHEBSIZE)});
+#endif
+#ifdef AT_L1D_CACHEGEOMETRY
 	push_aux(argv, {AT_L1D_CACHEGEOMETRY, getauxval(AT_L1D_CACHEGEOMETRY)});
+#endif
+#ifdef AT_L1D_CACHESIZE
 	push_aux(argv, {AT_L1D_CACHESIZE, getauxval(AT_L1D_CACHESIZE)});
+#endif
+#ifdef AT_L1I_CACHEGEOMETRY
 	push_aux(argv, {AT_L1I_CACHEGEOMETRY, getauxval(AT_L1I_CACHEGEOMETRY)});
+#endif
+#ifdef AT_L1I_CACHESIZE
 	push_aux(argv, {AT_L1I_CACHESIZE, getauxval(AT_L1I_CACHESIZE)});
+#endif
+#ifdef AT_L2_CACHEGEOMETRY
 	push_aux(argv, {AT_L2_CACHEGEOMETRY, getauxval(AT_L2_CACHEGEOMETRY)});
+#endif
+#ifdef AT_L2_CACHESIZE
 	push_aux(argv, {AT_L2_CACHESIZE, getauxval(AT_L2_CACHESIZE)});
+#endif
+#ifdef AT_L3_CACHEGEOMETRY
 	push_aux(argv, {AT_L3_CACHEGEOMETRY, getauxval(AT_L3_CACHEGEOMETRY)});
+#endif
+#ifdef AT_L3_CACHESIZE
 	push_aux(argv, {AT_L3_CACHESIZE, getauxval(AT_L3_CACHESIZE)});
+#endif
+#ifdef AT_UCACHEBSIZE
 	push_aux(argv, {AT_UCACHEBSIZE, getauxval(AT_UCACHEBSIZE)});
+#endif
 
 	// Canary / randomness
 	push_aux(argv, {AT_RANDOM, canary_addr});
@@ -191,7 +227,7 @@ void Machine::setup_linux(
 	auto& regs = this->registers();
 	regs = {};
 	this->setup_registers(regs);
-	this->setup_linux(regs.rsp, args, env);
+	this->setup_linux(regs.stackptr(), args, env);
 	// Set registers back
 	this->set_registers(regs);
 }

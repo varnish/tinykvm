@@ -32,6 +32,15 @@ struct Machine
 	void run(float timeout_secs = 0.f);
 	void run_in_usermode(float timeout_secs = 0.f);
 	void enter_usermode();
+	/* ARM64: build a resumable EL0 usermode register frame from a vCPU parked
+	   inside a syscall handler, so a fork/snapshot can resume in userspace.
+	   PC<-ELR_EL1, SP<-SP_EL0, pstate=EL0T, GP regs kept. Call from within the
+	   handler (e.g. an fds() callback) while x0..x30 are still pristine. */
+	tinykvm_regs usermode_frame_from_syscall() const;
+	/* ARM64: read/write the EL0 thread pointer (TPIDR_EL0 / TLS base). Needed
+	   to carry the TLS base into a fork resumed directly into usermode. */
+	uint64_t tpidr_el0() const;
+	void set_tpidr_el0(uint64_t value);
 
 	/* Make a SYSV function call into the VM, with no timeout */
 	template <typename... Args>
@@ -128,9 +137,9 @@ struct Machine
 	long step_one();
 	long run_with_breakpoints(std::array<uint64_t, 4> bps);
 
-	tinykvm_x86regs& registers();
-	const tinykvm_x86regs& registers() const;
-	void set_registers(const tinykvm_x86regs&);
+	tinykvm_regs& registers();
+	const tinykvm_regs& registers() const;
+	void set_registers(const tinykvm_regs&);
 	tinykvm_fpuregs fpu_registers() const;
 	void set_fpu_registers(const tinykvm_fpuregs&);
 	const kvm_sregs& get_special_registers() const;
@@ -238,8 +247,8 @@ struct Machine
 	size_t banked_memory_capacity_bytes() const noexcept { return banked_memory_capacity_pages() * vMemory::PageSize(); }
 
 	template <typename... Args> constexpr
-	void setup_call(tinykvm_x86regs&, uint64_t addr, uint64_t rsp, Args&&... args);
-	void setup_clone(tinykvm_x86regs&, address_t stack);
+	void setup_call(tinykvm_regs&, uint64_t addr, uint64_t rsp, Args&&... args);
+	void setup_clone(tinykvm_regs&, address_t stack);
 	/* Make VM copy-on-write in order to support fast forking.
 	   When @max_work_mem is non-zero, the master VM can still
 	   be used after preparation. */
@@ -249,6 +258,11 @@ struct Machine
 	bool is_forked() const noexcept { return m_forked; }
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
 	std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages() const;
+	/* Pre-CoW a set of (address, size) ranges — typically the accessed set
+	   harvested from a warmup fork — so the next run takes no per-page
+	   write-fault VM exits. CoW state is rebuilt by every fork/reset_to,
+	   so re-apply after each. Returns the number of pages made writable. */
+	size_t prefetch_pages(const std::vector<std::pair<uint64_t, uint64_t>>& pages);
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);
@@ -318,7 +332,7 @@ struct Machine
 	~Machine();
 
 private:
-	void setup_registers(tinykvm_x86regs &);
+	void setup_registers(tinykvm_regs &);
 	void setup_argv(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void setup_linux(__u64&, const std::vector<std::string>&, const std::vector<std::string>&);
 	void elf_loader(std::string_view binary, const MachineOptions&);
