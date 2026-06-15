@@ -1,9 +1,11 @@
 #include "../machine.hpp"
 #include "../linux/threads.hpp"
 #include "../smp.hpp"
+#include "memory_layout.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <csignal>
@@ -53,6 +55,118 @@ static void set_one_reg(int fd, uint64_t id, uint64_t value)
 		throw MachineException("KVM_SET_ONE_REG failed", errno);
 	}
 }
+
+static uint64_t core_reg_id(uint64_t reg)
+{
+	return KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | reg;
+}
+/* SPSR_EL1 holds the EL0 PSTATE banked on exception entry; the user's PC and
+   SP are likewise banked in ELR_EL1 / SP_EL0 (read via tinykvm_regs at EL1h).
+   TPIDR_EL1 is where the EL1 sync-vector stub stashes the user's x9 before
+   using it as scratch, so it carries the real x9 at a syscall trap. */
+static const uint64_t SPSR_EL1_ID   = core_reg_id(KVM_REG_ARM_CORE_REG(spsr[KVM_SPSR_EL1]));
+static const uint64_t TPIDR_EL1_ID  = sys_reg_id(3, 0, 13, 0, 4);
+
+/* Per-thread key for signal bookkeeping. Single-threaded guests never create
+   a MultiThreading object, so fall back to slot 0 (matching sigaltstack). */
+static int current_sig_tid(vCPU& cpu)
+{
+	return cpu.machine().has_threads() ? cpu.machine().threads().gettid() : 0;
+}
+
+/* Shared body of kill/tkill/tgkill: deliver `sig` to a registered handler,
+   drop it if ignored, or apply the kernel's default disposition. When a
+   handler is entered the trap frame is rewritten to run it at EL0 and the
+   call does not "return" here -- the rt_sigreturn trampoline resumes the
+   guest after the originating syscall. */
+static void deliver_signal_or_default(vCPU& cpu, int sig)
+{
+	auto& regs = cpu.registers();
+	if (sig == 0) { // existence probe
+		regs.sysret() = 0;
+		cpu.set_registers(regs);
+		return;
+	}
+	constexpr uint64_t IGNORE_HANDLER = 1; // SIG_IGN
+	if (sig > 0 && sig <= 64) {
+		auto& sigact = cpu.machine().sigaction(sig);
+		if (!sigact.is_unset() && sigact.handler != IGNORE_HANDLER) {
+			cpu.machine().signals().enter(cpu, sig);
+			return;
+		}
+		if (sigact.handler == IGNORE_HANDLER) {
+			regs.sysret() = 0;
+			cpu.set_registers(regs);
+			return;
+		}
+	}
+	/* No handler: match the kernel's default dispositions -- a few signals are
+	   ignored by default, everything else terminates the VM. The exit status
+	   follows the shell convention 128+sig (Machine::return_value()). */
+	switch (sig) {
+	case SIGCHLD:
+	case SIGCONT:
+	case SIGURG:
+	case SIGWINCH:
+		regs.sysret() = 0;
+		cpu.set_registers(regs);
+		return;
+	}
+	regs.sysret() = 128 + sig;
+	cpu.set_registers(regs);
+	cpu.stop();
+}
+
+/* Guest-visible signal frame, laid out to match the arm64 kernel uapi so that
+   SA_SIGINFO handlers receive valid siginfo/ucontext pointers. rt_sigreturn
+   restores the interrupted context from a host-side snapshot rather than from
+   these bytes, so the machine context below is informational (handler edits to
+   uc_mcontext are not honored on return). */
+/* Field names are prefixed to dodge glibc's si_signo/si_code/si_pid/... and
+   errno macros from <signal.h>, which would otherwise expand inside here. */
+struct GuestSiginfo {        // kernel siginfo_t
+	int32_t  ksi_signo;  // 0
+	int32_t  ksi_errno;  // 4
+	int32_t  ksi_code;   // 8
+	int32_t  _pad0;      // 12
+	int32_t  ksi_pid;    // 16  (_sifields._kill._pid)
+	int32_t  ksi_uid;    // 20  (_sifields._kill._uid)
+	uint8_t  _rest[128 - 24];
+};
+static_assert(sizeof(GuestSiginfo) == 128, "siginfo_t is 128 bytes");
+
+struct GuestSigcontext {     // arm64 uapi struct sigcontext
+	uint64_t fault_address;  // 0
+	uint64_t regs[31];       // 8
+	uint64_t sp;             // 256
+	uint64_t pc;             // 264
+	uint64_t pstate;         // 272
+	alignas(16) uint8_t __reserved[4096]; // 288
+};
+static_assert(offsetof(GuestSigcontext, regs) == 8);
+static_assert(offsetof(GuestSigcontext, sp) == 256);
+static_assert(offsetof(GuestSigcontext, pc) == 264);
+static_assert(offsetof(GuestSigcontext, pstate) == 272);
+static_assert(offsetof(GuestSigcontext, __reserved) == 288);
+
+struct GuestUcontext {       // arm64 uapi struct ucontext (sigmask before mcontext)
+	uint64_t uc_flags;       // 0
+	uint64_t uc_link;        // 8
+	uint64_t ss_sp;          // 16  uc_stack.ss_sp
+	int32_t  ss_flags;       // 24  uc_stack.ss_flags
+	int32_t  _pad0;          // 28
+	uint64_t ss_size;        // 32  uc_stack.ss_size
+	uint8_t  uc_sigmask[128];// 40  sigset_t padded to 1024 bits
+	uint8_t  _pad1[8];       // 168 -> align uc_mcontext to 16
+	GuestSigcontext uc_mcontext; // 176
+};
+static_assert(offsetof(GuestUcontext, uc_mcontext) == 176);
+
+struct GuestRtSigframe {
+	GuestSiginfo  info; // 0
+	GuestUcontext uc;   // 128
+};
+static_assert(offsetof(GuestRtSigframe, uc) == 128);
 
 struct Arm64SnapshotSysregs {
 	uint64_t mair_el1;
@@ -762,30 +876,45 @@ void Machine::setup_multithreading()
 			cpu.set_registers(regs);
 		});
 	Machine::install_syscall_handler(
-		131, [] (vCPU& cpu) { // tgkill
-			auto& regs = cpu.registers();
-			const int sig = regs.sysarg(2);
-			/* Signal-handler entry is not implemented on ARM64, so match
-			   the kernel's default dispositions instead: sig 0 is an
-			   existence probe, default-ignored signals are dropped, and
-			   everything else terminates the VM — even if the guest
-			   registered a handler. glibc's raise()/abort() arrive here.
-			   The exit status follows the shell convention 128+sig,
-			   readable via Machine::return_value(). */
-			switch (sig) {
-			case 0:
-			case SIGCHLD:
-			case SIGCONT:
-			case SIGURG:
-			case SIGWINCH:
-				regs.sysret() = 0;
-				cpu.set_registers(regs);
-				return;
+		129, [] (vCPU& cpu) { // kill(pid, sig)
+			deliver_signal_or_default(cpu, cpu.registers().sysarg(1));
+		});
+	Machine::install_syscall_handler(
+		130, [] (vCPU& cpu) { // tkill(tid, sig)
+			deliver_signal_or_default(cpu, cpu.registers().sysarg(1));
+		});
+	Machine::install_syscall_handler(
+		131, [] (vCPU& cpu) { // tgkill(tgid, tid, sig)
+			deliver_signal_or_default(cpu, cpu.registers().sysarg(2));
+		});
+	Machine::install_syscall_handler(
+		139, [] (vCPU& cpu) { // rt_sigreturn
+			/* Restore the context saved by Signals::enter. Pop the current
+			   thread's signal snapshot and write it back into the EL1h trap
+			   frame: the GP regs and (banked) user PC/SP go through
+			   tinykvm_regs, while SPSR_EL1 and the FP/SIMD state are restored
+			   directly. The vector eret then returns to the interrupted EL0
+			   instruction. */
+			auto& signals = cpu.machine().signals();
+			auto& pt = signals.per_thread(current_sig_tid(cpu));
+			if (pt.saved.empty()) {
+				throw MachineException("rt_sigreturn with no saved signal context");
 			}
-			THPRINT(">>> tgkill: VM terminated by signal %d\n", sig);
-			regs.sysret() = 128 + sig;
+			const SavedSignalContext saved = pt.saved.back();
+			pt.saved.pop_back();
+
+			auto regs = cpu.registers(); // EL1h frame; keep core pstate = EL1h
+			for (size_t i = 0; i < 31; i++)
+				regs.regs[i] = saved.regs.regs[i];
+			regs.pc = saved.regs.pc; // -> ELR_EL1
+			regs.sp = saved.regs.sp; // -> SP_EL0
 			cpu.set_registers(regs);
-			cpu.stop();
+			set_one_reg(cpu.fd, SPSR_EL1_ID, saved.regs.pstate);
+			/* The sync-vector stub reloads x9 from TPIDR_EL1 on its way out
+			   (eret), so the core x9 just set would be discarded -- stage the
+			   user's x9 where the stub will pick it up. */
+			set_one_reg(cpu.fd, TPIDR_EL1_ID, saved.regs.regs[9]);
+			cpu.set_fpu_registers(saved.fpu);
 		});
 }
 
@@ -799,9 +928,65 @@ SignalAction& Signals::get(int sig)
 	throw MachineException("Signal 0 invoked", sig);
 }
 
-void Signals::enter(vCPU&, int)
+void Signals::enter(vCPU& cpu, int sig)
 {
-	throw MachineException("Guest signals are not implemented on ARM64");
+	if (sig <= 0 || sig > 64)
+		return;
+	auto& sigact = signals.at(sig - 1);
+
+	const int tid = current_sig_tid(cpu);
+	auto& pt = this->per_thread(tid);
+
+	/* Snapshot the interrupted EL0 context for rt_sigreturn. At a syscall trap
+	   the vCPU is parked at EL1h, where tinykvm_regs reports pc=ELR_EL1 (the
+	   user's resume address) and sp=SP_EL0 (the user stack); x0..x30 hold the
+	   user's values except x9, which the vector stub banked into TPIDR_EL1.
+	   Recover the real x9 and the user PSTATE from SPSR_EL1. */
+	SavedSignalContext saved;
+	saved.regs = cpu.registers();
+	saved.regs.regs[9] = get_one_reg(cpu.fd, TPIDR_EL1_ID);
+	saved.regs.pstate  = get_one_reg(cpu.fd, SPSR_EL1_ID);
+	saved.fpu = cpu.fpu_registers();
+	pt.saved.push_back(saved);
+
+	/* Run the handler on the alternate stack if it asked for one (SA_ONSTACK),
+	   otherwise continue down the user's current stack. */
+	uint64_t sp = saved.regs.sp;
+	const bool on_altstack = sigact.altstack && pt.stack.ss_sp != 0x0;
+	if (on_altstack)
+		sp = pt.stack.ss_sp + pt.stack.ss_size;
+
+	/* Reserve and 16-align the signal frame below the chosen stack pointer. */
+	const uint64_t frame_addr = (sp - sizeof(GuestRtSigframe)) & ~uint64_t(15);
+
+	GuestRtSigframe frame {};
+	frame.info.ksi_signo = sig;
+	frame.info.ksi_code  = 0; // SI_USER
+	frame.info.ksi_pid   = (tid != 0) ? tid : 1;
+	if (on_altstack) {
+		frame.uc.ss_sp    = pt.stack.ss_sp;
+		frame.uc.ss_flags = pt.stack.ss_flags;
+		frame.uc.ss_size  = pt.stack.ss_size;
+	}
+	for (size_t i = 0; i < 31; i++)
+		frame.uc.uc_mcontext.regs[i] = saved.regs.regs[i];
+	frame.uc.uc_mcontext.sp     = saved.regs.sp;
+	frame.uc.uc_mcontext.pc     = saved.regs.pc;
+	frame.uc.uc_mcontext.pstate = saved.regs.pstate;
+	cpu.machine().copy_to_guest(frame_addr, &frame, sizeof(frame));
+
+	/* Enter the handler at EL0. registers() is still the EL1h trap frame, so
+	   writing pc/sp routes to ELR_EL1/SP_EL0 and the vector eret lands in the
+	   handler with the user's (EL0t) SPSR. The link register points at the
+	   rt_sigreturn trampoline so a returning handler resumes the guest. */
+	auto regs = cpu.registers();
+	regs.regs[0]  = sig;                                          // signo
+	regs.regs[1]  = frame_addr + offsetof(GuestRtSigframe, info); // siginfo*
+	regs.regs[2]  = frame_addr + offsetof(GuestRtSigframe, uc);   // ucontext*
+	regs.regs[30] = SIGRETURN_TRAMPOLINE_ADDR;                    // lr
+	regs.sp = frame_addr;
+	regs.pc = sigact.handler;
+	cpu.set_registers(regs);
 }
 
 SignalAction& Machine::sigaction(int sig)

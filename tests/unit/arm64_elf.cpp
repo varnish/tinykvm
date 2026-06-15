@@ -302,3 +302,42 @@ TEST_CASE("ARM64 runs a dynamic Python guest", "[arm64][elf]")
 	// not the preadv fallback.
 	REQUIRE(!machine.main_memory().mmap_ranges.empty());
 }
+
+// End-to-end gating test: a real CPython guest installs a Python signal
+// handler and raises the signal. CPython's C-level handler sets a flag and
+// returns (via our rt_sigreturn path); the eval loop then runs the Python
+// handler. Prints SIG_OK only if the handler actually fired and the
+// interpreter resumed normally afterwards.
+TEST_CASE("ARM64 Python signal handler runs end-to-end", "[arm64][elf][signals]")
+{
+	require_arm64_kvm();
+	if (access("/usr/bin/python3", R_OK) != 0) {
+		SKIP("python3 not available on this host");
+	}
+
+	std::string output;
+	tinykvm::Machine machine { ld_linux_binary(), {
+		.max_mem = 512ul << 20,
+		.mmap_backed_files = true,
+	} };
+	machine.fds().set_open_readable_callback(
+		[] (std::string&) -> bool { return true; });
+	if (getenv("VERBOSE")) {
+		machine.set_verbose_system_calls(true);
+		machine.set_verbose_mmap_syscalls(true);
+	}
+	machine.setup_linux({LD_LINUX, "/usr/bin/python3", "-c",
+		"import signal\n"
+		"got = []\n"
+		"signal.signal(signal.SIGUSR1, lambda s, f: got.append(s))\n"
+		"signal.raise_signal(signal.SIGUSR1)\n"
+		"print('SIG_OK' if got == [signal.SIGUSR1] else 'SIG_FAIL')\n"},
+		env);
+	machine.set_printer([&] (const char* data, size_t size) {
+		output.append(data, size);
+	});
+	machine.run(16.0f);
+
+	REQUIRE(output == "SIG_OK\n");
+	REQUIRE(machine.return_value() == 0);
+}

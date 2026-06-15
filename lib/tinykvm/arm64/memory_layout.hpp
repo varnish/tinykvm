@@ -8,6 +8,11 @@ namespace tinykvm {
 	   the host rewrites page tables / switches TTBR0_EL1: KVM does not
 	   invalidate guest TLB entries for us (unlike a CR3 write on x86). */
 	static constexpr uint64_t TLB_FLUSH_ADDR = VECTORS_ADDR + 0x790;
+	/* EL0 rt_sigreturn trampoline (`mov x8, #__NR_rt_sigreturn; svc #0`). The
+	   host points a signal handler's link register here so that returning from
+	   the handler traps back in and restores the interrupted context. Lives in
+	   the vectors page, which is user-RO and EL0-executable. */
+	static constexpr uint64_t SIGRETURN_TRAMPOLINE_ADDR = VECTORS_ADDR + 0x7B0;
 	static constexpr uint64_t PT_ADDR  = 0x9000;
 	static constexpr uint64_t PT_SIZE  = 0x5000;
 	static constexpr uint64_t VCPU_TABLE_ADDR = PT_ADDR + PT_SIZE;

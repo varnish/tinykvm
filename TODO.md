@@ -32,8 +32,11 @@ design.
 A real pthread test (`tests/unit/arm64_threads.cpp`) now exercises it.
 **pthread create/join, mutex-contended counters, and condition-variable
 producer/consumer all work** end to end; getting there fixed three scheduler
-bugs plus the futex wake (see Done). The remaining gap before Python/Node is
-guest signal-handler delivery (see below).
+bugs plus the futex wake (see Done). Guest signal-handler delivery now works
+too — including a real CPython guest that installs a Python signal handler and
+sees it fire (see below / Done). No item is currently gating a single-VM
+Python/Node run on this hardware; what remains is broad-arm64 validation and
+the warm-fork niceties (handler inheritance on fork, extended futex ops).
 
 ## Gating Python / Node
 
@@ -64,12 +67,32 @@ guest signal-handler delivery (see below).
   `FUTEX_CMP_REQUEUE` (4) / `FUTEX_WAKE_OP` (5) (still throw), timed waits, and
   `FUTEX_PRIVATE`/`FUTEX_CLOCK_REALTIME` flag handling.
 
-- [ ] **Guest signal handler delivery is stubbed.** `Signals::enter` throws
-  ("Guest signals are not implemented on ARM64"). Today any non-ignored signal
-  terminates the VM via `tgkill` even if the guest registered a handler. Node
-  and CPython both install handlers (SIGPIPE, SIGINT, SIGCHLD). Port the
-  `linux/signals.cpp` `enter()` path to arm64 so guests can handle signals
-  instead of dying.
+- [x] **Guest signal handler delivery now works (incl. a real CPython guest).**
+  `Signals::enter` builds a kernel-shaped `rt_sigframe` on the (alternate)
+  stack and re-points the EL1h trap frame at the handler (x0=signo, x1/x2 =
+  siginfo*/ucontext* for SA_SIGINFO, lr = a new EL0 `rt_sigreturn` trampoline
+  in the vectors page, pc = handler). The interrupted GP+FP+SPSR context is
+  snapshotted host-side (a per-thread LIFO, so nested handlers work) and
+  restored by a new `rt_sigreturn` (139) handler. `kill`/`tkill`/`tgkill`
+  (129/130/131) all route through one delivery helper: handler → deliver,
+  SIG_IGN → drop, else default disposition (a few ignored, otherwise terminate
+  with 128+signo). Tested in `tests/unit/arm64_signals.cpp` (9 cases:
+  handler-runs-and-returns, SA_SIGINFO, FP/integer state preserved across the
+  handler, SIG_IGN, re-entrant, worker-thread delivery, kill(), abort(), and
+  default-termination) plus a real `python3` guest that installs a Python
+  `signal.signal` handler, `raise_signal`s it, and observes the handler fire
+  (`arm64_elf.cpp`). x9 needs special care on both save and restore: the EL1
+  sync-vector stub banks the user's x9 in TPIDR_EL1 and reloads it on `eret`,
+  so the snapshot reads x9 from TPIDR_EL1 and rt_sigreturn writes it back
+  there. Known limits (fine for Python/Node, none hit in practice): only
+  *synchronous* delivery via kill/tkill/tgkill is wired up — a guest fault
+  (SIGSEGV/SIGFPE/&c, e.g. Python's faulthandler) still terminates the VM
+  rather than invoking the guest handler; handler edits to `uc_mcontext` are
+  not honored on return (restore is from the host-side snapshot);
+  `FUTEX_CMP_REQUEUE`/`WAKE_OP`, timed waits, and the futex flag bits are still
+  unhandled; and forks do not inherit the master's handlers (`m_signals` is
+  recreated empty per fork — pre-existing, arch-neutral behavior in
+  `machine.cpp`'s fork ctor, not specific to signals).
 
 ## Performance
 

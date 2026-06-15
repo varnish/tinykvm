@@ -207,6 +207,17 @@ static void install_vectors(Machine& machine)
 	std::memcpy(&vectors[(TLB_FLUSH_ADDR - VECTORS_ADDR) / sizeof(uint32_t)],
 		tlb_flush, sizeof(tlb_flush));
 
+	/* rt_sigreturn trampoline, run at EL0 when a signal handler returns. The
+	   handler's link register is set to SIGRETURN_TRAMPOLINE_ADDR by
+	   Signals::enter; falling through to here issues the rt_sigreturn syscall
+	   (number 139 on arm64) which restores the interrupted context. */
+	const uint32_t sigreturn_tramp[] {
+		0xd2801168, // movz x8, #139 (__NR_rt_sigreturn)
+		0xd4000001, // svc #0
+	};
+	std::memcpy(&vectors[(SIGRETURN_TRAMPOLINE_ADDR - VECTORS_ADDR) / sizeof(uint32_t)],
+		sigreturn_tramp, sizeof(sigreturn_tramp));
+
 	std::memcpy(machine.unsafe_memory_at(VECTORS_ADDR, vectors.size() * sizeof(uint32_t)),
 		vectors.data(), vectors.size() * sizeof(uint32_t));
 }
