@@ -23,7 +23,7 @@ for behavior that is shared across architectures.
 | 16 KiB / 64 KiB page granules | Deferred | The ARM64 backend still assumes 4 KiB pages in descriptor masks, index shifts, and `TCR_EL1`. |
 | SMP | Deferred | ARM64 SMP entry points intentionally throw until implemented. |
 | Remote VM support | Deferred | ARM64 remote VM entry points intentionally throw until implemented. |
-| Guest signal delivery | Deferred | ARM64 signal delivery intentionally throws until implemented. |
+| Guest signal delivery | Implemented | `tgkill` delivers registered handlers through the shared signal dispatcher; ARM64 handlers return through an EL0 `rt_sigreturn` trampoline, including nested-frame restore and alternate-stack coverage in unit tests. |
 | Remote GDB support | Deferred | ARM64 remote GDB support intentionally throws until implemented. |
 | Hardware breakpoints | Deferred | ARM64 breakpoint support intentionally throws until implemented. |
 | SVE/SVE2 | Deferred | Scalable vector state is not implemented. |

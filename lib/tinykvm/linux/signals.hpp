@@ -28,7 +28,10 @@ struct SignalAction {
 };
 
 struct SignalReturn {
-	tinykvm_regs regs;
+	/* Saved interrupted frames, innermost on top. Signal delivery pushes the
+	   pre-signal frame; rt_sigreturn pops it. Nested signals need a stack so
+	   an inner delivery does not overwrite the outer return context. */
+	std::vector<tinykvm_regs> frames;
 };
 
 struct SignalPerThread {
@@ -38,7 +41,9 @@ struct SignalPerThread {
 
 struct Signals {
 	SignalAction& get(int sig);
+	void send(vCPU&, int sig);
 	void enter(vCPU&, int sig);
+	void sigreturn(vCPU&);
 
 	// TODO: Lock this in the future, for multiproessing
 	auto& per_thread(int tid) { return m_per_thread[tid]; }

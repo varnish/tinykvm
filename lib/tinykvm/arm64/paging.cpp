@@ -207,6 +207,19 @@ static void install_vectors(Machine& machine)
 	std::memcpy(&vectors[(TLB_FLUSH_ADDR - VECTORS_ADDR) / sizeof(uint32_t)],
 		tlb_flush, sizeof(tlb_flush));
 
+	// A signal handler returns here through x30/LR. The SVC traps through the
+	// normal EL0 sync vector; the rt_sigreturn syscall restores the saved frame.
+	const uint32_t sigreturn[] {
+		0xd2801168, // movz x8, #139 (__NR_rt_sigreturn)
+		0xd4000001, // svc #0
+	};
+	static_assert(TLB_FLUSH_ADDR + sizeof(tlb_flush) <= SIGRETURN_ADDR,
+		"tlb_flush stub overruns the rt_sigreturn trampoline");
+	static_assert(SIGRETURN_ADDR + sizeof(sigreturn) <= VECTORS_ADDR + 0x800,
+		"rt_sigreturn trampoline overruns the exception-vector page");
+	std::memcpy(&vectors[(SIGRETURN_ADDR - VECTORS_ADDR) / sizeof(uint32_t)],
+		sigreturn, sizeof(sigreturn));
+
 	std::memcpy(machine.unsafe_memory_at(VECTORS_ADDR, vectors.size() * sizeof(uint32_t)),
 		vectors.data(), vectors.size() * sizeof(uint32_t));
 }

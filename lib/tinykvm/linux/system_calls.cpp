@@ -564,7 +564,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			}
 			/* Out-of-range signals: the kernel only knows 1..64, but
 			   guests probe beyond that (glibc _NSIG is 65). */
-			if (sig < 0 || sig > 64) {
+			if (sig < 1 || sig > 64) {
 				regs.sysret() = -EINVAL;
 				cpu.set_registers(regs);
 				SYSPRINT("rt_sigaction(signum=%x, act=0x%lX, oldact=0x%lx) = 0x%llX (EINVAL)\n",
@@ -631,16 +631,21 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			SYSPRINT("rt_sigprocmask(how=%x, set=0x%lX, oldset=0x%lx, size=%u) = 0x%llX\n",
 					 how, g_set, g_oldset, size, regs.sysret());
 		});
+#ifdef SYS_rt_sigreturn
+	Machine::install_syscall_handler(
+		SYS_rt_sigreturn, [](vCPU& cpu)
+		{
+			cpu.machine().signals().sigreturn(cpu);
+		});
+#endif
 	Machine::install_syscall_handler(  // sigaltstack
 		SYS_sigaltstack, [](vCPU& cpu)
 		{
 			auto& regs = cpu.registers();
 			if (regs.sysarg(0) != 0x0) {
-#if defined(TINYKVM_ARCH_ARM64)
-				auto& ss = cpu.machine().signals().per_thread(0).stack;
-#else
+				/* Key the alternate stack by the current tid so signal
+				   delivery reads back the stack the guest configured. */
 				auto& ss = cpu.machine().signals().per_thread(cpu.machine().threads().gettid()).stack;
-#endif
 				cpu.machine().copy_from_guest(&ss, regs.sysarg(0), sizeof(ss));
 
 				SYSPRINT("sigaltstack(altstack SP=0x%lX  flags=0x%X  size=0x%lX)\n",

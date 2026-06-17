@@ -32,17 +32,16 @@ design.
 A real pthread test (`tests/unit/arm64_threads.cpp`) now exercises it.
 **pthread create/join, mutex-contended counters, and condition-variable
 producer/consumer all work** end to end; getting there fixed three scheduler
-bugs plus the futex wake. The remaining gap before Python/Node is
-guest signal-handler delivery (see below).
+bugs plus the futex wake. Guest signal-handler delivery now works too (see
+Done), so the threading and signal prerequisites for Python/Node are in place.
 
 ## Gating Python / Node
 
-- [ ] **Guest signal handler delivery is stubbed.** `Signals::enter` throws
-  ("Guest signals are not implemented on ARM64"). Today any non-ignored signal
-  terminates the VM via `tgkill` even if the guest registered a handler. Node
-  and CPython both install handlers (SIGPIPE, SIGINT, SIGCHLD). Port the
-  `linux/signals.cpp` `enter()` path to arm64 so guests can handle signals
-  instead of dying.
+- [ ] **Add a threaded-Python and a Node guest test.** The threading, futex,
+  and signal-delivery prerequisites are now done and unit-tested; what's left
+  is an end-to-end guest that combines them. A single-threaded `python3 -c`
+  guest already runs (`arm64_elf.cpp`); extend to a threaded-Python script and
+  a real Node guest to shake out anything the micro-tests miss.
 
 ## Performance
 
@@ -56,6 +55,38 @@ guest signal-handler delivery (see below).
 - [ ] **Reduce fixed per-fork cost (~88 µs).** Page-table setup per fork is a
   flat overhead independent of workload — a separate lever if per-agent latency
   matters.
+
+## Done
+
+- [x] **Guest signal-handler delivery on ARM64.** `Signals::enter` no longer
+  throws: it now redirects EL0 to the registered handler the same way the
+  cooperative scheduler redirects threads. It saves the interrupted EL0 frame
+  (via `cpu.registers()` at EL1h → ELR_EL1/SP_EL0) into the per-thread
+  `sigret` slot, then sets x0=sig, x30=`SIGRETURN_ADDR`, pc=handler, and
+  optionally switches to the SA_ONSTACK altstack. A 2-instruction `rt_sigreturn`
+  trampoline (`movz x8,#139; svc #0`) lives in the unused 16th vector slot
+  (`SIGRETURN_ADDR`, EL0-executable); the handler returns into it, and the new
+  `rt_sigreturn` (139) syscall restores the saved frame — exactly like
+  `Thread::resume`. `tgkill` now delivers to a registered handler (SIG_DFL/
+  SIG_IGN and the default-ignored signals keep their old dispositions; unhandled
+  fatal signals still terminate with 128+sig). `sigaltstack` storage was
+  unified onto `gettid()` (was hardcoded `per_thread(0)` on arm64) so delivery
+  reads back the stack the guest set. New `tests/unit/arm64_signals.cpp`
+  (8 cases): delivery+resume, context preservation, 1000× repeated delivery,
+  SIG_IGN drop, SA_ONSTACK, unhandled-fatal terminate, a signal raised on a
+  worker thread under the scheduler, and nested delivery (a handler that raises
+  a second signal). 4/4 arm64 suites pass.
+  A code-review pass then hardened it: the per-thread `sigret` is now a **stack**
+  of frames so nested signals restore correctly (was a single slot that lost the
+  outer frame); the SA_ONSTACK top is 16-byte aligned per AAPCS; `static_assert`s
+  guard the packed 16th-vector-slot layout; and a pre-existing amd64 off-by-one
+  in `Signals::enter` (`signals.at(sig)` vs the `sig-1` storage) was fixed.
+  Known limits (acceptable, matching the minimal amd64 model; revisit if a guest
+  needs them): no signal masking / `sa_mask` during the handler (same signal can
+  re-enter, though the frame stack keeps nesting safe); no siginfo/ucontext
+  (x1/x2) for `SA_SIGINFO` handlers — only x0=sig; FP/SIMD not saved across the
+  handler (AAPCS callee-saved are safe); synchronous delivery only
+  (tgkill/raise/pthread_kill — no async/timer signals exist in this model).
 
 ## Decided / not doing (kept for context)
 
