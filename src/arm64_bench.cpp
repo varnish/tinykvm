@@ -169,6 +169,7 @@ int main()
 			.max_mem = MAX_MEMORY,
 			.max_cow_mem = 32u << 20,
 			.split_hugepages = true,
+			.reset_keep_all_work_memory = true,
 		};
 
 		tinykvm::Machine master {empty_binary, options};
