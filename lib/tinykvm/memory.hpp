@@ -43,6 +43,9 @@ struct vMemory {
 	bool   main_memory_writes = false;
 	/* Split into small pages (4K) when reaching a leaf hugepage. */
 	bool   split_hugepages = true;
+	/* ARM64: pre-split shared 2MB blocks into 4K pages at snapshot
+	   (foreach_page_makecow), so forks never split a block at runtime. */
+	bool   split_hugepages_at_snapshot = false;
 	/* Executable heap */
 	bool   executable_heap = false;
 	/* Enable file-backed memory mappings for large files */

@@ -378,7 +378,32 @@ void foreach_page_makecow(vMemory& memory, uint64_t kernel_end,
 {
 	if (shared_memory_boundary < kernel_end)
 		memory_exception("Shared memory boundary was illegal (zero)", shared_memory_boundary, 0);
-	foreach_page(memory, [=] (uint64_t addr, uint64_t& entry, size_t size) {
+	// Pre-split the shared 2MB blocks into 4KB leaf pages now, so forks never
+	// split a block at runtime. Works around a copy-on-write fault on 16KiB-page
+	// ARM64 hosts where a runtime block split races the page-table walker during
+	// free-running guest execution (bug.md "Update 2026-06-17 (cont. 4)"). Costs
+	// fork time + page-table memory. foreach_page() re-checks is_leaf() after the
+	// callback and recurses into the freshly-built L3 table to mark each page.
+	const bool presplit = memory.split_hugepages_at_snapshot && memory.split_hugepages;
+	foreach_page(memory, [=, &memory] (uint64_t addr, uint64_t& entry, size_t size) {
+		const bool shared = addr < shared_memory_boundary
+			&& is_writable(entry) && (entry & ATTR_DEVICE) != ATTR_DEVICE;
+		if (presplit && shared && size == L2_BLOCK_SIZE && is_leaf(entry, 2)) {
+			split_l2_block(memory, entry);
+			// Mark the freshly-split 4KB leaves cloneable read-only here: the new
+			// L3 table lives in a memory bank (out of main-memory bounds), so
+			// foreach_page() will NOT recurse into it, and the generic marking
+			// below would never reach those pages -- leaving them writable and
+			// letting fork writes bleed into the shared master.
+			uint64_t* l3 = memory.page_at(entry & DESC_ADDR_MASK);
+			for (size_t i = 0; i < 512; i++) {
+				if (is_leaf(l3[i], 3) && is_writable(l3[i])
+					&& (l3[i] & ATTR_DEVICE) != ATTR_DEVICE)
+					l3[i] |= DESC_AP_RO | DESC_CLONEABLE;
+				l3[i] &= ~DESC_ACCESSED;
+			}
+			return;
+		}
 		if (addr < shared_memory_boundary && is_leaf(entry, size == L3_PAGE_SIZE ? 3 : 2)
 			&& is_writable(entry) && (entry & ATTR_DEVICE) != ATTR_DEVICE) {
 			entry |= DESC_AP_RO | DESC_CLONEABLE;

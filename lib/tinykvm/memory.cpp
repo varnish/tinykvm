@@ -29,6 +29,7 @@ vMemory::vMemory(Machine& m, const MachineOptions& options,
 	  owned(own), snapshot_fd(fd),
 	  main_memory_writes(options.master_direct_memory_writes),
 	  split_hugepages(options.split_hugepages),
+	  split_hugepages_at_snapshot(options.split_hugepages_at_snapshot),
 	  executable_heap(options.executable_heap),
 	  mmap_backed_files(options.mmap_backed_files),
 	  banks(m, options)

@@ -92,6 +92,14 @@ namespace tinykvm
 		   memory and requires extra page-walking, but makes copy-on-write handling
 		   simpler and will make the ACCESS bit more granular. */
 		bool split_all_hugepages_during_loading = false;
+		/* ARM64: when enabled, prepare_copy_on_write() splits the shared 2MB
+		   blocks into 4KB leaf pages at snapshot time, so forks never split a
+		   block at runtime. This works around a copy-on-write fault observed on
+		   16KiB-page ARM64 hosts (e.g. Asahi) where a runtime block split during
+		   free-running guest execution races with the page-table walker (see
+		   bug.md "Update 2026-06-17 (cont. 4)"). Costs more fork time and page-
+		   table memory; requires split_hugepages. No effect on amd64. */
+		bool split_hugepages_at_snapshot = false;
 		/* When enabled, reset_to() will accept a different
 		   master VM than the original, but at a steep cost. */
 		bool allow_reset_to_new_master = false;

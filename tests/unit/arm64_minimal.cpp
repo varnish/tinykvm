@@ -561,6 +561,55 @@ TEST_CASE("ARM64 read-only file-backed protections stay EL0-executable", "[arm64
 	REQUIRE(!uxn_set);
 }
 
+TEST_CASE("ARM64 split_hugepages_at_snapshot pre-splits shared blocks", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	const tinykvm::MachineOptions options {
+		.max_mem = 8ull << 20,
+		.max_cow_mem = 4u << 20,
+		.split_hugepages = true,
+		.split_hugepages_at_snapshot = true,
+	};
+	const uint64_t block_addr = 1ULL << 21;          // 0x200000: a 2MB identity block
+	const uint64_t target = block_addr + 0x1000;     // a page inside that block
+
+	tinykvm::Machine master {empty_binary, options};
+	master.copy_to_guest(CODE_ADDR, cow_guest.data(),
+		cow_guest.size() * sizeof(cow_guest[0]));
+	master.prepare_copy_on_write(options.max_cow_mem);
+
+	// The shared 2MB block must now be a 4KB-leaf table, not a block.
+	size_t reported_size = 0;
+	tinykvm::page_at(master.main_memory(), target,
+		[&](uint64_t, uint64_t&, size_t sz) { reported_size = sz; });
+	REQUIRE(reported_size == tinykvm::vMemory::PageSize());
+
+	// A fork still copy-on-writes correctly through the pre-split pages: the
+	// guest writes into the (cloneable, read-only) pre-split page; its write must
+	// stay private and the shared master page must be untouched.
+	tinykvm::Machine fork {master, options};
+	auto regs = fork.registers();
+	regs.pc = CODE_ADDR;
+	regs.sp = STACK_ADDR;
+	regs.pstate = 0x3c0;
+	regs.regs[1] = 0xABCDEF;
+	regs.regs[2] = target;
+	regs.regs[3] = target + sizeof(uint64_t);
+	regs.regs[4] = tinykvm::ARM64_STOP_MMIO_ADDR;
+	fork.set_registers(regs);
+	fork.run(1.0f);
+
+	uint64_t fork_value = 0;
+	uint64_t master_value = 0xDEAD;
+	fork.copy_from_guest(&fork_value, target, sizeof(fork_value));
+	master.copy_from_guest(&master_value, target, sizeof(master_value));
+	REQUIRE(fork.stopped());
+	REQUIRE(fork_value == 0xABCDEF);
+	REQUIRE(master_value == 0);
+}
+
 TEST_CASE("ARM64 EL0 reads cntvct_el0 without trapping", "[arm64]")
 {
 	require_arm64_kvm();
