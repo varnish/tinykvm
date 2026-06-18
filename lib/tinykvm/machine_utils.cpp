@@ -565,7 +565,7 @@ void Machine::foreach_memory(address_t src, size_t len,
 			view = {view.begin(), view.size() + size};
 		} else {
 			callback(view);
-			view = {"", 0};
+			view = {ptr, size};
 		}
 
 		src += size;
