@@ -69,6 +69,78 @@ extern void prints_hello_world() {
 	REQUIRE(output_is_hello_world);
 }
 
+TEST_CASE("foreach_memory spans non-contiguous host pages", "[Fork]")
+{
+	// Regression test for a bug in Machine::foreach_memory(): when an adjacent
+	// guest page was backed by a non-contiguous host page, it emitted the
+	// accumulated view but then reset the view to empty instead of restarting
+	// it at the current page. Every byte from the first non-contiguous
+	// transition onward was silently dropped.
+	const auto binary = build_and_load(R"M(
+volatile char buffer[16384];
+char* get_buffer() { return (char*)buffer; }
+int main() {
+	for (int i = 0; i < 16384; i++) buffer[i] = 0;
+})M");
+
+	tinykvm::Machine machine { binary, {
+		.max_mem = MAX_MEMORY,
+		.split_hugepages = true
+	} };
+	machine.setup_linux({"fork"}, env);
+	// Touch the buffer so its pages are backed by the master's memory before
+	// we fork; cloned copy-on-write pages then resolve to real host memory.
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(1UL << 20);
+
+	// A fork uses copy-on-write banked memory, so freshly written pages are
+	// backed by bank pages rather than the identity-mapped master memory.
+	auto fork = tinykvm::Machine { machine, {
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
+	} };
+	REQUIRE(fork.uses_cow_memory());
+
+	const size_t PAGE = tinykvm::vMemory::PageSize();
+	// Page-align a 2-page window inside the guest's buffer.
+	const uint64_t raw = fork.address_of("buffer");
+	REQUIRE(raw != 0x0);
+	const uint64_t addr = (raw + PAGE - 1) & ~(PAGE - 1);
+
+	// Force the two adjacent guest pages onto NON-contiguous host pages:
+	// allocate the second page's backing before the first page's. Bank pages
+	// are handed out sequentially, so the second guest page ends up at a lower
+	// host address than the first, and a forward scan hits a discontinuity at
+	// the page boundary. Sub-page writes force a fresh bank page rather than
+	// unlocking the (contiguous) source page in place.
+	const std::string half(PAGE / 2, 'x');
+	fork.copy_to_guest(addr + PAGE, half.data(), half.size());
+	fork.copy_to_guest(addr,        half.data(), half.size());
+
+	// Fill the whole 2-page range in place with a known pattern. The pages are
+	// already present, so this keeps their (non-contiguous) host backing.
+	std::string pattern(2 * PAGE, '\0');
+	for (size_t i = 0; i < pattern.size(); i++)
+		pattern[i] = char('A' + (i % 26));
+	fork.copy_to_guest(addr, pattern.data(), pattern.size());
+
+	// Collect every segment foreach_memory hands back.
+	std::string captured;
+	size_t segments = 0;
+	fork.foreach_memory(addr, pattern.size(),
+		[&] (std::string_view sv) {
+			captured.append(sv);
+			segments += 1;
+		});
+
+	// The range must actually be non-contiguous, otherwise the test would pass
+	// even with the bug present.
+	REQUIRE(segments >= 2);
+	// Every byte must be captured, in order.
+	REQUIRE(captured.size() == pattern.size());
+	REQUIRE(captured == pattern);
+}
+
 TEST_CASE("Fork and run out of memory", "[Fork]")
 {
 	const auto binary = build_and_load(R"M(
