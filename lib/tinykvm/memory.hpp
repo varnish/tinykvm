@@ -30,6 +30,16 @@ struct vMemory {
 	/* Counter for the number of pages that have been unlocked
 	   in the main memory. */
 	size_t unlocked_pages = 0;
+	/* Set by writable_page_at() when a host-initiated copy-on-write structurally
+	   rewrites a forked guest's translation (block split or leaf repoint). Such
+	   a write -- e.g. delivering syscall results into a guest buffer, often via
+	   a host-side Machine::system_call() outside the run loop -- has no
+	   guest-side TLB invalidation (unlike a guest data abort, whose sync vector
+	   runs `tlbi` for the faulting VA on return). The ARM64 run loop flushes the
+	   guest's stage-1 TLB before the next entry whenever this is set, or a stale
+	   block/read-only entry would shadow the freshly CoW'd page. Cleared on a
+	   guest data abort (the guest self-heals that VA). */
+	bool pending_guest_tlb_flush = false;
 	/* Linear memory */
 	char*  ptr;
 	size_t size;

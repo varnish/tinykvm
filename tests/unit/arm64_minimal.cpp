@@ -52,6 +52,21 @@ static const std::array<uint32_t, 3> cntvct_guest {
 	0xF9000060, // str x0, [x3]   (STOP MMIO -> exit)
 };
 
+// Two phases, run as two separate guest entries with a host-initiated
+// copy-on-write in between.
+static const std::array<uint32_t, 6> block_cow_guest {
+	// phase 1 @ +0: read page A to cache the 2MB block translation (which also
+	// covers page B), then stop so the host can CoW page B.
+	0xF9400025, // ldr x5, [x1]   (x1 = page A, in the block)
+	0xF90000C5, // str x5, [x6]   (x6 = DATA_ADDR: report A)
+	0xF900007F, // str xzr, [x3]  (x3 = STOP MMIO -> exit run 1)
+	// phase 2 @ +12: read page B, which the host split out of the block and
+	// copy-on-wrote while the guest held the stale block translation.
+	0xF9400045, // ldr x5, [x2]   (x2 = page B)
+	0xF90000C5, // str x5, [x6]   (report B)
+	0xF900007F, // str xzr, [x3]  (STOP MMIO -> exit run 2)
+};
+
 static bool contains_page(const std::vector<std::pair<uint64_t, uint64_t>>& pages,
 	uint64_t addr)
 {
@@ -559,6 +574,122 @@ TEST_CASE("ARM64 read-only file-backed protections stay EL0-executable", "[arm64
 		uxn_set = (entry & DESC_UXN) != 0;
 	});
 	REQUIRE(!uxn_set);
+}
+
+TEST_CASE("ARM64 host CoW after guest cached a 2MB block translation", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	const tinykvm::MachineOptions options {
+		.max_mem = 8ull << 20,
+		.max_cow_mem = 4u << 20,
+		.split_hugepages = true,
+	};
+
+	const uint64_t block_addr = 1ULL << 21;          // 0x200000: a 2MB identity block
+	const uint64_t page_a = block_addr;              // 0x200000
+	const uint64_t page_b = block_addr + 0x1000;     // 0x201000: same block, other 4KB page
+	const uint64_t master_b = 0x1111111111111111ull;
+
+	tinykvm::Machine master {empty_binary, options};
+	master.copy_to_guest(CODE_ADDR, block_cow_guest.data(),
+		block_cow_guest.size() * sizeof(block_cow_guest[0]));
+	master.copy_to_guest(page_b, &master_b, sizeof(master_b));
+	master.prepare_copy_on_write(options.max_cow_mem);
+
+	tinykvm::Machine fork {master, options};
+
+	// Run 1: the guest reads page A, caching the read-only 2MB block translation
+	// that also covers page B.
+	auto regs = fork.registers();
+	regs.pc = CODE_ADDR;
+	regs.sp = STACK_ADDR;
+	regs.pstate = 0x3c0;
+	regs.regs[1] = page_a;
+	regs.regs[3] = tinykvm::ARM64_STOP_MMIO_ADDR;
+	regs.regs[6] = DATA_ADDR;
+	fork.set_registers(regs);
+	fork.run(1.0f);
+	REQUIRE(fork.stopped());
+
+	// Host-initiated CoW: writing page B splits the 2MB block into 4KB pages and
+	// copies page B to a fresh bank page. No guest fault occurs, so nothing
+	// invalidates the stale 2MB block entry the guest cached in run 1.
+	const uint64_t host_b = 0x2222222222222222ull;
+	fork.copy_to_guest(page_b, &host_b, sizeof(host_b));
+
+	// Host-side translation through the fork's own page tables is correct.
+	uint64_t host_view = 0;
+	fork.copy_from_guest(&host_view, page_b, sizeof(host_view));
+	REQUIRE(host_view == host_b);
+
+	// Run 2: the guest reads page B. It must observe the host's write, not the
+	// stale master content reachable through the cached block translation.
+	regs = fork.registers();
+	regs.pc = CODE_ADDR + 3 * sizeof(uint32_t);
+	regs.sp = STACK_ADDR;
+	regs.pstate = 0x3c0;
+	regs.regs[2] = page_b;
+	regs.regs[3] = tinykvm::ARM64_STOP_MMIO_ADDR;
+	regs.regs[6] = DATA_ADDR;
+	fork.set_registers(regs);
+	fork.run(1.0f);
+	REQUIRE(fork.stopped());
+
+	uint64_t observed = 0;
+	fork.copy_from_guest(&observed, DATA_ADDR, sizeof(observed));
+	REQUIRE(observed == host_b);
+}
+
+TEST_CASE("ARM64 host CoW on a fresh fork before the guest runs", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	const tinykvm::MachineOptions options {
+		.max_mem = 8ull << 20,
+		.max_cow_mem = 4u << 20,
+		.split_hugepages = true,
+	};
+
+	const uint64_t block_addr = 1ULL << 21;
+	const uint64_t page_b = block_addr + 0x1000;
+	const uint64_t master_b = 0x1111111111111111ull;
+
+	tinykvm::Machine master {empty_binary, options};
+	master.copy_to_guest(CODE_ADDR, block_cow_guest.data(),
+		block_cow_guest.size() * sizeof(block_cow_guest[0]));
+	master.copy_to_guest(page_b, &master_b, sizeof(master_b));
+	master.prepare_copy_on_write(options.max_cow_mem);
+
+	// Fresh fork: its TLB was flushed by setup_cow_mode and the guest has not
+	// run, mirroring a warm fork serving its very first turn.
+	tinykvm::Machine fork {master, options};
+
+	// Host-initiated CoW (splits the block, copies page B) before any guest run.
+	const uint64_t host_b = 0x2222222222222222ull;
+	fork.copy_to_guest(page_b, &host_b, sizeof(host_b));
+
+	uint64_t host_view = 0;
+	fork.copy_from_guest(&host_view, page_b, sizeof(host_view));
+	REQUIRE(host_view == host_b);
+
+	// The guest's very first instruction reads page B.
+	auto regs = fork.registers();
+	regs.pc = CODE_ADDR + 3 * sizeof(uint32_t);  // phase 2
+	regs.sp = STACK_ADDR;
+	regs.pstate = 0x3c0;
+	regs.regs[2] = page_b;
+	regs.regs[3] = tinykvm::ARM64_STOP_MMIO_ADDR;
+	regs.regs[6] = DATA_ADDR;
+	fork.set_registers(regs);
+	fork.run(1.0f);
+	REQUIRE(fork.stopped());
+
+	uint64_t observed = 0;
+	fork.copy_from_guest(&observed, DATA_ADDR, sizeof(observed));
+	REQUIRE(observed == host_b);
 }
 
 TEST_CASE("ARM64 EL0 reads cntvct_el0 without trapping", "[arm64]")

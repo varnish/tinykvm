@@ -51,6 +51,64 @@ static uint64_t get_sysreg(int fd, uint64_t id)
 	return value;
 }
 
+static void set_one_reg_u64(int fd, uint64_t id, uint64_t value)
+{
+	struct kvm_one_reg reg {
+		.id = id,
+		.addr = (uint64_t)&value,
+	};
+	if (ioctl(fd, KVM_SET_ONE_REG, &reg) < 0) {
+		throw MachineException("KVM_SET_ONE_REG failed", errno);
+	}
+}
+
+static uint64_t core_reg_id(uint64_t reg)
+{
+	return KVM_REG_ARM64 | KVM_REG_SIZE_U64 | KVM_REG_ARM_CORE | reg;
+}
+
+/* Invalidate the (forked) guest's stage-1 TLB by running the EL1 TLB-flush
+   stub for one entry. The host cannot invalidate the guest's stage-1 TLB
+   through KVM, and -- unlike a guest data abort, whose sync vector runs
+   `tlbi vaae1` for the faulting VA before eret'ing -- a host-initiated
+   copy-on-write (e.g. delivering syscall results into a guest buffer) leaves
+   no guest-side invalidation. A stale block/read-only entry would then shadow
+   the freshly CoW'd page and the guest reads pre-CoW data.
+
+   Done with raw ioctls rather than cpu.run(): run() resets `stopped` and tears
+   down the timeout timer, which must not happen mid run-loop (the likely flaw
+   in earlier full-flush attempts that "had no effect"). Only PC/PSTATE/x9 are
+   clobbered by the stub; save and restore just those. */
+void vCPU::flush_guest_tlb()
+{
+	const uint64_t PC_ID = core_reg_id(KVM_REG_ARM_CORE_REG(regs.pc));
+	const uint64_t PSTATE_ID = core_reg_id(KVM_REG_ARM_CORE_REG(regs.pstate));
+	const uint64_t X9_ID = core_reg_id(KVM_REG_ARM_CORE_REG(regs.regs)
+		+ 9 * sizeof(__u64) / sizeof(__u32));
+
+	this->flush_registers();
+	const uint64_t saved_pc = get_sysreg(this->fd, PC_ID);
+	const uint64_t saved_pstate = get_sysreg(this->fd, PSTATE_ID);
+	const uint64_t saved_x9 = get_sysreg(this->fd, X9_ID);
+
+	set_one_reg_u64(this->fd, PC_ID, TLB_FLUSH_ADDR);
+	set_one_reg_u64(this->fd, PSTATE_ID, 0x5 /* EL1h */ | 0x3C0 /* DAIF masked */);
+	if (ioctl(this->fd, KVM_RUN, 0) < 0) {
+		Machine::machine_exception("KVM_RUN (guest TLB flush) failed", errno);
+	}
+	/* The stub's stop-MMIO store leaves a PC increment that KVM commits on the
+	   next entry; consume it now (against the stub PC) so the real resume does
+	   not skip its first instruction -- see the stop-MMIO handler below. */
+	this->kvm_run->immediate_exit = 1;
+	ioctl(this->fd, KVM_RUN, 0);
+	this->kvm_run->immediate_exit = 0;
+
+	set_one_reg_u64(this->fd, PC_ID, saved_pc);
+	set_one_reg_u64(this->fd, PSTATE_ID, saved_pstate);
+	set_one_reg_u64(this->fd, X9_ID, saved_x9);
+	this->invalidate_register_cache();
+}
+
 static bool handle_cow_data_abort(vCPU& cpu)
 {
 	const uint64_t ESR_EL1 = sys_reg_id(3, 0, 5, 2, 0);
@@ -72,6 +130,11 @@ static bool handle_cow_data_abort(vCPU& cpu)
 	ScopedProfiler<MachineProfiling::PageFault> prof(cpu.machine().profiling());
 	cpu.machine().main_memory().get_writable_page(far & ~PageMask(), 1ULL, false, true);
 	cpu.last_fault_address = far;
+	/* This CoW was driven by a guest fault: the sync vector invalidates the
+	   faulting VA itself on return (tlbi vaae1), so no host-side flush is owed.
+	   Clear the flag the CoW just set so the run loop does not redundantly flush
+	   the whole TLB on resume. */
+	cpu.machine().main_memory().pending_guest_tlb_flush = false;
 	return true;
 }
 
@@ -128,6 +191,15 @@ void vCPU::disable_timer()
 
 long vCPU::run_once()
 {
+	/* A host-initiated copy-on-write (e.g. delivering syscall results into a
+	   guest buffer, frequently via a host-side Machine::system_call() that
+	   bypasses this run loop) rewrote this fork's page tables with no
+	   guest-side TLB invalidation. Flush the stale stage-1 entry before
+	   entering, or the guest reads pre-CoW data. */
+	if (machine().is_forked() && machine().memory.pending_guest_tlb_flush) {
+		machine().memory.pending_guest_tlb_flush = false;
+		this->flush_guest_tlb();
+	}
 	int result;
 	{
 		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());

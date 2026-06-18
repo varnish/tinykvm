@@ -18,6 +18,10 @@ namespace tinykvm
 #if defined(TINYKVM_ARCH_ARM64)
 		void flush_registers() const;
 		void invalidate_register_cache() const;
+		/* Invalidate this (forked) guest's stage-1 TLB before the next entry,
+		   after the host rewrote its page tables via a host-initiated
+		   copy-on-write. Runs the EL1 TLB-flush stub for one entry. */
+		void flush_guest_tlb();
 #endif
 		tinykvm_fpuregs fpu_registers() const;
 		void set_fpu_registers(const struct tinykvm_fpuregs &);

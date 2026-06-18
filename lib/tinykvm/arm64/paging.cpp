@@ -105,6 +105,10 @@ static void split_l2_block(vMemory& memory, uint64_t& entry)
 		page.pmem[i] = page_desc(base + (i << 12), flags);
 	}
 	entry = (page.addr & DESC_ADDR_MASK) | DESC_TABLE | DESC_VALID;
+	// Block -> table is a break-before-make change: a cached 2MB block entry
+	// must be invalidated before the guest uses the new translation.
+	if (memory.machine.is_forked())
+		memory.pending_guest_tlb_flush = true;
 }
 
 static void cow_page(vMemory& memory, uint64_t addr, uint64_t& entry, uint64_t*& data,
@@ -128,6 +132,10 @@ static void cow_page(vMemory& memory, uint64_t addr, uint64_t& entry, uint64_t*&
 	}
 	entry = page.addr | (entry & (DESC_FLAGS_MASK & ~(DESC_CLONEABLE | DESC_AP_RO))) | DESC_VALID | DESC_PAGE;
 	data = page.pmem;
+	// Repointing a (possibly cached read-only) leaf to a private copy: the
+	// guest's stale translation must be invalidated before it reads here.
+	if (memory.machine.is_forked())
+		memory.pending_guest_tlb_flush = true;
 	if (entry & DESC_AP_USER)
 		memory.record_cow_leaf_user_page(addr);
 }
@@ -490,6 +498,7 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 				| (e3 & (DESC_FLAGS_MASK & ~(DESC_CLONEABLE | DESC_AP_RO)))
 				| DESC_VALID | DESC_PAGE;
 			data = page.pmem;
+			memory.pending_guest_tlb_flush = true;
 			if (e3 & DESC_AP_USER)
 				memory.record_cow_leaf_user_page(addr);
 		} else {
