@@ -175,6 +175,10 @@ long vCPU::run_once()
 			const uint32_t intr = *(uint32_t *)data;
 			if (intr != 0xFFFF && intr != 0x1F778) {
 				ScopedProfiler<MachineProfiling::Syscall> prof(machine().profiling());
+				/* The syscall-return stub reserved an 8-byte TLB-invalidation
+				   slot at [rsp] before trapping (see interrupts.asm). Capture
+				   that address now, before a syscall can move rsp. */
+				const uint64_t tlb_slot = this->registers().rsp;
 				static constexpr bool VERIFY_SYSCALL_REGS = false;
 				if constexpr (VERIFY_SYSCALL_REGS) {
 					auto regs_copy = this->registers();
@@ -217,14 +221,19 @@ long vCPU::run_once()
 					Machine::timeout_exception("Timeout Exception", this->timer_ticks);
 				}
 				/* If handling this syscall CoW-remapped a guest page, hand the
-				   syscall-return stub a targeted TLB invalidation (or -1 to
-				   reload CR3 if several pages changed) via the kernel control
-				   page. 0 in the common case -> the stub flushes nothing. */
+				   stub a targeted TLB invalidation (or -1 to reload CR3 if
+				   several pages changed) through its reserved stack slot. The
+				   guest already wrote that slot (the push), so its page is
+				   fork-private and present: a plain translated write, no CoW.
+				   0 in the common case -> the stub flushes nothing.
+				   Only for local execution: under an active remote connection
+				   (IPRE) the stack can resolve outside this machine's memory,
+				   and the remote disconnect/page-fault paths reload CR3 on their
+				   own, so the targeted signal isn't needed there. */
 				if (const uint64_t tlb_sig = machine().take_pending_tlb_signal()) {
-					auto& memory = machine().main_memory();
-					auto wp = writable_page_at(memory,
-						memory.physbase + KERNEL_CTRL_ADDR, PDE64_RW | PDE64_NX);
-					*(volatile uint64_t*)(wp.page + KERNEL_CTRL_TLB_SIGNAL) = tlb_sig;
+					if (LIKELY(!machine().has_remote()))
+						*(uint64_t*)machine().unsafe_memory_at(
+							machine().translate(tlb_slot), 8) = tlb_sig;
 				}
 				return KVM_EXIT_IO;
 			} else if (intr == 0xFFFF) {

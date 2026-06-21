@@ -487,22 +487,6 @@ void Machine::setup_cow_mode(const Machine* other)
 	ist_opts.allow_dirty = true;
 	writable_page_at(memory, memory.physbase + IST_ADDR, PDE64_RW | PDE64_NX, ist_opts);
 
-	/* Kernel control page (TLB-invalidation signal). Eagerly make it
-	   fork-private and zeroed, so the host can write the signal in place and
-	   the guest's translation for it is established before the guest runs.
-	   This page must never be CoW-cloned mid-syscall, or it would hit the
-	   very stale-translation problem the signal exists to fix.
-	   Only forks need a private writable copy: a fork's stub clears the
-	   signal (a write) and concurrent forks must not share it. The master
-	   (other == this, via prepare_copy_on_write) never gets a signal and only
-	   ever reads the identity-mapped page, so skip it there to avoid banking
-	   an extra page. */
-	if (other != this) {
-		WritablePageOptions ctrl_opts;
-		ctrl_opts.zeroes = true;
-		writable_page_at(memory, memory.physbase + KERNEL_CTRL_ADDR, PDE64_RW | PDE64_NX, ctrl_opts);
-	}
-
 	struct kvm_sregs sregs = other->get_special_registers();
 
 	/* Page table entry will be cloned at the start */

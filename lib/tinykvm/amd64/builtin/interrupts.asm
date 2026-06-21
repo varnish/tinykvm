@@ -1,11 +1,6 @@
 [BITS 64]
 global vm64_exception
 %define INTR_ASM_BASE 0x2000
-%define KERNEL_CTRL_BASE 0x4000
-;; RIP-relative displacement from the start of this blob (loaded at
-;; physbase+INTR_ASM_BASE) to the kernel control page (physbase+0x4000).
-;; Using $$ keeps it correct for any physbase, unlike an absolute address.
-%define CTRL_TLB_SIGNAL (KERNEL_CTRL_BASE - INTR_ASM_BASE)
 
 ;; CPU exception frame:
 ;; 1. stack    rsp+32
@@ -57,36 +52,35 @@ ALIGN 0x10
 	je .vm64_remote_disconnect
 	cmp eax, 0x1F707 ;; REENTRY SYSCALL
 	je .vm64_reentrycall
-	out 0, eax
-	;; The host may have CoW-remapped one of our pages while handling the
-	;; syscall (copy_to_guest cloning the page-table chain + remapping a
-	;; buffer), leaving our cached translation stale. Rather than flush the
-	;; whole TLB on every syscall, the host writes the kernel control page
-	;; with what (if anything) needs invalidating:
+	;; The host may CoW-remap one of our pages while handling the syscall
+	;; (copy_to_guest cloning the page-table chain + remapping a buffer),
+	;; leaving our cached translation stale. Rather than flush the whole TLB
+	;; on every syscall, reserve a stack slot (default 0) that the host fills
+	;; during the trap with what, if anything, needs invalidating:
 	;;    0   -> nothing changed; no flush (the common, steady-state case)
 	;;   -1   -> several pages changed; reload CR3 (full flush)
 	;;   va   -> exactly one page changed; invlpg [va] (targeted)
 	;; CR4.PGE is off, so invlpg also drops that address's paging-structure
 	;; cache entries (the stale PML4->PT chain), which is what we need.
-	;; stac/clac: the save/restore below touches the user stack (push/pop),
-	;; which a supervisor access cannot do under SMAP without AC=1.
+	;; stac/clac: the slot and the saved rax live on the user stack, which a
+	;; supervisor access cannot touch under SMAP without AC=1.
 	stac
-	push rax
-	mov rax, [rel $$ + CTRL_TLB_SIGNAL]
+	push 0                          ;; TLB indicator slot; host may overwrite [rsp]
+	out 0, eax
+	push rax                        ;; save the syscall return value
+	mov rax, [rsp + 8]              ;; load the indicator
 	test rax, rax
 	jz .vm64_syscall_ret            ;; nothing to invalidate (common case)
 	cmp rax, -1
 	je .vm64_syscall_reload         ;; sentinel: full CR3 reload
 	invlpg [rax]                    ;; targeted single-page invalidation
-	jmp .vm64_syscall_clear
+	jmp .vm64_syscall_ret
 .vm64_syscall_reload:
 	mov rax, cr3
 	mov cr3, rax
-.vm64_syscall_clear:
-	xor eax, eax
-	mov [rel $$ + CTRL_TLB_SIGNAL], rax  ;; consume the signal
 .vm64_syscall_ret:
-	pop rax
+	pop rax                         ;; restore the syscall return value
+	add rsp, 8                      ;; discard the indicator slot
 	clac
 	o64 sysret
 

@@ -203,9 +203,7 @@ uint64_t setup_amd64_paging(vMemory& memory,
 	/* Exception (IST) stack */
 	const uint64_t ist_page = IST_ADDR >> 12;
 	lowpage[ist_page+0] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (memory.physbase + IST_ADDR);
-	/* Kernel control page (formerly the unused IST2 slot): a kernel-only
-	   NX+RW scratch page for the host->guest TLB-invalidation signal. */
-	lowpage[ist_page+1] = PDE64_PRESENT | PDE64_RW | PDE64_NX | (memory.physbase + KERNEL_CTRL_ADDR);
+	lowpage[ist_page+1] = 0; //PDE64_PRESENT | PDE64_RW | PDE64_NX | (memory.physbase + IST2_ADDR);
 
 	/* Usercode page: Entry, exit */
 	const uint64_t user_page = USER_ASM_ADDR >> 12;
