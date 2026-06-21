@@ -267,6 +267,21 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 	if (full_reset) {
 		this->setup_cow_mode(&other);
 	}
+#if defined(TINYKVM_ARCH_AMD64)
+	else {
+		/* Copy-back reset keeps the fork's page tables and skips
+		   setup_cow_mode(), so the guest's segment/mode state (CS/SS, CR0)
+		   is whatever the fork was stopped in. A fork interrupted
+		   mid-execution in user mode (e.g. a watchdog timeout while the
+		   guest was spinning) would otherwise resume the master's parked
+		   kernel-mode trampoline (a sysret) in user mode and #PF on the
+		   kernel page. Restore the master's special registers, keeping the
+		   fork's own page tables (CR3). */
+		struct kvm_sregs sregs = other.get_special_registers();
+		sregs.cr3 = this->memory.page_tables;
+		this->vcpu.set_special_registers(sregs);
+	}
+#endif
 
 	if (options.reset_copy_all_registers) {
 		/* Copy register state from the master machine */
