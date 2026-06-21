@@ -257,6 +257,29 @@ struct Machine
 	void set_main_memory_writable(bool v) { memory.main_memory_writes = v; }
 	bool is_forked() const noexcept { return m_forked; }
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
+
+	/* TLB-invalidation signal for the generic syscall-return stub.
+	   When the host CoW-remaps a guest leaf page while handling a syscall on
+	   a forked VM, the guest's cached translation for that page goes stale
+	   and reads would silently return the master's pre-remap bytes. Instead
+	   of flushing the whole TLB on every syscall return, record the remapped
+	   page here and hand it to the stub, which does a targeted invlpg (or a
+	   full CR3 reload if several distinct pages changed). 0 = nothing to do.
+	   NB: one slot per Machine — for SMP forks issuing concurrent syscalls
+	   this would need to be per-vCPU (see KERNEL_CTRL_ADDR). */
+	static constexpr uint64_t TLB_SIGNAL_RELOAD_ALL = ~uint64_t(0);
+	void signal_tlb_invalidation(uint64_t vaddr) noexcept {
+		const uint64_t page = vaddr & ~uint64_t(0xFFF);
+		if (m_pending_tlb_signal == 0)
+			m_pending_tlb_signal = page;
+		else if (m_pending_tlb_signal != page)
+			m_pending_tlb_signal = TLB_SIGNAL_RELOAD_ALL; /* several pages */
+	}
+	uint64_t take_pending_tlb_signal() noexcept {
+		const uint64_t v = m_pending_tlb_signal;
+		m_pending_tlb_signal = 0;
+		return v;
+	}
 	std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages() const;
 	/* Pre-CoW a set of (address, size) ranges — typically the accessed set
 	   harvested from a warmup fork — so the next run takes no per-page
@@ -357,6 +380,7 @@ private:
 	bool  m_prepped = false;
 	bool  m_forked = false;
 	bool  m_just_reset = false;
+	uint64_t m_pending_tlb_signal = 0;
 	bool  m_loaded_from_snapshot = false;
 	bool  m_remote_pfaults = false;
 	bool  m_permanent_remote_connection = false;

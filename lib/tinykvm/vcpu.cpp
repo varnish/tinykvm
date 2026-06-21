@@ -486,7 +486,6 @@ void Machine::setup_cow_mode(const Machine* other)
 	WritablePageOptions ist_opts;
 	ist_opts.allow_dirty = true;
 	writable_page_at(memory, memory.physbase + IST_ADDR, PDE64_RW | PDE64_NX, ist_opts);
-	//writable_page_at(memory, memory.physbase + IST2_ADDR, PDE64_RW | PDE64_NX, ist_opts);
 
 	struct kvm_sregs sregs = other->get_special_registers();
 

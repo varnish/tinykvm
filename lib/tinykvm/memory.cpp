@@ -157,6 +157,12 @@ void vMemory::record_cow_leaf_user_page(uint64_t addr)
 	if (machine.is_forked()) {
 		auto it = std::lower_bound(cow_written_pages.begin(), cow_written_pages.end(), addr);
 		cow_written_pages.insert(it, addr);
+		/* This page's guest translation may now be stale. Hand it to the
+		   syscall-return stub for a targeted invlpg. (Write-fault CoW from
+		   the guest self-corrects via the #PF handler's invlpg, so signalling
+		   from that path only ever causes a harmless redundant invlpg on the
+		   next syscall — never a missed flush.) */
+		machine.signal_tlb_invalidation(addr);
 	}
 }
 
