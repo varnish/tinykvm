@@ -216,6 +216,16 @@ long vCPU::run_once()
 				if (this->timed_out()) {
 					Machine::timeout_exception("Timeout Exception", this->timer_ticks);
 				}
+				/* If handling this syscall CoW-remapped a guest page, hand the
+				   syscall-return stub a targeted TLB invalidation (or -1 to
+				   reload CR3 if several pages changed) via the kernel control
+				   page. 0 in the common case -> the stub flushes nothing. */
+				if (const uint64_t tlb_sig = machine().take_pending_tlb_signal()) {
+					auto& memory = machine().main_memory();
+					auto wp = writable_page_at(memory,
+						memory.physbase + KERNEL_CTRL_ADDR, PDE64_RW | PDE64_NX);
+					*(volatile uint64_t*)(wp.page + KERNEL_CTRL_TLB_SIGNAL) = tlb_sig;
+				}
 				return KVM_EXIT_IO;
 			} else if (intr == 0xFFFF) {
 				this->stopped = true;
