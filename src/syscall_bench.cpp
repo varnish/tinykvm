@@ -46,12 +46,62 @@ static double bench_op(tinykvm::Machine& vm, uint64_t addr,
 	return best;
 }
 
+/* Host pattern the HOSTCALL_FILL handler writes into the guest buffer. */
+static uint8_t fill_byte(size_t i) { return (uint8_t)(0xA5 ^ (i * 7 + 3)); }
+static unsigned host_fnv1a(size_t len) {
+	unsigned h = 2166136261u;
+	for (size_t i = 0; i < len; i++) { h ^= fill_byte(i); h *= 16777619u; }
+	return h;
+}
+
+/* syscall 500: copy a known pattern into [arg0, arg0+arg1). This runs mid-
+   vmcall and CoW-remaps the destination page(s) on the forked VM — the exact
+   condition that left guest reads stale before the targeted-invalidation fix. */
+static void hostcall_fill(tinykvm::vCPU& cpu)
+{
+	auto& regs = cpu.registers();
+	const uint64_t addr = regs.sysarg(0);
+	const uint64_t len  = regs.sysarg(1);
+	std::vector<uint8_t> pat(len);
+	for (uint64_t i = 0; i < len; i++) pat[i] = fill_byte(i);
+	cpu.machine().copy_to_guest(addr, pat.data(), len);
+	regs.sysret() = 0;
+	cpu.set_registers(regs);
+}
+
+static int run_correctness(const tinykvm::Machine& master,
+	const tinykvm::MachineOptions& options)
+{
+	tinykvm::Machine::install_syscall_handler(500, hostcall_fill);
+	struct Case { const char* name; const char* fn; size_t len; };
+	const Case cases[] = {
+		{ "cow_single (1 page -> targeted invlpg)", "cow_single", 256 },
+		{ "cow_multi  (2 pages -> sentinel reload)", "cow_multi", 8192 },
+	};
+	int failures = 0;
+	for (const auto& c : cases) {
+		/* Fresh fork each case, mirroring how a pooled worker is recycled. */
+		tinykvm::Machine vm { master, options };
+		const uint64_t addr = vm.address_of(c.fn);
+		vm.vmcall(addr);
+		const unsigned got = (unsigned)vm.return_value();
+		const unsigned want = host_fnv1a(c.len);
+		const bool ok = (got == want);
+		failures += !ok;
+		printf("%-42s got=0x%08X want=0x%08X  %s\n",
+			c.name, got, want, ok ? "PASS" : "FAIL (stale read)");
+	}
+	printf("%s\n", failures ? "CORRECTNESS: FAIL" : "CORRECTNESS: PASS");
+	return failures ? 1 : 0;
+}
+
 int main(int argc, char** argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "Usage: %s <guest.elf>\n", argv[0]);
+		fprintf(stderr, "Usage: %s <guest.elf> [verify]\n", argv[0]);
 		return 1;
 	}
+	const bool verify_mode = (argc >= 3 && std::string(argv[2]) == "verify");
 	/* Pin to one CPU to reduce migration noise. */
 	cpu_set_t set; CPU_ZERO(&set); CPU_SET(1, &set);
 	sched_setaffinity(0, sizeof(set), &set);
@@ -68,6 +118,9 @@ int main(int argc, char** argv)
 	master.setup_linux({"syscall_bench"}, {"LC_ALL=C", "USER=root"});
 	master.run();
 	master.prepare_copy_on_write();
+
+	if (verify_mode)
+		return run_correctness(master, options);
 
 	const uint64_t a_vmexit  = master.address_of("bench_vmexits");
 	const uint64_t a_syscall = master.address_of("bench_syscalls");

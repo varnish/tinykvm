@@ -98,6 +98,54 @@ void bench_touch_only(long count, long pages)
 	}
 }
 
+/* ---- Bug A correctness probes -------------------------------------------
+ * A hostcall (syscall 500) asks the host to fill a guest buffer via
+ * copy_to_guest, which CoW-remaps the buffer's page(s) mid-syscall. The guest
+ * then reads the buffer back and returns an FNV-1a checksum. With the targeted
+ * invalidation the read sees the freshly delivered bytes; without it, the stale
+ * (zero) master page. cow_single touches one page (targeted invlpg path);
+ * cow_multi spans two pages (sentinel -> CR3 reload path). */
+#define HOSTCALL_FILL 500
+
+static inline long sys2(long n, void *a, long b)
+{
+	long ret;
+	register long rax asm("rax") = n;
+	register void *rdi asm("rdi") = a;
+	register long rsi asm("rsi") = b;
+	asm volatile("syscall" : "+a"(rax) : "r"(rdi), "r"(rsi) : "rcx", "r11", "memory");
+	return ret = rax;
+}
+
+static unsigned fnv1a(volatile unsigned char *p, long n)
+{
+	unsigned h = 2166136261u;
+	for (long i = 0; i < n; i++) { h ^= p[i]; h *= 16777619u; }
+	return h;
+}
+
+static volatile unsigned char cow_buf[256];
+static volatile unsigned char cow_buf_multi[8192];
+
+__attribute__((used))
+unsigned cow_single(void)
+{
+	volatile unsigned char warm = cow_buf[0]; /* cache the (stale) translation */
+	(void)warm;
+	sys2(HOSTCALL_FILL, (void *)cow_buf, sizeof(cow_buf));
+	return fnv1a(cow_buf, sizeof(cow_buf));
+}
+
+__attribute__((used))
+unsigned cow_multi(void)
+{
+	for (size_t i = 0; i < sizeof(cow_buf_multi); i += PAGE_SIZE) {
+		volatile unsigned char warm = cow_buf_multi[i]; (void)warm;
+	}
+	sys2(HOSTCALL_FILL, (void *)cow_buf_multi, sizeof(cow_buf_multi));
+	return fnv1a(cow_buf_multi, sizeof(cow_buf_multi));
+}
+
 /* Required no-op entrypoint so the generic bench harness can also load this. */
 __attribute__((used))
 void bench(void) {}
