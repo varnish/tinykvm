@@ -73,23 +73,35 @@ static int run_correctness(const tinykvm::Machine& master,
 	const tinykvm::MachineOptions& options)
 {
 	tinykvm::Machine::install_syscall_handler(500, hostcall_fill);
-	struct Case { const char* name; const char* fn; size_t len; };
+	struct Case { const char* name; const char* fn; unsigned want; };
 	const Case cases[] = {
-		{ "cow_single (1 page -> targeted invlpg)", "cow_single", 256 },
-		{ "cow_multi  (2 pages -> sentinel reload)", "cow_multi", 8192 },
+		{ "cow_single (1 page -> targeted invlpg)", "cow_single", host_fnv1a(256) },
+		{ "cow_multi  (2 pages -> sentinel reload)", "cow_multi", host_fnv1a(8192) },
+		/* Corruption regression: a CoW write-fault sets the pending TLB signal,
+		   then mmap traps on the non-slot port-0 path; the host must NOT write
+		   the signal over the live [rsp]. Returns 0xC0FFEE iff [rsp] survived. */
+		{ "mmap_after_cow (port-0 [rsp] not clobbered)", "mmap_after_cow", 0xC0FFEEu },
 	};
 	int failures = 0;
 	for (const auto& c : cases) {
 		/* Fresh fork each case, mirroring how a pooled worker is recycled. */
 		tinykvm::Machine vm { master, options };
 		const uint64_t addr = vm.address_of(c.fn);
-		vm.vmcall(addr);
-		const unsigned got = (unsigned)vm.return_value();
-		const unsigned want = host_fnv1a(c.len);
-		const bool ok = (got == want);
+		unsigned got = 0;
+		const char* err = nullptr;
+		try {
+			vm.vmcall(addr);
+			got = (unsigned)vm.return_value();
+		} catch (const std::exception& e) {
+			err = e.what(); /* a crash/corruption surfaces as a MachineException */
+		}
+		const bool ok = (!err && got == c.want);
 		failures += !ok;
-		printf("%-42s got=0x%08X want=0x%08X  %s\n",
-			c.name, got, want, ok ? "PASS" : "FAIL (stale read)");
+		if (err)
+			printf("%-42s threw: %s  FAIL\n", c.name, err);
+		else
+			printf("%-42s got=0x%08X want=0x%08X  %s\n",
+				c.name, got, c.want, ok ? "PASS" : "FAIL");
 	}
 	printf("%s\n", failures ? "CORRECTNESS: FAIL" : "CORRECTNESS: PASS");
 	return failures ? 1 : 0;

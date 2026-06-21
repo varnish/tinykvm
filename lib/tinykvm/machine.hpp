@@ -265,8 +265,10 @@ struct Machine
 	   of flushing the whole TLB on every syscall return, record the remapped
 	   page here and hand it to the stub, which does a targeted invlpg (or a
 	   full CR3 reload if several distinct pages changed). 0 = nothing to do.
-	   NB: one slot per Machine — for SMP forks issuing concurrent syscalls
-	   this would need to be per-vCPU (see KERNEL_CTRL_ADDR). */
+	   NB: one slot per Machine — for SMP forks issuing concurrent syscalls on
+	   multiple vCPUs this would need to be per-vCPU; the single shared field
+	   can misdeliver or race across vCPUs. AMD64 only (the consumer lives in
+	   the amd64 vcpu_run). */
 	static constexpr uint64_t TLB_SIGNAL_RELOAD_ALL = ~uint64_t(0);
 	void signal_tlb_invalidation(uint64_t vaddr) noexcept {
 		const uint64_t page = vaddr & ~uint64_t(0xFFF);

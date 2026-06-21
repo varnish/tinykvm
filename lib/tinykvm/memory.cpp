@@ -157,12 +157,15 @@ void vMemory::record_cow_leaf_user_page(uint64_t addr)
 	if (machine.is_forked()) {
 		auto it = std::lower_bound(cow_written_pages.begin(), cow_written_pages.end(), addr);
 		cow_written_pages.insert(it, addr);
+#if defined(TINYKVM_ARCH_AMD64)
 		/* This page's guest translation may now be stale. Hand it to the
 		   syscall-return stub for a targeted invlpg. (Write-fault CoW from
 		   the guest self-corrects via the #PF handler's invlpg, so signalling
 		   from that path only ever causes a harmless redundant invlpg on the
-		   next syscall — never a missed flush.) */
+		   next syscall — never a missed flush.) AMD64 only: the arm64 backend
+		   has no consumer for the signal. */
 		machine.signal_tlb_invalidation(addr);
+#endif
 	}
 }
 
