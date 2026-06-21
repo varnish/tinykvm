@@ -53,6 +53,16 @@ ALIGN 0x10
 	cmp eax, 0x1F707 ;; REENTRY SYSCALL
 	je .vm64_reentrycall
 	out 0, eax
+	;; The host may have modified our page tables while handling the
+	;; syscall (e.g. copy_to_guest CoW-cloning the page-table chain and
+	;; remapping a destination buffer). Reload CR3 to flush stale TLB and
+	;; paging-structure caches so the guest observes the new mappings.
+	stac
+	push rax
+	mov rax, cr3
+	mov cr3, rax
+	pop rax
+	clac
 	o64 sysret
 
 .vm64_prctl:
