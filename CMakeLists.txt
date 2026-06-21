@@ -41,6 +41,11 @@ if (TINYKVM_ARCH STREQUAL "AMD64")
 		src/pipe.cpp
 	)
 	target_link_libraries(pipekvm tinykvm)
+
+	add_executable(syscall_bench
+		src/syscall_bench.cpp
+	)
+	target_link_libraries(syscall_bench tinykvm)
 elseif (TINYKVM_ARCH STREQUAL "ARM64")
 	add_executable(arm64_demo
 		src/arm64_demo.cpp

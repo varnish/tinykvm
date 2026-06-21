@@ -8,6 +8,7 @@ guest/guest.elf
 guest/musl/musl
 guest/musl/glibc
 guest/musl/simple
+guest/musl/syscall_bench
 guest/glibc/glibc
 guest/glibc/float
 guest/go/go
