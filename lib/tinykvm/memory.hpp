@@ -3,6 +3,7 @@
 #include "memory_bank.hpp"
 #include "virtual_mem.hpp"
 #include <cstddef>
+#include <functional>
 #include <mutex>
 #include <string_view>
 
@@ -41,10 +42,17 @@ struct vMemory {
 	/* Use memory banks only for page tables, write directly
 	   to main memory. Used with is_forkable_master(). */
 	bool   main_memory_writes = false;
+	/* Set when reorder_snapshot_memory has moved pages, breaking
+	   the identity mapping (vaddr == paddr). fork_reset must walk
+	   the master's page tables instead of using safely_at(). */
+	bool   memory_reordered = false;
 	/* Split into small pages (4K) when reaching a leaf hugepage. */
 	bool   split_hugepages = true;
 	/* Executable heap */
 	bool   executable_heap = false;
+	/* Callback for PRESENTABLE pages during VM snapshot profiling */
+	using page_presentable_callback_t = std::function<void(uint64_t paddr, uint64_t vaddr)>;
+	page_presentable_callback_t on_page_presentable;
 	/* Enable file-backed memory mappings for large files */
 	bool   mmap_backed_files = true;
 	/* Dynamic page memory */

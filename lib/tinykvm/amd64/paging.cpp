@@ -17,6 +17,7 @@
 #define CLPRINT(...) /* ... */
 #endif
 #define PDE64_CLONEABLE  (1ul << 11)
+#define PDE64_PRESENTABLE (1ul << 10)
 
 namespace tinykvm {
 
@@ -504,12 +505,13 @@ void print_pagetables(const vMemory& memory)
 	}
 }
 
-void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addresses)
+void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addresses, bool include_unpresent)
 {
+	const uint64_t present_mask = include_unpresent ? (PDE64_PRESENT | PDE64_PRESENTABLE) : (PDE64_PRESENT);
 	auto* pml4 = memory.page_at(memory.page_tables);
 	for (size_t i = 0; i < 512; i++)
 	{
-		if (pml4[i] & PDE64_PRESENT) {
+		if (pml4[i] & present_mask) {
 			const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
 			callback(pdpt_base, pml4[i], pdpt_size);
 
@@ -520,7 +522,7 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 			auto* pdpt = memory.page_at(pdpt_mem);
 			for (uint64_t j = 0; j < 512; j++)
 			{
-				if (pdpt[j] & PDE64_PRESENT) {
+				if (pdpt[j] & present_mask) {
 					const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
 					callback(pd_base, pdpt[j], pd_size);
 
@@ -536,7 +538,7 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 					auto* pd = memory.page_at(pd_mem);
 					for (uint64_t k = 0; k < 512; k++)
 					{
-						if (pd[k] & PDE64_PRESENT) {
+						if (pd[k] & present_mask) {
 							const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
 							const bool is_2mb_page = (pd[k] & PDE64_PS) != 0;
 							callback(pt_base, pd[k], pt_size);
@@ -544,7 +546,7 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 								auto* pt = memory.page_at(pt_mem);
 								for (uint64_t e = 0; e < 512; e++) {
 									const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
-									if (pt[e] & PDE64_PRESENT) { // 4KB page
+									if (pt[e] & present_mask) { // 4KB page
 										callback(pte_base, pt[e], pte_size);
 									}
 								} // e
@@ -556,9 +558,9 @@ void foreach_page(vMemory& memory, foreach_page_t callback, bool skip_oob_addres
 		}
 	} // i
 } // foreach_page
-void foreach_page(const vMemory& mem, foreach_page_t callback, bool skip_oob_addresses)
+void foreach_page(const vMemory& mem, foreach_page_t callback, bool skip_oob_addresses, bool include_unpresent)
 {
-	foreach_page(const_cast<vMemory&>(mem), std::move(callback), skip_oob_addresses);
+	foreach_page(const_cast<vMemory&>(mem), std::move(callback), skip_oob_addresses, include_unpresent);
 }
 
 void foreach_page_makecow(vMemory& mem, uint64_t kernel_end,
@@ -734,6 +736,13 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 			assert(!is_copy_on_write(pml4[i]) && (pml4[i] & PDE64_PRESENT));
 		}
 		const uint64_t j = index_from_pdpt_entry(addr);
+		if ((pdpt[j] & (PDE64_PRESENT | PDE64_PRESENTABLE)) == PDE64_PRESENTABLE) {
+			pdpt[j] |= PDE64_PRESENT;
+			pdpt[j] &= ~PDE64_PRESENTABLE;
+			const uint64_t paddr = pdpt_base | (j << 30);
+			if (memory.on_page_presentable) memory.on_page_presentable(paddr, addr);
+			throw RetryException();
+		}
 		if (pdpt[j] & PDE64_PRESENT) {
 			const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
 			auto* pd = memory.page_at(pd_mem);
@@ -748,6 +757,13 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 				}
 			}
 			const uint64_t k = index_from_pd_entry(addr);
+			if ((pd[k] & (PDE64_PRESENT | PDE64_PRESENTABLE)) == PDE64_PRESENTABLE) {
+				pd[k] |= PDE64_PRESENT;
+				pd[k] &= ~PDE64_PRESENTABLE;
+				const uint64_t paddr = pd_base | (k << 21);
+				if (memory.on_page_presentable) memory.on_page_presentable(paddr, addr);
+				throw RetryException();
+			}
 			if (pd[k] & (PDE64_PRESENT | PDE64_CLONEABLE)) {
 				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
 				uint64_t* pt;
@@ -855,6 +871,13 @@ entry_is_no_longer_copy_on_write:
 				}
 
 				const uint64_t e = index_from_pt_entry(addr);
+				if ((pt[e] & (PDE64_PRESENT | PDE64_PRESENTABLE)) == PDE64_PRESENTABLE) {
+					pt[e] |= PDE64_PRESENT;
+					pt[e] &= ~PDE64_PRESENTABLE;
+					const uint64_t paddr = pt_base | (e << 12);
+					if (memory.on_page_presentable) memory.on_page_presentable(paddr, addr);
+					throw RetryException();
+				}
 				if (pt[e] & (PDE64_PRESENT | PDE64_CLONEABLE)) { // 4KB page
 					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
 					uint64_t* data;
@@ -1074,5 +1097,138 @@ size_t paging_merge_leaf_pages_into_hugepages(vMemory& memory, bool merge_if_dir
 	} // pml4[i]
 	return merged_pages;
 } // paging_merge_leaf_pages_into_hugepages()
+
+std::vector<PageInfo> collect_all_pages(const vMemory& memory, bool include_unpresent)
+{
+	std::vector<PageInfo> pages;
+	const uint64_t present_mask = include_unpresent ? (PDE64_PRESENT | PDE64_PRESENTABLE) : PDE64_PRESENT;
+	const uint64_t arena_base = MemoryBanks::ARENA_BASE_ADDRESS;
+	const uint64_t mem_end = memory.physbase + memory.size;
+
+	// A page is "relevant" if it's in main memory OR in a memory bank.
+	// Bank pages (branch nodes from CoW, kernel data like IST) need to be
+	// flattened into main memory during snapshot reordering.
+	auto is_relevant = [&](uint64_t paddr) {
+		if (paddr >= arena_base)
+			return true; // bank page
+		return paddr >= memory.physbase && paddr < mem_end;
+	};
+
+	// Include the PML4 page itself (may be in a bank after setup_cow_mode)
+	pages.push_back({memory.page_tables, PAGE_SIZE, true});
+
+	auto* pml4 = memory.page_at(memory.page_tables);
+	for (size_t i = 0; i < 512; i++) {
+		if (!(pml4[i] & present_mask))
+			continue;
+		const uint64_t pdpt_paddr = pml4[i] & PDE64_ADDR_MASK;
+		if (is_relevant(pdpt_paddr))
+			pages.push_back({pdpt_paddr, PAGE_SIZE, true});
+
+		auto* pdpt = memory.page_at(pdpt_paddr);
+		for (size_t j = 0; j < 512; j++) {
+			if (!(pdpt[j] & present_mask))
+				continue;
+			// 1GB leaf page
+			if (pdpt[j] & PDE64_PS) {
+				const uint64_t paddr = pdpt[j] & PDE64_ADDR_MASK;
+				if (is_relevant(paddr))
+					pages.push_back({paddr, 1ULL << 30, false});
+				continue;
+			}
+			const uint64_t pd_paddr = pdpt[j] & PDE64_ADDR_MASK;
+			if (is_relevant(pd_paddr))
+				pages.push_back({pd_paddr, PAGE_SIZE, true});
+
+			auto* pd = memory.page_at(pd_paddr);
+			for (size_t k = 0; k < 512; k++) {
+				if (!(pd[k] & present_mask))
+					continue;
+				// 2MB leaf page
+				if (pd[k] & PDE64_PS) {
+					const uint64_t paddr = pd[k] & PDE64_ADDR_MASK;
+					if (is_relevant(paddr))
+						pages.push_back({paddr, 1ULL << 21, false});
+					continue;
+				}
+				const uint64_t pt_paddr = pd[k] & PDE64_ADDR_MASK;
+				if (is_relevant(pt_paddr))
+					pages.push_back({pt_paddr, PAGE_SIZE, true});
+
+				auto* pt = memory.page_at(pt_paddr);
+				for (size_t e = 0; e < 512; e++) {
+					if (!(pt[e] & present_mask))
+						continue;
+					const uint64_t paddr = pt[e] & PDE64_ADDR_MASK;
+					if (is_relevant(paddr))
+						pages.push_back({paddr, PAGE_SIZE, false});
+				}
+			}
+		}
+	}
+	return pages;
+}
+
+void rewire_page_tables(char* base_ptr, uint64_t physbase, uint64_t new_root,
+	const std::unordered_map<uint64_t, uint64_t>& translation, bool include_unpresent)
+{
+	const uint64_t present_mask = include_unpresent ? (PDE64_PRESENT | PDE64_PRESENTABLE) : PDE64_PRESENT;
+
+	auto translate = [&](uint64_t& entry, uint64_t addr_mask) {
+		const uint64_t old_paddr = entry & addr_mask;
+		auto it = translation.find(old_paddr);
+		if (it != translation.end()) {
+			entry = (entry & ~addr_mask) | it->second;
+		}
+	};
+	auto get_page_at = [&](uint64_t paddr) -> uint64_t* {
+		return (uint64_t*)(base_ptr + (paddr - physbase));
+	};
+
+	auto* pml4 = get_page_at(new_root);
+	for (size_t i = 0; i < 512; i++) {
+		if (!(pml4[i] & present_mask))
+			continue;
+		// Translate PML4 entry (points to PDPT page)
+		translate(pml4[i], PDE64_ADDR_MASK);
+		const uint64_t pdpt_paddr = pml4[i] & PDE64_ADDR_MASK;
+
+		auto* pdpt = get_page_at(pdpt_paddr);
+		for (size_t j = 0; j < 512; j++) {
+			if (!(pdpt[j] & present_mask))
+				continue;
+			if (pdpt[j] & PDE64_PS) {
+				// 1GB leaf — translate data address
+				translate(pdpt[j], PDE64_ADDR_MASK);
+				continue;
+			}
+			// Translate PDPT entry (points to PD page)
+			translate(pdpt[j], PDE64_ADDR_MASK);
+			const uint64_t pd_paddr = pdpt[j] & PDE64_ADDR_MASK;
+
+			auto* pd = get_page_at(pd_paddr);
+			for (size_t k = 0; k < 512; k++) {
+				if (!(pd[k] & present_mask))
+					continue;
+				if (pd[k] & PDE64_PS) {
+					// 2MB leaf — translate data address
+					translate(pd[k], PDE64_ADDR_MASK);
+					continue;
+				}
+				// Translate PD entry (points to PT page)
+				translate(pd[k], PDE64_ADDR_MASK);
+				const uint64_t pt_paddr = pd[k] & PDE64_ADDR_MASK;
+
+				auto* pt = get_page_at(pt_paddr);
+				for (size_t e = 0; e < 512; e++) {
+					if (!(pt[e] & present_mask))
+						continue;
+					// 4KB leaf — translate data address
+					translate(pt[e], PDE64_ADDR_MASK);
+				}
+			}
+		}
+	}
+}
 
 } // tinykvm

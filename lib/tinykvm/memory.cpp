@@ -185,19 +185,25 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 			}
 		}
 		// Restore the original memory from the master VM.
+		const bool reordered = main_vm.main_memory().memory_reordered;
 		try {
-		for (const uint64_t addr : cow_written_pages) {
-			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
+		for (const uint64_t vaddr : cow_written_pages) {
+			tinykvm::page_at(*this, vaddr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
 				const uint64_t bank_addr = entry & tinykvm::paging_address_mask();
 				//fprintf(stderr, "Copying virtual page %016lx from physical %016lx with size %lu\n",
 				//	addr, bank_addr, page_size);
 
-				// This is a writable page, we will copy it using the "real"
-				// address from the master VM.
 				auto* our_page = this->safely_at(bank_addr, page_size);
-				// Find the page in the main VM
-				page_duplicate((uint64_t*)our_page,
-					(const uint64_t*)main_vm.main_memory().safely_at(addr, page_size));
+				const char* master_page;
+				if (reordered) {
+					// Snapshot reordering broke the identity mapping
+					// (vaddr != paddr), so walk the master's page tables.
+					master_page = readable_page_at(main_vm.main_memory(), vaddr, PDE64_PRESENT);
+				} else {
+					// Identity-mapped: vaddr == paddr, direct access.
+					master_page = main_vm.main_memory().safely_at(vaddr, page_size);
+				}
+				page_duplicate((uint64_t*)our_page, (const uint64_t*)master_page);
 			}, false);
 		}
 		return false;
@@ -493,11 +499,15 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, boo
 
 	WritablePageOptions zero_opts;
 	zero_opts.zeroes = zeroes;
-	auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
-	if (dirty) {
-		writable_page.set_dirty();
+	try {
+		auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
+		if (dirty) {
+			writable_page.set_dirty();
+		}
+		return writable_page.page;
+	} catch (const RetryException& e) {
+		return get_writable_page(addr, flags, zeroes, dirty);
 	}
-	return writable_page.page;
 }
 
 char* vMemory::get_kernelpage_at(uint64_t addr) const

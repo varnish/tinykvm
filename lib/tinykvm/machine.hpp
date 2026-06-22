@@ -254,6 +254,8 @@ struct Machine
 	   be used after preparation. */
 	void prepare_copy_on_write(size_t max_work_mem = 0, uint64_t shared_memory_boundary = UINT64_MAX,
 		bool split_accessed_hugepages = false);
+	void make_unpresented_with_callback(vMemory::page_presentable_callback_t on_presentable);
+	void restore_unpresented_pages();
 	void set_main_memory_writable(bool v) { memory.main_memory_writes = v; }
 	bool is_forked() const noexcept { return m_forked; }
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
@@ -263,6 +265,10 @@ struct Machine
 	   write-fault VM exits. CoW state is rebuilt by every fork/reset_to,
 	   so re-apply after each. Returns the number of pages made writable. */
 	size_t prefetch_pages(const std::vector<std::pair<uint64_t, uint64_t>>& pages);
+	/* Reorder snapshot memory so pages are sequential in fault order.
+	   Rewires page tables to reflect the new physical layout.
+	   Returns post-reorder populate pages (new paddr, size) for madvise on load. */
+	std::vector<std::pair<uint64_t, uint64_t>> reorder_snapshot_memory(const std::vector<uint64_t>& fault_order);
 
 	/* Remote VM through address space merging */
 	void remote_connect(Machine& other, bool connect_now = false);
