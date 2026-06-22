@@ -32,6 +32,9 @@ struct Data {
 	size_t len;
 };
 
+#include <stdlib.h>
+extern "C" void* malloc(size_t);
+extern "C" void free(void*);
 #include <immintrin.h>
 PUBLIC(uint32_t empty(const Data& data))
 {
