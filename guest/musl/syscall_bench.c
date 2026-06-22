@@ -146,6 +146,38 @@ unsigned cow_multi(void)
 	return fnv1a(cow_buf_multi, sizeof(cow_buf_multi));
 }
 
+/* Regression probe for the "host writes the TLB signal over a non-slot port-0
+ * path" corruption. mmap (syscall 9) is dispatched by the stub to .vm64_mmap,
+ * which traps with a bare `out 0` and reserves NO indicator slot, so its [rsp]
+ * is live guest data. We first write-fault a fresh CoW page (which sets the
+ * host's pending TLB signal without consuming it), push a sentinel so [rsp]
+ * points at it, then do the mmap syscall: if the host writes the signal to
+ * [rsp] (the bug) the sentinel is clobbered. Returns 0xC0FFEE iff [rsp]
+ * survived (signal correctly withheld from the non-generic port-0 path). */
+static volatile unsigned char cow_probe[PAGE_SIZE];
+
+__attribute__((used))
+unsigned mmap_after_cow(void)
+{
+	cow_probe[0] = 0x42; /* write-fault a CoW page -> sets pending TLB signal */
+	unsigned long slot = 0;
+	asm volatile(
+		"pushq $0x5A5A5A5A\n\t"  /* sentinel at [rsp] (the syscall's stack top) */
+		"mov $9, %%eax\n\t"       /* mmap */
+		"xor %%edi, %%edi\n\t"    /* addr = NULL */
+		"mov $4096, %%esi\n\t"    /* length */
+		"mov $3, %%edx\n\t"       /* PROT_READ|PROT_WRITE */
+		"mov $0x22, %%r10d\n\t"   /* MAP_PRIVATE|MAP_ANONYMOUS */
+		"mov $-1, %%r8\n\t"       /* fd = -1 (anon -> stub takes no CR3 reload) */
+		"xor %%r9d, %%r9d\n\t"    /* offset = 0 */
+		"syscall\n\t"             /* -> .vm64_mmap -> out 0 (port 0, no slot) */
+		"popq %0\n\t"             /* read the sentinel back */
+		: "=r"(slot)
+		:
+		: "rax","rcx","rdx","rsi","rdi","r8","r9","r10","r11","cc","memory");
+	return (slot == 0x5A5A5A5AUL) ? 0xC0FFEEu : 0xBADBADu;
+}
+
 /* Required no-op entrypoint so the generic bench harness can also load this. */
 __attribute__((used))
 void bench(void) {}

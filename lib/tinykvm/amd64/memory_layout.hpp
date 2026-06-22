@@ -23,4 +23,11 @@ namespace tinykvm {
 	static constexpr uint64_t TSS_SMP_STACK = 240;
 	// Maximum size of interrupt and exception frame
 	static constexpr uint64_t INTR_STACK_FRAME = 48;
+
+	// I/O port the generic syscall stub traps on (distinct from the plain
+	// syscall port 0). Only this path reserves a stack slot for the TLB-
+	// invalidation indicator, so the host writes that slot only for this
+	// port. Must match SYSCALL_PORT in amd64/builtin/interrupts.asm.
+	static constexpr uint32_t TINYKVM_SYSCALL_PORT = 0x10;
+
 }

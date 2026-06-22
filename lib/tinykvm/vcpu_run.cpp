@@ -170,14 +170,18 @@ long vCPU::run_once()
 
 	case KVM_EXIT_IO:
 		if (kvm_run->io.direction == KVM_EXIT_IO_OUT) {
-		if (kvm_run->io.port == 0x0) {
+		if (kvm_run->io.port == 0x0 || kvm_run->io.port == TINYKVM_SYSCALL_PORT) {
 			const char* data = ((char *)kvm_run) + kvm_run->io.data_offset;
 			const uint32_t intr = *(uint32_t *)data;
+			/* Only the generic syscall stub (SYSCALL_PORT) reserved an 8-byte
+			   TLB-invalidation slot at [rsp]; plain port-0 paths (gettimeofday,
+			   mmap, prctl/clock fallbacks, raw `out 0` guests) did not, and must
+			   not be written to. */
+			const bool generic_syscall_path = (kvm_run->io.port == TINYKVM_SYSCALL_PORT);
 			if (intr != 0xFFFF && intr != 0x1F778) {
 				ScopedProfiler<MachineProfiling::Syscall> prof(machine().profiling());
-				/* The syscall-return stub reserved an 8-byte TLB-invalidation
-				   slot at [rsp] before trapping (see interrupts.asm). Capture
-				   that address now, before a syscall can move rsp. */
+				/* The reserved slot is at [rsp] as captured now, before a
+				   syscall can move rsp. */
 				const uint64_t tlb_slot = this->registers().rsp;
 				static constexpr bool VERIFY_SYSCALL_REGS = false;
 				if constexpr (VERIFY_SYSCALL_REGS) {
@@ -222,18 +226,25 @@ long vCPU::run_once()
 				}
 				/* If handling this syscall CoW-remapped a guest page, hand the
 				   stub a targeted TLB invalidation (or -1 to reload CR3 if
-				   several pages changed) through its reserved stack slot. The
-				   guest already wrote that slot (the push), so its page is
-				   fork-private and present: a plain translated write, no CoW.
-				   0 in the common case -> the stub flushes nothing.
-				   Only for local execution: under an active remote connection
-				   (IPRE) the stack can resolve outside this machine's memory,
-				   and the remote disconnect/page-fault paths reload CR3 on their
-				   own, so the targeted signal isn't needed there. */
-				if (const uint64_t tlb_sig = machine().take_pending_tlb_signal()) {
-					if (LIKELY(!machine().has_remote()))
-						*(uint64_t*)machine().unsafe_memory_at(
-							machine().translate(tlb_slot), 8) = tlb_sig;
+				   several pages changed) through its reserved stack slot. Only
+				   deliver when ALL of these hold; otherwise leave the pending
+				   signal for the next normal syscall rather than scribble:
+				    - generic_syscall_path: only this path reserved a slot.
+				    - rsp unchanged: a syscall that replaced the register frame
+				      (rt_sigreturn, clone child) won't run the stub epilogue, so
+				      its old slot is gone.
+				    - !has_remote(): under IPRE the stack can resolve outside this
+				      machine; the remote disconnect/page-fault paths reload CR3.
+				   The guest already wrote the slot (the push), so its page is
+				   fork-private and present: a plain translated write, no CoW. */
+				if (generic_syscall_path && !machine().has_remote()
+					&& this->registers().rsp == tlb_slot)
+				{
+					if (const uint64_t tlb_sig = machine().take_pending_tlb_signal()) {
+						const uint64_t phys = machine().translate(tlb_slot);
+						if (LIKELY(phys != 0)) /* 0 == KVM_TRANSLATE failed */
+							*(uint64_t*)machine().unsafe_memory_at(phys, 8) = tlb_sig;
+					}
 				}
 				return KVM_EXIT_IO;
 			} else if (intr == 0xFFFF) {

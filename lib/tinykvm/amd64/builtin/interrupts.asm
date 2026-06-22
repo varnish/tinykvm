@@ -1,6 +1,12 @@
 [BITS 64]
 global vm64_exception
 %define INTR_ASM_BASE 0x2000
+;; Dedicated I/O port for the generic syscall path. It is distinct from the
+;; plain syscall port 0 so the host can tell that THIS path reserved a stack
+;; slot for the TLB-invalidation indicator (the other port-0 stub paths —
+;; gettimeofday/mmap/prctl-trap/clock fallback — and raw `out 0` guests do
+;; not). Must match tinykvm::TINYKVM_SYSCALL_PORT in amd64/memory_layout.hpp.
+%define SYSCALL_PORT 0x10
 
 ;; CPU exception frame:
 ;; 1. stack    rsp+32
@@ -62,11 +68,14 @@ ALIGN 0x10
 	;;   va   -> exactly one page changed; invlpg [va] (targeted)
 	;; CR4.PGE is off, so invlpg also drops that address's paging-structure
 	;; cache entries (the stale PML4->PT chain), which is what we need.
+	;; The trap uses SYSCALL_PORT (not 0) so the host knows a slot is present
+	;; here and only writes [rsp] for this path; the other port-0 stub paths
+	;; (gettimeofday/mmap/...) reserve nothing and must not be written to.
 	;; stac/clac: the slot and the saved rax live on the user stack, which a
 	;; supervisor access cannot touch under SMAP without AC=1.
 	stac
 	push 0                          ;; TLB indicator slot; host may overwrite [rsp]
-	out 0, eax
+	out SYSCALL_PORT, eax
 	push rax                        ;; save the syscall return value
 	mov rax, [rsp + 8]              ;; load the indicator
 	test rax, rax

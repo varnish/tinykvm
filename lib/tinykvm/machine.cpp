@@ -264,10 +264,8 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 	/* Reset the file descriptors */
 	this->fds().reset_to(other.fds());
 
-	/* Drop any TLB-invalidation signal left over from the previous turn.
-	   On full reset the control page is re-cloned (zeroed) by setup_cow_mode;
-	   on copy-back reset the stub has already consumed it, but clear the
-	   host-side pending value regardless so nothing leaks across turns. */
+	/* Drop any TLB-invalidation signal left over from the previous turn so a
+	   stale page address can't be delivered to the next turn's syscall stub. */
 	this->m_pending_tlb_signal = 0;
 
 	if (full_reset) {
