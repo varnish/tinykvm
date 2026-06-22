@@ -461,18 +461,20 @@ void Machine::dynamic_linking(std::string_view binary, const MachineOptions& opt
 {
 	(void)binary;
 	(void)options;
-#if defined(TINYKVM_ARCH_ARM64)
 	/* A glibc ET_DYN entered at its own entry point (ld.so, static-PIE)
-	   self-relocates during startup. RELR entries are "*addr += base" —
-	   not idempotent — so pre-applying them here would double-relocate
-	   once the guest applies them again (modern aarch64 ld.so carries
-	   DT_RELR). RELATIVE rela entries are absolute writes the guest
-	   redoes anyway. Leave all relocation to the guest. */
-#else
-	this->relocate_relr_section(".relr.dyn");
-	this->relocate_section(".rela.dyn", ".dynsym");
-	//this->relocate_section(".rela.plt", ".dynsym");
-#endif
+	   self-relocates during startup -- on both aarch64 and x86_64. RELR
+	   entries are "*addr += base", which is NOT idempotent: pre-applying
+	   them here and then letting the guest apply them again adds the load
+	   base twice. Concretely on x86_64, ld.so's _rtld_global_ro function
+	   pointers (e.g. _dl_open) are RELR-relocated, so double application
+	   lands them at base+base+addend (e.g. 0x401640 instead of 0x201640);
+	   the first runtime dlopen() then dispatches `*_rtld_global_ro._dl_open`
+	   into the program image and executes garbage -- crashing every guest
+	   C-extension import (json, numpy, ...). RELATIVE rela entries are
+	   absolute writes (`*addr = base + addend`) the guest redoes anyway.
+	   So leave all relocation to the self-relocating guest on every arch.
+	   (Previously aarch64 already did this; x86_64 still pre-applied and
+	   double-relocated -- this unifies them.) */
 }
 
 }
