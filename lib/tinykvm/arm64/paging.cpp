@@ -120,7 +120,7 @@ static void cow_page(vMemory& memory, uint64_t addr, uint64_t& entry, uint64_t*&
 	}
 	auto page = memory.new_page();
 	assert((page.addr & ~DESC_ADDR_MASK) == 0);
-	if (options.zeroes || (entry & DESC_DIRTY) == 0) {
+	if (options.zeroes) {
 		if (page.dirty)
 			page_memzero(page.pmem);
 	} else {
