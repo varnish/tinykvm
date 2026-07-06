@@ -434,6 +434,7 @@ void Machine::prepare_copy_on_write(size_t max_work_mem,
 	uint64_t shared_memory_boundary, bool split_accessed_hugepages)
 {
 	this->m_prepped = true;
+	this->m_prepared_fpu_regs = this->fpu_registers();
 	if (shared_memory_boundary == 0)
 		shared_memory_boundary = UINT64_MAX;
 

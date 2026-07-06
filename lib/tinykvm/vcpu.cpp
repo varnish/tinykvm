@@ -22,6 +22,16 @@
 extern "C" int close(int);
 extern "C" void tinykvm_timer_signal_handler(int);
 #define TINYKVM_USE_SYNCED_SREGS 1
+/* Constructing or resetting a fork from a master inherited over fork() requires
+   that reading the master's registers never ioctls the master's vCPU fd, which
+   the child process cannot use. With synced sregs, get_special_registers()
+   reads the mmap'd kvm_run page instead of KVM_GET_SREGS; FPU is served from
+   the prepare-time snapshot (Machine::prepared_fpu_registers()). If this is
+   ever disabled, get_special_registers() reverts to KVM_GET_SREGS and
+   cross-process fork construction breaks with -EIO. */
+#if !TINYKVM_USE_SYNCED_SREGS
+#error "TINYKVM_USE_SYNCED_SREGS must be enabled for cross-process fork construction"
+#endif
 
 #ifndef SYS_gettid
 #error "SYS_gettid unavailable on this system"
@@ -420,6 +430,13 @@ void Machine::prepare_copy_on_write(size_t max_work_mem,
 	uint64_t shared_memory_boundary, bool split_accessed_hugepages)
 {
 	this->m_prepped = true;
+
+	/* Snapshot FPU state to userspace while this master's vCPU fd is still
+	   ours to ioctl. Fork construction and fork reset consume the snapshot via
+	   prepared_fpu_registers(), which keeps both usable from a process that
+	   inherited this master over fork(). The master is frozen hereafter, so the
+	   snapshot stays equal to a live KVM_GET_FPU. */
+	this->m_prepared_fpu_regs = this->fpu_registers();
 
 	/* Make each writable page read-only, causing page fault.
 	   any page after the @shared_memory_boundary is untouched,

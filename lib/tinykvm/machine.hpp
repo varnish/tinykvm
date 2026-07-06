@@ -142,6 +142,18 @@ struct Machine
 	void set_registers(const tinykvm_regs&);
 	tinykvm_fpuregs fpu_registers() const;
 	void set_fpu_registers(const tinykvm_fpuregs&);
+	/* FPU state snapshotted by prepare_copy_on_write(). Fork construction and
+	   fork reset read this instead of issuing KVM_GET_FPU against the master's
+	   vCPU, so both remain usable from a process that cannot ioctl the master's
+	   fds -- e.g. a child that inherited the master over fork() and is building
+	   its own VM from the master's copy-on-write memory (KVM vCPU ioctls require
+	   the caller's mm to be the VM-creating mm). Requires a prepared master: the
+	   snapshot is only valid because the master is frozen after prepare and is
+	   never run again, so it equals a live KVM_GET_FPU at fork time. */
+	const tinykvm_fpuregs& prepared_fpu_registers() const noexcept {
+		assert(m_prepped && "prepared_fpu_registers() requires prepare_copy_on_write()");
+		return m_prepared_fpu_regs;
+	}
 	const kvm_sregs& get_special_registers() const;
 	void set_special_registers(const kvm_sregs&);
 	std::pair<__u64, __u64> get_fsgs() const;
@@ -391,6 +403,8 @@ private:
 	bool  m_verbose_mmap_syscalls = false;
 	bool  m_verbose_thread_syscalls = false;
 	void* m_userdata = nullptr;
+	/* See prepared_fpu_registers(). */
+	tinykvm_fpuregs m_prepared_fpu_regs {};
 
 	std::string_view m_binary;
 

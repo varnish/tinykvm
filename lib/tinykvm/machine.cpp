@@ -168,10 +168,14 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 		m_fds->reset_to(*other.m_fds);
 	}
 
-	/* Copy register state from the master machine */
+	/* Copy register state from the master machine. FPU state comes from the
+	   master's prepare-time snapshot rather than a live KVM_GET_FPU: when this
+	   fork is constructed from a master inherited over fork(), the master's
+	   vCPU fd is not ioctl-able from this process and KVM_GET_FPU fails with
+	   -EIO. See Machine::prepared_fpu_registers(). */
 	auto& m_regs = other.registers();
 	this->set_registers(m_regs);
-	this->set_fpu_registers(other.fpu_registers());
+	this->set_fpu_registers(other.prepared_fpu_registers());
 }
 
 __attribute__ ((cold))
@@ -288,10 +292,11 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 #endif
 
 	if (options.reset_copy_all_registers) {
-		/* Copy register state from the master machine */
+		/* Copy register state from the master machine (FPU from the master's
+		   prepare-time snapshot; see the fork constructor). */
 		auto& m_regs = other.registers();
 		this->set_registers(m_regs);
-		this->set_fpu_registers(other.fpu_registers());
+		this->set_fpu_registers(other.prepared_fpu_registers());
 	}
 	if (options.reset_enter_usermode) {
 		/* Enforce usermode (default). This will crash guests
