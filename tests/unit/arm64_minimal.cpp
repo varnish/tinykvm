@@ -82,6 +82,15 @@ static void require_arm64_kvm()
 	}
 }
 
+static void require_fpu_prefix(const tinykvm::tinykvm_arm64fpuregs& expected,
+	const tinykvm::tinykvm_arm64fpuregs& actual)
+{
+	for (size_t i = 0; i < 64; i++) {
+		INFO("FP/SIMD byte " << i);
+		REQUIRE(actual.storage[i] == expected.storage[i]);
+	}
+}
+
 TEST_CASE("ARM64 raw guest exits through TinyKVM MMIO ABI", "[arm64]")
 {
 	require_arm64_kvm();
@@ -183,6 +192,33 @@ TEST_CASE("ARM64 copy_to_guest preserves source when zeroes hint is set", "[arm6
 	char buffer[5] {};
 	machine.copy_from_guest(buffer, addr, sizeof(buffer));
 	REQUIRE(std::string_view(buffer, sizeof(buffer)) == std::string_view("tiny\0", 5));
+}
+
+TEST_CASE("ARM64 fork/reset preserves prepared FP/SIMD state", "[arm64]")
+{
+	require_arm64_kvm();
+
+	const std::vector<uint8_t> empty_binary;
+	const tinykvm::MachineOptions options {
+		.max_mem = MAX_MEMORY,
+		.max_cow_mem = 2u << 20,
+		.split_hugepages = true,
+	};
+
+	tinykvm::Machine master {empty_binary, options};
+	tinykvm::tinykvm_arm64fpuregs expected {};
+	for (size_t i = 0; i < 64; i++)
+		expected.storage[i] = static_cast<uint8_t>(0xa0 + i);
+	master.set_fpu_registers(expected);
+	master.prepare_copy_on_write(options.max_cow_mem);
+
+	tinykvm::Machine fork {master, options};
+	require_fpu_prefix(expected, fork.fpu_registers());
+
+	tinykvm::tinykvm_arm64fpuregs zero {};
+	fork.set_fpu_registers(zero);
+	fork.reset_to(master, options);
+	require_fpu_prefix(expected, fork.fpu_registers());
 }
 
 TEST_CASE("ARM64 fork uses copy-on-write for guest stores", "[arm64]")
