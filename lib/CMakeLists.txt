@@ -23,6 +23,7 @@ set (SOURCES
 	tinykvm/memory_maps.cpp
 
 	tinykvm/linux/fds.cpp
+	tinykvm/linux/seccomp.cpp
 	)
 if (TINYKVM_ARCH STREQUAL "AMD64")
 	list(APPEND SOURCES
