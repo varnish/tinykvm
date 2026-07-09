@@ -25,7 +25,13 @@
 #define SECCOMP_FILTER_FLAG_TSYNC (1UL << 0)
 #endif
 #ifndef SYS_seccomp
+#if defined(__x86_64__)
 #define SYS_seccomp 317
+#elif defined(__aarch64__)
+#define SYS_seccomp 277
+#else
+#error "No SYS_seccomp fallback for this architecture"
+#endif
 #endif
 
 #if defined(__x86_64__)
@@ -149,6 +155,10 @@ static std::vector<SeccompRule> init_rules()
 #endif
 		R{SYS_set_tid_address}, R{SYS_prlimit64},
 		R{SYS_prctl}, R{SYS_getrlimit},
+		/* Installing the Runtime filter from under the Init filter uses
+		 * the seccomp() syscall. Filters only stack and tighten, so
+		 * allowing this cannot loosen the sandbox. */
+		R{SYS_seccomp, {0, ~0ULL, SECCOMP_SET_MODE_FILTER}},
 		R{SYS_getuid}, R{SYS_geteuid}, R{SYS_getgid}, R{SYS_getegid},
 		R{SYS_uname}, R{SYS_sysinfo}, R{SYS_sched_setaffinity},
 		/* Wider filesystem access for loading guests and libraries */
@@ -214,11 +224,21 @@ static uint32_t rule_return_value(const SeccompRule& rule)
 static void emit_rule_block(std::vector<struct sock_filter>& prog,
                             const SeccompRule& rule)
 {
+	/* num_args and Arg::index are public and settable via extra_rules:
+	 * validate before they index args[] and seccomp_data.args. */
+	constexpr unsigned MAX_ARGS = sizeof(rule.args) / sizeof(rule.args[0]);
+	if (rule.num_args > MAX_ARGS)
+		throw MachineException("seccomp: rule has too many argument "
+			"constraints", rule.nr);
+
 	struct Check { uint32_t off; uint32_t mask; uint32_t value; };
-	Check checks[8];
+	Check checks[2 * MAX_ARGS];
 	unsigned num_checks = 0;
 	for (unsigned i = 0; i < rule.num_args; i++) {
 		const auto& arg = rule.args[i];
+		if (arg.index > 5)
+			throw MachineException("seccomp: rule argument index out of "
+				"range", rule.nr);
 		const uint32_t mask_lo = arg.mask, mask_hi = arg.mask >> 32;
 		const uint32_t val_lo = arg.value, val_hi = arg.value >> 32;
 		if (mask_lo != 0)

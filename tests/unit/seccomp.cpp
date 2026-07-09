@@ -19,6 +19,7 @@ static int run_in_child(Fn&& fn)
 {
 	fflush(nullptr);
 	const pid_t pid = fork();
+	REQUIRE(pid != -1);
 	if (pid == 0) {
 		fn(); /* must _exit() itself; falling through is a failure */
 		_exit(111);
@@ -78,6 +79,11 @@ TEST_CASE("Log-only mode lets banned syscalls through", "[Seccomp]")
 
 TEST_CASE("Init then runtime filters stack", "[Seccomp]")
 {
+	/* The child reports over a pipe that it survived installing the
+	 * Runtime filter, so the SIGSYS below provably comes from uname
+	 * and not from the seccomp() call being blocked by the Init filter. */
+	int fds[2];
+	REQUIRE(pipe(fds) == 0);
 	const int status = run_in_child([&] {
 		tinykvm::install_seccomp_filter(tinykvm::SeccompPhase::Init);
 		/* uname is init-only; allowed now... */
@@ -85,10 +91,17 @@ TEST_CASE("Init then runtime filters stack", "[Seccomp]")
 		if (syscall(SYS_uname, &uts) != 0)
 			_exit(1);
 		tinykvm::install_seccomp_filter(tinykvm::SeccompPhase::Runtime);
+		char ok = '!';
+		if (write(fds[1], &ok, 1) != 1)
+			_exit(3);
 		/* ...and fatal after tightening. */
 		syscall(SYS_uname, &uts);
 		_exit(2); /* not reached */
 	});
+	close(fds[1]);
+	char ok = 0;
+	REQUIRE(read(fds[0], &ok, 1) == 1);
+	close(fds[0]);
 	REQUIRE(WIFSIGNALED(status));
 	REQUIRE(WTERMSIG(status) == SIGSYS);
 }
@@ -104,6 +117,31 @@ TEST_CASE("Arg filtering: non-KVM ioctls are blocked", "[Seccomp]")
 	});
 	REQUIRE(WIFSIGNALED(status));
 	REQUIRE(WTERMSIG(status) == SIGSYS);
+}
+
+TEST_CASE("Malformed extra rules are rejected", "[Seccomp]")
+{
+	/* Run in a child anyway: if validation regresses, the filter (or
+	 * NO_NEW_PRIVS) must not stick to the test runner's thread. */
+	const int status = run_in_child([&] {
+		tinykvm::SeccompOptions opts;
+		tinykvm::SeccompRule bad_index{SYS_uname, {6 /* > 5 */, ~0ULL, 0}};
+		opts.extra_rules.push_back(bad_index);
+		try {
+			tinykvm::install_seccomp_filter(tinykvm::SeccompPhase::Runtime, opts);
+			_exit(1);
+		} catch (const std::exception&) {}
+		tinykvm::SeccompRule bad_count{SYS_uname};
+		bad_count.num_args = 3; /* > sizeof(args) */
+		opts.extra_rules = {bad_count};
+		try {
+			tinykvm::install_seccomp_filter(tinykvm::SeccompPhase::Runtime, opts);
+			_exit(2);
+		} catch (const std::exception&) {}
+		_exit(0);
+	});
+	REQUIRE(WIFEXITED(status));
+	REQUIRE(WEXITSTATUS(status) == 0);
 }
 
 TEST_CASE("Extra rules extend the allowlist", "[Seccomp]")
