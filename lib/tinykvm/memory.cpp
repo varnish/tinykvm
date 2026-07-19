@@ -223,9 +223,19 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				const uint64_t vbase = addr & ~(page_size - 1);
 				for (size_t e = 0; e < page_size / granule; e++) {
 					auto* dest = (uint64_t*)our_page + e * (granule / sizeof(uint64_t));
-					auto* master_page = tinykvm::readable_page_at(
-						main_vm.main_memory(), vbase + e * granule, flags);
-					page_duplicate(dest, (const uint64_t*)master_page);
+					try {
+						auto* master_page = tinykvm::readable_page_at(
+							main_vm.main_memory(), vbase + e * granule, flags);
+						page_duplicate(dest, (const uint64_t*)master_page);
+					} catch (const MemoryException&) {
+						// The master (frozen since fork) has no present page
+						// here, so this was an unpresent copy-on-write entry:
+						// a fresh fork writing to it gets a zeroed page (no
+						// DIRTY bit -> zero_and_update_entry). Zeroing
+						// restores fresh-fork semantics without demoting the
+						// whole reset to the full bank-reset fallback below.
+						page_memzero(dest);
+					}
 				}
 			}, false);
 		}
