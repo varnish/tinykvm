@@ -12,6 +12,13 @@ namespace tinykvm
 		void init(int id, Machine&, const MachineOptions&);
 		void smp_init(int id, Machine &);
 		void deinit();
+#if !defined(TINYKVM_ARCH_ARM64)
+		/* Releases the shadow registers of a vCPU that never became mapped.
+		   deinit() is only reached from ~Machine, which is never run for a
+		   constructor that threw after vCPU init (eg. a fork that ran out of
+		   working memory in setup_cow_mode). */
+		~vCPU();
+#endif
 		tinykvm_regs& registers();
 		const tinykvm_regs& registers() const;
 		void set_registers(const struct tinykvm_regs &);
@@ -69,6 +76,17 @@ namespace tinykvm
 		std::mutex* remote_serializer = nullptr;
 
 	private:
+#if !defined(TINYKVM_ARCH_ARM64)
+		/* Map kvm_run now, if it isn't already. Called on the run path only:
+		   see lazily_map_kvm_run(). */
+		void ensure_kvm_run() {
+			if (UNLIKELY(this->kvm_run == nullptr))
+				this->lazily_map_kvm_run();
+		}
+		void lazily_map_kvm_run();
+		void map_kvm_run();
+#endif
+
 		struct kvm_run* kvm_run = nullptr;
 		Machine* m_machine = nullptr;
 		Machine* m_original_machine = nullptr;
@@ -76,6 +94,17 @@ namespace tinykvm
 		mutable tinykvm_regs m_cached_regs {};
 		mutable bool m_regs_cached = false;
 		mutable bool m_regs_dirty = false;
+#else
+		/* Canonical userspace register storage. It points into the shadow
+		   below while a lazily mapped fork is unmapped, and into the mmap'ed
+		   kvm_run->s.regs from the first run onwards. */
+		struct kvm_regs*  m_regs = nullptr;
+		struct kvm_sregs* m_sregs = nullptr;
+		/* Shadow registers, owned while kvm_run is unmapped, and the
+		   KVM_SYNC_X86_* bits to hand to KVM when the mapping appears. */
+		void* m_shadow_regs = nullptr;
+		uint32_t m_shadow_dirty_regs = 0;
+		bool m_initialized = false;
 #endif
 
 		uint64_t vcpu_table_addr() const noexcept;

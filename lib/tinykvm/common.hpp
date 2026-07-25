@@ -23,6 +23,13 @@ static constexpr inline uint64_t PageMask() {
 	return PAGE_SIZE - 1UL;
 }
 
+/* Default for MachineOptions::lazy_vcpu_mmap. Build with
+   -DTINYKVM_LAZY_VCPU_MMAP_DEFAULT=true to make every fork lazy,
+   which is how the unit test suite is A/B'ed against the eager path. */
+#ifndef TINYKVM_LAZY_VCPU_MMAP_DEFAULT
+#define TINYKVM_LAZY_VCPU_MMAP_DEFAULT false
+#endif
+
 #include <array>
 #include <exception>
 #include <string>
@@ -111,6 +118,16 @@ namespace tinykvm
 		bool executable_heap = false;
 		/* Enable file-backed memory mappings for large files */
 		bool mmap_backed_files = false;
+		/* When enabled, a forked VM does not mmap its vCPUs kvm_run page
+		   during construction, but on its first run. Each mapping is a
+		   VMA that every later KVM_CREATE_VM has to walk and lock, so
+		   parked forks that never run become much cheaper to create.
+		   Until the first run the registers live in a userspace shadow.
+		   Only forks are affected: a master VM is always mapped eagerly,
+		   as its registers are read through the mapping by forks
+		   constructed in a process that inherited it over fork().
+		   (AMD64 only.) */
+		bool lazy_vcpu_mmap = TINYKVM_LAZY_VCPU_MMAP_DEFAULT;
 		/* Enable VM snapshot by file-mapping all physical memory
 		   to the given file. Depending on `snapshot_mode`,
 		   the file may be created if it does not exist,
