@@ -99,6 +99,11 @@ void vCPU::disable_timer()
 long vCPU::run_once()
 {
 	int result;
+	/* A fork may have deferred its kvm_run mapping until now. This is the
+	   only place where the register accessors are allowed to change what
+	   they point at, so that no caller can hold a register reference across
+	   the transition. */
+	this->ensure_kvm_run();
 	{
 		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());
 		result = ioctl(this->fd, KVM_RUN, 0);
