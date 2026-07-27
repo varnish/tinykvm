@@ -145,7 +145,7 @@ long vCPU::run_once()
 		sregs.cr3 != machine().memory.page_tables
 		|| sregs.gdt.base != memory.physbase + GDT_ADDR
 		|| sregs.idt.base != memory.physbase + IDT_ADDR
-		|| (this->cpu_id == 0 && sregs.tr.base != memory.physbase + TSS_ADDR)
+		|| (this->guest_cpu_index == 0 && sregs.tr.base != memory.physbase + TSS_ADDR)
 		))) {
 		this->print_registers();
 		if (sregs.cr3 != machine().memory.page_tables)
