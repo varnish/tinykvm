@@ -19,6 +19,13 @@ struct MemoryBank {
 	uint32_t       n_dirty = 0;
 	const uint32_t n_pages;
 	const uint16_t idx;
+	/* Whether `mem` is this bank's own mmap, to be released with the bank, or
+	   a window into a VM group seat's arena partition, which the group keeps
+	   mapped for the lifetime of the seat. Cached at construction rather than
+	   read back from `banks` in the destructor: the banks are a member of
+	   MemoryBanks and are destroyed as part of destroying it, at which point
+	   its other members have already been destroyed and reading them is UB. */
+	const bool owns_mmap;
 	MemoryBanks& banks;
 
 	bool within(uint64_t a, uint64_t s) const noexcept {
@@ -44,7 +51,7 @@ struct MemoryBank {
 
 	VirtualMem to_vmem() const noexcept;
 
-	MemoryBank(MemoryBanks&, char*, uint64_t, uint32_t n, uint16_t idx);
+	MemoryBank(MemoryBanks&, char*, uint64_t, uint32_t n, uint16_t idx, bool owns_mmap);
 	~MemoryBank();
 };
 

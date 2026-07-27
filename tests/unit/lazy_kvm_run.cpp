@@ -30,6 +30,20 @@ static size_t count_vcpu_mappings()
 	return count;
 }
 
+/* A pooled fork's kvm_run mapping belongs to its VM group *seat*, which outlives
+   every tenant on purpose: the next member of that seat inherits the mapping and
+   does not pay lever C's one-time flip again. So under
+   -DTINYKVM_VM_GROUP_DEFAULT=true (the compile-time A/B of the pooled path) the
+   mapping count does not return to its baseline when the forks are destroyed -
+   it returns to it when the *group* is retired, which the retirement policy
+   deliberately delays (one empty group is kept as a warm spare). Detected from
+   the option default rather than the macro, so this stays correct whichever way
+   the default is set. */
+static bool pooling_is_default()
+{
+	return tinykvm::MachineOptions{}.vm_group;
+}
+
 static tinykvm::MachineOptions lazy_options()
 {
 	tinykvm::MachineOptions options;
@@ -190,7 +204,12 @@ TEST_CASE("Only forks that have run are mapped", "[LazyRun]")
 	REQUIRE(count_vcpu_mappings() == baseline + RUN);
 
 	forks.clear();
-	REQUIRE(count_vcpu_mappings() == baseline);
+	if (pooling_is_default()) {
+		/* The RUN mappings stay with the seats of the (retained) group. */
+		REQUIRE(count_vcpu_mappings() == baseline + RUN);
+	} else {
+		REQUIRE(count_vcpu_mappings() == baseline);
+	}
 }
 
 TEST_CASE("Eagerly mapped forks map at construction", "[LazyRun]")
@@ -219,5 +238,10 @@ TEST_CASE("Eagerly mapped forks map at construction", "[LazyRun]")
 	REQUIRE(count_vcpu_mappings() == baseline + 4);
 
 	forks.clear();
-	REQUIRE(count_vcpu_mappings() == baseline);
+	if (pooling_is_default()) {
+		/* Eagerly mapped seats keep all four mappings for their next tenants. */
+		REQUIRE(count_vcpu_mappings() == baseline + 4);
+	} else {
+		REQUIRE(count_vcpu_mappings() == baseline);
+	}
 }

@@ -107,7 +107,7 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr, unsigned pages)
 			printf("  Carved bank %zu at 0x%lX with %u pages (%zu KiB) from the partition\n",
 				m_mem.size(), addr, pages, size >> 10);
 		}
-		m_mem.emplace_back(*this, mem, addr, pages, m_idx);
+		m_mem.emplace_back(*this, mem, addr, pages, m_idx, false);
 		return m_mem.back();
 	}
 	const bool try_hugepages = m_mem.empty() && this->using_hugepages();
@@ -123,7 +123,7 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr, unsigned pages)
 
 	const size_t size = pages * vMemory::PageSize();
 	if (mem != nullptr) {
-		m_mem.emplace_back(*this, mem, addr, pages, m_idx);
+		m_mem.emplace_back(*this, mem, addr, pages, m_idx, true);
 
 		VirtualMem vmem { addr, mem, size };
 		if constexpr (VERBOSE_MEMORY_BANK) {
@@ -215,8 +215,9 @@ void MemoryBanks::reset(const MachineOptions& options)
 	}
 }
 
-MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint32_t np, uint16_t x)
-	: mem(p), addr(a), n_pages(np), idx(x), banks(b)
+MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint32_t np, uint16_t x,
+	bool own)
+	: mem(p), addr(a), n_pages(np), idx(x), owns_mmap(own), banks(b)
 {
 	if constexpr (VERBOSE_MEMORY_BANK) {
 		printf("Created memory bank slot=%u at 0x%lX with %u pages (%zu KiB)\n",
@@ -226,8 +227,10 @@ MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint32_t np, uint16_
 MemoryBank::~MemoryBank()
 {
 	/* Partition-carved banks are windows into memory the VM group owns and
-	   keeps mapped for the lifetime of the seat. */
-	if (!this->banks.is_partitioned()) {
+	   keeps mapped for the lifetime of the seat. NB: cached at construction -
+	   asking `banks` here would read a MemoryBanks that is already partway
+	   through its own destruction. */
+	if (this->owns_mmap) {
 		munmap(this->mem, this->n_pages * vMemory::PageSize());
 	}
 }
