@@ -115,8 +115,22 @@ void vMemory::install_mmap_ranges(const Machine &other)
 		this->mmap_ranges.push_back(new_range);
 	}
 }
+void vMemory::copy_mmap_ranges_without_install(const Machine& other)
+{
+	for (const auto& range : other.main_memory().mmap_ranges) {
+		if constexpr (VERBOSE_MMAP) {
+			printf("Adopting group-installed mmap range at 0x%lX of size %zu KiB file %s\n",
+				range.physbase, range.size >> 10, range.filename.c_str());
+		}
+		this->mmap_ranges.push_back(range);
+	}
+}
 void vMemory::delete_foreign_mmap_ranges()
 {
+	if (UNLIKELY(machine.is_pooled())) {
+		memory_exception("A pooled member cannot delete a VM group's memory regions",
+			this->mmap_physical_begin, this->mmap_physical);
+	}
 	for (auto it = this->mmap_ranges.begin(); it != this->mmap_ranges.end(); ){
 		// Only delete ranges that are not part of this VM's memory
 		const auto& range = *it;
@@ -135,6 +149,10 @@ void vMemory::delete_foreign_mmap_ranges()
 }
 void vMemory::delete_foreign_banks()
 {
+	if (UNLIKELY(machine.is_pooled())) {
+		memory_exception("A pooled member cannot delete a VM group's memory regions",
+			this->mmap_physical_begin, this->mmap_physical);
+	}
 	for (auto slot_idx : this->foreign_banks) {
 		machine.delete_memory(slot_idx);
 		this->m_bank_idx_free_list.push_back(slot_idx);

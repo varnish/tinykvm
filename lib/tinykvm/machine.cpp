@@ -45,7 +45,8 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	if (options.mmap_backed_files && !options.snapshot_file.empty()) {
 		throw MachineException("Cannot have VM snapshot with mmap-backed files at the same time");
 	}
-
+	/* vm_group only engages for forks (like lazy_vcpu_mmap): a master owns
+	   its own VM and simply passes the flag on through its fork options. */
 	this->fd = create_kvm_vm();
 
 #if defined(TINYKVM_ARCH_ARM64)
@@ -132,15 +133,37 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 		throw MachineException("Source Machine is not prepared for forking");
 	}
 
-	/* Unfortunately we have to create a new VM because
-	   memory is tied to VMs and not vCPUs. */
-	this->fd = create_kvm_vm();
+	/* A seat is consumed permanently by the group if it is not handed back,
+	   so any failure after acquisition must return it. */
+	struct SeatGuard {
+		Machine* machine = nullptr;
+		~SeatGuard() {
+			if (UNLIKELY(machine != nullptr))
+				machine->release_group_seat();
+		}
+	} seat_guard;
 
-	/* Reuse pre-CoWed pagetable from the master machine */
-	this->install_memory(0, memory.vmem(), false);
+	if (options.vm_group) {
+#if defined(TINYKVM_ARCH_AMD64)
+		/* Armed before acquisition: release_group_seat() is a no-op until a
+		   seat is actually held, and pooled_fork_prepare() can throw after
+		   taking one. */
+		seat_guard.machine = this;
+		this->pooled_fork_prepare(other, options);
+#else
+		throw MachineException("VM groups are only supported on AMD64");
+#endif
+	} else {
+		/* Unfortunately we have to create a new VM because
+		   memory is tied to VMs and not vCPUs. */
+		this->fd = create_kvm_vm();
 
-	/* Install mmap ranges from the master machine */
-	memory.install_mmap_ranges(other);
+		/* Reuse pre-CoWed pagetable from the master machine */
+		this->install_memory(0, memory.vmem(), false);
+
+		/* Install mmap ranges from the master machine */
+		memory.install_mmap_ranges(other);
+	}
 
 	/* Install remote VM memory too, if enabled. (read-write) */
 	if (other.has_remote()) {
@@ -153,7 +176,14 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	}
 
 	/* Initialize vCPU and long mode (fast path) */
-	this->vcpu.init(0, 0, *this, options);
+#if defined(TINYKVM_ARCH_AMD64)
+	if (this->is_pooled()) {
+		this->vcpu.init_from_seat(*this->m_seat, *this, options);
+	} else
+#endif
+	{
+		this->vcpu.init(0, 0, *this, options);
+	}
 	this->setup_cow_mode(&other);
 
 	/* We have to make a copy here, to make sure the fork knows
@@ -176,11 +206,74 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	auto& m_regs = other.registers();
 	this->set_registers(m_regs);
 	this->set_fpu_registers(other.prepared_fpu_registers());
+
+	seat_guard.machine = nullptr;
+}
+
+#if defined(TINYKVM_ARCH_AMD64)
+void Machine::pooled_fork_prepare(const Machine& other, const MachineOptions& options)
+{
+	/* Each of these is unfixable rather than merely unimplemented for a
+	   member of a shared struct kvm, so refuse at the earliest point. */
+	if (UNLIKELY(options.allow_reset_to_new_master)) {
+		machine_exception("A pooled fork cannot swap the VM group's main memory");
+	}
+	if (UNLIKELY(other.has_remote())) {
+		machine_exception("A pooled fork cannot have a remote VM");
+	}
+	if (UNLIKELY(options.hugepages || options.hugepages_arena_size != 0
+		|| other.memory.banks.using_hugepages()))
+	{
+		machine_exception("A pooled fork cannot use hugepages for working memory");
+	}
+
+	auto [group, seat] = other.groups().acquire(options);
+	this->m_group = std::move(group);
+	this->m_seat = seat;
+	/* Machine::fd keeps its meaning: it is the group's VM, shared. */
+	this->fd = this->m_group->vm_fd();
+
+	/* The group installed the master's main memory and mmap ranges once, at
+	   creation: a member installs neither. VmGroupSet::acquire() treats a
+	   changed range count as group *ineligibility* and opens a fresh group
+	   that installs the current set, so reaching this is only possible if the
+	   master grew a range concurrently with this acquisition - in which case
+	   refuse, rather than hand the member a range the group's VM has no
+	   memslot for and fault in the guest. */
+	if (UNLIKELY(other.memory.mmap_ranges.size() != m_group->mmap_range_count())) {
+		machine_exception("The master's mmap ranges changed after the VM group was created",
+			other.memory.mmap_ranges.size());
+	}
+	memory.copy_mmap_ranges_without_install(other);
+
+	/* Working memory is carved from this seat's partition, whose end is a
+	   hard wall enforced in MemoryBanks::allocate_new_bank(). */
+	memory.banks.init_from_partition(seat->arena_gpa, seat->arena_hva,
+		seat->arena_size, this->m_group->max_cow_mem());
+}
+#endif
+
+void Machine::release_group_seat() noexcept
+{
+#if defined(TINYKVM_ARCH_AMD64)
+	if (this->m_group != nullptr) {
+		vcpu.detach_to_seat(*this->m_seat);
+		this->m_group->release_seat(this->m_seat, memory.banks.partition_used());
+		this->m_seat = nullptr;
+		this->m_group = nullptr;
+		this->fd = -1;
+	}
+#endif
 }
 
 __attribute__ ((cold))
 Machine::~Machine()
 {
+	if (this->m_group != nullptr) {
+		/* A pooled member owns neither the VM fd nor the seat's vCPU. */
+		this->release_group_seat();
+		return;
+	}
 	vcpu.deinit();
 	close(this->fd);
 }
@@ -224,6 +317,11 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 	{
 		if (options.allow_reset_to_new_master == false) {
 			throw MachineException("Swapping main memories not enabled (experimental)");
+		}
+		if (UNLIKELY(this->is_pooled())) {
+			/* Not scopeable: slot 0 is the VM group's, shared with every
+			   sibling, and a member cannot swap it out from under them. */
+			machine_exception("A pooled VM group member cannot be reset to a new master");
 		}
 		if (options.reset_keep_all_work_memory) {
 			throw MachineException("Cannot reset to new Machine with old work memory");
@@ -448,6 +546,9 @@ int kvm_open()
 			api_ver, KVM_API_VERSION);
 		throw MachineException("Wrong KVM API version");
 	}
+
+	/* Host limits that bound a VM group: the vCPU count wall in particular. */
+	KvmLimits::query(fd);
 
 	extern void initialize_vcpu_stuff(int kvm_fd);
 	initialize_vcpu_stuff(fd);

@@ -34,6 +34,27 @@ void MemoryBanks::init_from(const MemoryBanks& other)
 			this->m_arena_begin, m_mem[0].addr);
 	}
 }
+void MemoryBanks::init_from_partition(uint64_t gpa, char* hva, uint64_t size,
+	uint32_t max_cow_ceiling)
+{
+	if (!this->m_mem.empty()) {
+		throw MemoryException("Cannot partition banks that are already allocated",
+			this->m_arena_begin, m_mem[0].addr);
+	}
+	if (UNLIKELY(this->using_hugepages())) {
+		throw MemoryException("VM group arena partitions do not support hugepages",
+			gpa, size);
+	}
+	this->m_arena_begin = gpa;
+	this->m_arena_next = gpa;
+	this->m_partition_hva = hva;
+	this->m_partition_end = gpa + size;
+	this->m_max_ceiling_pages = max_cow_ceiling / vMemory::PageSize();
+	if (UNLIKELY(this->m_max_pages > this->m_max_ceiling_pages)) {
+		throw MemoryException("Working memory exceeds the VM group partition ceiling",
+			uint64_t(m_max_pages) * vMemory::PageSize(), size);
+	}
+}
 void MemoryBanks::set_max_pages(size_t new_max, size_t new_hugepages)
 {
 	this->m_max_pages = new_max;
@@ -71,6 +92,23 @@ MemoryBank& MemoryBanks::allocate_new_bank(uint64_t addr, unsigned pages)
 {
 	if constexpr (VERBOSE_MEMORY_BANK) {
 		printf("Allocating new memory bank at 0x%lX with %u pages\n", addr, pages);
+	}
+	if (this->is_partitioned()) {
+		/* Pooled mode: carve the bank out of the seat's window. The end of
+		   the partition is a hard wall, never a silent clamp: past it lies
+		   the guard band, and past that a sibling's memory. */
+		const uint64_t size = uint64_t(pages) * vMemory::PageSize();
+		if (UNLIKELY(addr < m_arena_begin || addr + size > m_partition_end)) {
+			throw MemoryException("Memory bank exceeds the VM group arena partition",
+				addr, size);
+		}
+		char* mem = m_partition_hva + (addr - m_arena_begin);
+		if constexpr (VERBOSE_MEMORY_BANK) {
+			printf("  Carved bank %zu at 0x%lX with %u pages (%zu KiB) from the partition\n",
+				m_mem.size(), addr, pages, size >> 10);
+		}
+		m_mem.emplace_back(*this, mem, addr, pages, m_idx);
+		return m_mem.back();
 	}
 	const bool try_hugepages = m_mem.empty() && this->using_hugepages();
 	if (try_hugepages) {
@@ -149,8 +187,16 @@ MemoryBank& MemoryBanks::get_available_bank(size_t pages)
 }
 void MemoryBanks::reset(const MachineOptions& options)
 {
-	/* New maximum pages total in banks. */
-	this->m_max_pages = options.max_cow_mem / vMemory::PageSize();
+	/* New maximum pages total in banks. A pooled member's partition was
+	   sized from the group's frozen ceiling, so a reset presenting a larger
+	   budget would grow the arena into the guard band. */
+	const uint32_t new_max_pages = options.max_cow_mem / vMemory::PageSize();
+	if (this->is_partitioned() && UNLIKELY(new_max_pages > this->m_max_ceiling_pages)) {
+		throw MemoryException("Reset working memory exceeds the VM group partition ceiling",
+			uint64_t(new_max_pages) * vMemory::PageSize(),
+			uint64_t(m_max_ceiling_pages) * vMemory::PageSize());
+	}
+	this->m_max_pages = new_max_pages;
 
 	/* Free memory belonging to banks after the free limit. */
 	//size_t limit_pages = options.reset_free_work_mem / vMemory::PageSize();
@@ -179,7 +225,11 @@ MemoryBank::MemoryBank(MemoryBanks& b, char* p, uint64_t a, uint32_t np, uint16_
 }
 MemoryBank::~MemoryBank()
 {
-	munmap(this->mem, this->n_pages * vMemory::PageSize());
+	/* Partition-carved banks are windows into memory the VM group owns and
+	   keeps mapped for the lifetime of the seat. */
+	if (!this->banks.is_partitioned()) {
+		munmap(this->mem, this->n_pages * vMemory::PageSize());
+	}
 }
 
 bool MemoryBank::room_for(size_t pages) const noexcept {

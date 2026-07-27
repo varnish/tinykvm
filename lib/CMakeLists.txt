@@ -21,6 +21,7 @@ set (SOURCES
 	tinykvm/memory.cpp
 	tinykvm/memory_bank.cpp
 	tinykvm/memory_maps.cpp
+	tinykvm/vm_group.cpp
 
 	tinykvm/linux/fds.cpp
 	)
