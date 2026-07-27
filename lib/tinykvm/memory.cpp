@@ -196,17 +196,47 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 		// Restore the original memory from the master VM.
 		try {
 		for (const uint64_t addr : cow_written_pages) {
-			tinykvm::page_at(*this, addr, [&](uint64_t addr, uint64_t& entry, uint64_t page_size) {
+			tinykvm::page_at(*this, addr, [&](uint64_t cb_addr, uint64_t& entry, uint64_t page_size) {
 				const uint64_t bank_addr = entry & tinykvm::paging_address_mask();
+				(void)cb_addr;
 				//fprintf(stderr, "Copying virtual page %016lx from physical %016lx with size %lu\n",
 				//	addr, bank_addr, page_size);
 
 				// This is a writable page, we will copy it using the "real"
 				// address from the master VM.
 				auto* our_page = this->safely_at(bank_addr, page_size);
-				// Find the page in the main VM
-				page_duplicate((uint64_t*)our_page,
-					(const uint64_t*)main_vm.main_memory().safely_at(addr, page_size));
+				// Find the page in the main VM *through its page tables*.
+				// Only main memory is identity-mapped; the mmap physical
+				// region (MMAP_PHYS_BASE) is not, so reading the source with
+				// main_memory().safely_at(virtual) would silently copy a
+				// wrong (typically zero) page into the fork for any recorded
+				// address backed by mmap-allocated physical pages.
+				// A 2MB leaf is restored one 4K page at a time: the master
+				// may hold 4K pages (or a huge page) there, and per-page
+				// resolution covers both.
+#ifdef TINYKVM_ARCH_AMD64
+				constexpr uint64_t flags = PDE64_PRESENT;
+#else
+				constexpr uint64_t flags = 1ULL; // DESC_VALID
+#endif
+				constexpr uint64_t granule = vMemory::PageSize();
+				const uint64_t vbase = addr & ~(page_size - 1);
+				for (size_t e = 0; e < page_size / granule; e++) {
+					auto* dest = (uint64_t*)our_page + e * (granule / sizeof(uint64_t));
+					try {
+						auto* master_page = tinykvm::readable_page_at(
+							main_vm.main_memory(), vbase + e * granule, flags);
+						page_duplicate(dest, (const uint64_t*)master_page);
+					} catch (const MemoryException&) {
+						// The master (frozen since fork) has no present page
+						// here, so this was an unpresent copy-on-write entry:
+						// a fresh fork writing to it gets a zeroed page (no
+						// DIRTY bit -> zero_and_update_entry). Zeroing
+						// restores fresh-fork semantics without demoting the
+						// whole reset to the full bank-reset fallback below.
+						page_memzero(dest);
+					}
+				}
 			}, false);
 		}
 		return false;
