@@ -9,7 +9,7 @@ namespace tinykvm
 
 	struct vCPU
 	{
-		void init(int id, Machine&, const MachineOptions&);
+		void init(int kvm_vcpu_id, int guest_cpu_index, Machine&, const MachineOptions&);
 		void smp_init(int id, Machine &);
 		void deinit();
 #if !defined(TINYKVM_ARCH_ARM64)
@@ -64,7 +64,14 @@ namespace tinykvm
 		bool timed_out() const;
 
 		int fd = -1;
-		int cpu_id = 0;
+		/* The KVM_CREATE_VCPU argument. Unique within one struct kvm — under
+		   VM pooling many machines share a VM, so this is group-unique and
+		   carries no guest-visible meaning. */
+		int kvm_vcpu_id = 0;
+		/* The guest-visible CPU index: PerVCPUTable slot, SMP TSS/IST math.
+		   0 for every machine's main vCPU (incl. pooled forks); 1..k for a
+		   machine's own SMP vCPUs. */
+		int guest_cpu_index = 0;
 		bool stopped = true;
 		bool m_permanent_remote_connected = false;
 		uint8_t current_exception = 0;
