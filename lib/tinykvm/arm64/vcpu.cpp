@@ -99,6 +99,7 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 	}
 	if (this->timer_id == nullptr) {
 		this->timer_id = Machine::create_vcpu_timer();
+		this->timer_tid = gettid();
 	}
 	if (this->kvm_run == nullptr) {
 		kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,

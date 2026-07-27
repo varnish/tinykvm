@@ -109,6 +109,12 @@ SMP::MPvCPU_data* SMP::smp_allocate_vcpu_data(size_t num_cpus)
 }
 void SMP::prepare_cpus(size_t num_cpus)
 {
+	if (UNLIKELY(machine().is_pooled())) {
+		/* SMP vCPU ids are dense per-machine, so they would collide with
+		   sibling seats in the shared struct kvm - and consume the group's
+		   vCPU capacity permanently. */
+		throw MachineException("A pooled VM group member cannot use SMP", num_cpus);
+	}
 	if (m_cpus.size() < num_cpus) {
 		while (m_cpus.size() < num_cpus) {
 			/* NB: The cpu ids start at 1..2..3.. */

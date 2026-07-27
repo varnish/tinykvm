@@ -656,7 +656,16 @@ unsigned vCPU::exception_extra_offset(uint8_t intr)
 void Machine::migrate_to_this_thread()
 {
 	timer_delete(vcpu.timer_id);
+	vcpu.timer_id = nullptr;
 	vcpu.timer_id = create_vcpu_timer();
+	vcpu.timer_tid = gettid();
+	if (UNLIKELY(this->m_seat != nullptr)) {
+		/* Keep the seat's view of its timer live: the group destructor
+		   timer_delete()s it, and the next tenant compares owner_tid
+		   against its own thread. */
+		m_seat->timer_id  = vcpu.timer_id;
+		m_seat->owner_tid = vcpu.timer_tid;
+	}
 }
 
 } // tinykvm

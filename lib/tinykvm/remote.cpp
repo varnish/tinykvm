@@ -81,6 +81,11 @@ void Machine::remote_update_gigapage_mappings(Machine& remote, bool forced)
 void Machine::remote_connect(Machine& remote, bool connect_now)
 {
 	const auto remote_vmem = remote.main_memory().vmem();
+	if (UNLIKELY(this->is_pooled())) {
+		/* A member's remote slot-1 GPA layout is dictated by its own remote
+		   master, which is irreconcilable in a VM group's shared GPA space. */
+		machine_exception("A pooled VM group member cannot connect to a remote VM");
+	}
 	if (&remote != this->m_remote) {
 		if (&remote == this)
 			throw MachineException("Cannot connect a VM to itself");

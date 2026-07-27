@@ -2,6 +2,7 @@
 
 #define _GNU_SOURCE 1
 #include <cassert>
+#include <cerrno>
 #include <cstring>
 #include <cpuid.h>
 #include <linux/kvm.h>
@@ -9,6 +10,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 #include "page_streaming.hpp"
 #include "amd64/amd64.hpp"
@@ -98,6 +100,11 @@ void vCPU::map_kvm_run()
 	if (UNLIKELY(mapping == MAP_FAILED)) {
 		Machine::machine_exception("Failed to create KVM run-time mapped memory");
 	}
+	this->adopt_kvm_run(mapping);
+}
+
+void vCPU::adopt_kvm_run(struct kvm_run* mapping)
+{
 	this->kvm_run = mapping;
 
 	/* We only want GPRs and SREGS for now. */
@@ -124,6 +131,12 @@ void vCPU::lazily_map_kvm_run()
 	auto* shadow = (ShadowRegisters *)this->m_shadow_regs;
 	this->map_kvm_run();
 
+	/* A pooled member's mapping belongs to its seat, which keeps it for the
+	   next tenant: lever C's one-time flip is not re-paid on seat reuse. */
+	if (UNLIKELY(this->machine().m_seat != nullptr)) {
+		this->machine().m_seat->kvm_run = this->kvm_run;
+	}
+
 	if (shadow != nullptr) {
 		kvm_run->s.regs.regs  = shadow->regs;
 		kvm_run->s.regs.sregs = shadow->sregs;
@@ -148,6 +161,7 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 	}
 	if (this->timer_id == nullptr) {
 		this->timer_id = Machine::create_vcpu_timer();
+		this->timer_tid = gettid();
 	}
 	if (!this->m_initialized) {
 		this->m_initialized = true;
@@ -217,6 +231,112 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 		this->set_special_registers(master_sregs);
 	}
 
+	this->init_extended_state(machine);
+}
+
+void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
+	const MachineOptions& options)
+{
+	this->kvm_vcpu_id = seat.kvm_vcpu_id;
+	this->guest_cpu_index = 0;
+	this->last_fault_address = 0;
+	this->m_machine = &machine;
+
+	/* The seat's vCPU is created on the first acquisition and adopted by
+	   every tenant after that. Never closed while the group lives. */
+	if (seat.vcpu_fd < 0) {
+		seat.vcpu_fd = ioctl(machine.fd, KVM_CREATE_VCPU, seat.kvm_vcpu_id);
+		if (UNLIKELY(seat.vcpu_fd < 0)) {
+			Machine::machine_exception("Failed to KVM_CREATE_VCPU in a VM group", errno);
+		}
+	}
+	this->fd = seat.vcpu_fd;
+
+	/* The seat's timer is bound to the thread that created it (SIGEV_THREAD_ID
+	   with sigev_tid), but the seat itself is not thread-bound: any thread may
+	   be handed it next. Adopting a foreign-thread timer would break two ways
+	   at once - this tenant's execution timeout would never interrupt its
+	   KVM_RUN (an infinite guest loop would hang forever), and the 20ms
+	   re-arm interval would keep firing at the *original* thread, setting its
+	   thread_local timer_was_triggered and timing out whichever innocent
+	   sibling happens to be running there. So rebind on adoption, paying
+	   exactly what Machine::migrate_to_this_thread() pays. */
+	const pid_t this_tid = gettid();
+	if (seat.timer_id != nullptr && seat.owner_tid != this_tid) {
+		timer_delete((timer_t)seat.timer_id);
+		/* Cleared before the create, so a throw cannot leave the seat (and
+		   thus the group destructor) holding a deleted timer. */
+		seat.timer_id = nullptr;
+		seat.owner_tid = 0;
+	}
+	if (seat.timer_id == nullptr) {
+		seat.timer_id = Machine::create_vcpu_timer();
+		seat.owner_tid = this_tid;
+	}
+	this->timer_id = seat.timer_id;
+	this->timer_tid = seat.owner_tid;
+
+	this->m_initialized = true;
+	if (seat.kvm_run != nullptr) {
+		this->adopt_kvm_run((struct kvm_run *)seat.kvm_run);
+	} else if (options.lazy_vcpu_mmap) {
+		auto* shadow = new ShadowRegisters {};
+		this->m_shadow_regs = shadow;
+		this->m_regs  = &shadow->regs;
+		this->m_sregs = &shadow->sregs;
+	} else {
+		this->map_kvm_run();
+		seat.kvm_run = this->kvm_run;
+	}
+
+	if (!seat.vcpu_initialized) {
+		seat.vcpu_initialized = true;
+		/* Assign CPUID features to guest. Once per seat: KVM rejects a
+		   changed CPUID after the vCPU has run. */
+		if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
+			Machine::machine_exception("KVM_SET_CPUID2 failed");
+		}
+	} else {
+		/* The previous tenant may have halted. Parity with smp_init(). */
+		const kvm_mp_state state {
+			.mp_state = KVM_MP_STATE_RUNNABLE
+		};
+		if (ioctl(this->fd, KVM_SET_MP_STATE, &state) < 0) {
+			Machine::machine_exception("KVM_SET_MP_STATE failed");
+		}
+	}
+
+	/* Pooled machines are always forks, so they inherit the master's special
+	   registers instead of building their own (see init()). */
+	this->init_extended_state(machine);
+}
+
+void vCPU::detach_to_seat(VmGroupSeat& seat) noexcept
+{
+	if (this->fd >= 0) {
+		seat.vcpu_fd  = this->fd;
+		seat.kvm_run  = this->kvm_run;
+		/* The live timer, and the thread it is actually bound to - which is
+		   not necessarily this thread: Machine::migrate_to_this_thread() may
+		   have rebound it elsewhere, and destruction may happen on a third
+		   thread entirely. The next tenant compares against this. */
+		seat.timer_id  = this->timer_id;
+		seat.owner_tid = this->timer_tid;
+	}
+	this->fd = -1;
+	this->kvm_run = nullptr;
+	this->timer_id = nullptr;
+	this->timer_tid = 0;
+	this->m_regs = nullptr;
+	this->m_sregs = nullptr;
+	delete (ShadowRegisters *)this->m_shadow_regs;
+	this->m_shadow_regs = nullptr;
+	this->m_shadow_dirty_regs = 0;
+	this->m_initialized = false;
+}
+
+void vCPU::init_extended_state(Machine& machine)
+{
 	// Avoid loading X-regs more than once
 	static bool minit = false;
 	if (!minit) {
@@ -283,6 +403,7 @@ void vCPU::smp_init(int id, Machine& machine)
 		Machine::machine_exception("Failed to KVM_CREATE_VCPU");
 	}
 	this->timer_id = Machine::create_vcpu_timer();
+	this->timer_tid = gettid();
 
 	/* SMP vCPUs are only ever created in order to run, and so they are
 	   always mapped eagerly. */
@@ -484,6 +605,11 @@ void vCPU::set_vcpu_table_at(unsigned index, int value)
 {
 	if (index >= 4)
 		throw MachineException("Invalid vCPU table index", index);
+	if (UNLIKELY(machine().is_pooled())) {
+		/* The per-vCPU table lives in the shared master page, and every
+		   pooled member is guest CPU 0: a write here hits every sibling. */
+		throw MachineException("A pooled VM group member cannot write the vCPU table", index);
+	}
 	/* The per-vCPU data area is in the usercode area. */
 	const auto addr = this->vcpu_table_addr() + index * 4;
 	auto* page = machine().main_memory().get_userpage_at(addr & ~0xFFFL);

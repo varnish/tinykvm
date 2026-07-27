@@ -281,6 +281,7 @@ void Machine::migrate_to_this_thread()
 {
 	timer_delete((timer_t)vcpu.timer_id);
 	vcpu.timer_id = create_vcpu_timer();
+	vcpu.timer_tid = gettid();
 }
 
 } // namespace tinykvm

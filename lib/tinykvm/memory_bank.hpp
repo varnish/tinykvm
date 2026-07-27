@@ -58,6 +58,16 @@ struct MemoryBanks {
 
 	MemoryBanks(Machine&, const MachineOptions&);
 	void init_from(const MemoryBanks&);
+	/* Pooled mode: banks are carved out of a pre-mapped, pre-installed
+	   window at fixed offsets instead of being mmap'ed and installed one at
+	   a time. @gpa/@hva/@size describe the VM group seat's arena partition,
+	   and @max_cow_ceiling is the group's frozen working-memory ceiling,
+	   which a later reset() may not raise. */
+	void init_from_partition(uint64_t gpa, char* hva, uint64_t size,
+		uint32_t max_cow_ceiling);
+	bool is_partitioned() const noexcept { return m_partition_hva != nullptr; }
+	/* Bytes of the partition handed out to banks so far. */
+	uint64_t partition_used() const noexcept { return m_arena_next - m_arena_begin; }
 
 	MemoryBank& get_available_bank(size_t n_pages);
 	void reset(const MachineOptions&);
@@ -86,6 +96,10 @@ private:
 	Machine& m_machine;
 	uint64_t m_arena_begin;
 	uint64_t m_arena_next;
+	/* Pooled mode: the seat's window, and the hard end of the partition. */
+	char*    m_partition_hva = nullptr;
+	uint64_t m_partition_end = 0;
+	uint32_t m_max_ceiling_pages = 0;
 	uint16_t m_idx;
 	/* Number of initial banks that will allocate backing memory using hugepages */
 	uint32_t m_hugepage_pages = 0;

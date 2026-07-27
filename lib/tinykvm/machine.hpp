@@ -6,6 +6,7 @@
 #include "linux/fds.hpp"
 #include "linux/signals.hpp"
 #include "vcpu.hpp"
+#include "vm_group.hpp"
 #include <array>
 #include <cassert>
 #include <functional>
@@ -272,6 +273,15 @@ struct Machine
 	bool is_forked() const noexcept { return m_forked; }
 	bool uses_cow_memory() const noexcept { return m_forked || m_prepped; }
 
+	/* VM pooling. A pooled member shares its struct kvm (and the master's
+	   main-memory memslot) with up to B-1 siblings of the same master, and
+	   owns neither the VM fd nor its seat's vCPU. */
+	bool is_pooled() const noexcept { return m_group != nullptr; }
+	const VmGroup* group() const noexcept { return m_group.get(); }
+	const VmGroupSeat* seat() const noexcept { return m_seat; }
+	/* The groups this master hands out to its pooled forks (lazily created). */
+	VmGroupSet& groups() const;
+
 	/* TLB-invalidation signal for the generic syscall-return stub.
 	   When the host CoW-remaps a guest leaf page while handling a syscall on
 	   a forked VM, the guest's cached translation for that page goes stale
@@ -385,6 +395,10 @@ private:
 	bool relocate_relr_section(const char* section_name);
 	void setup_long_mode(const MachineOptions&);
 	void setup_cow_mode(const Machine*); // After prepare_copy_on_write and forking
+	/* Pooled fork construction: refusals, seat acquisition and the arena
+	   partition. Hands the seat back on any later failure (release_seat). */
+	void pooled_fork_prepare(const Machine& other, const MachineOptions&);
+	void release_group_seat() noexcept;
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
 	void smp_vcpu_broadcast(std::function<void(vCPU&)>);
@@ -397,6 +411,12 @@ private:
 
 	vCPU  vcpu;
 	int   fd = 0;
+	/* Non-null when this Machine is a pooled member: the VM fd above is the
+	   group's, and every resource behind the seat belongs to the group. */
+	std::shared_ptr<VmGroup> m_group = nullptr;
+	VmGroupSeat* m_seat = nullptr;
+	/* Masters only, and only when pooling is used. */
+	mutable std::unique_ptr<VmGroupSet> m_groups = nullptr;
 	bool  m_prepped = false;
 	bool  m_forked = false;
 	bool  m_just_reset = false;
@@ -451,6 +471,8 @@ private:
 	static int kvm_fd;
 	static void* create_vcpu_timer();
 	friend struct vCPU;
+	friend struct VmGroup;
+	friend struct VmGroupSet;
 };
 
 #include "machine_inline.hpp"

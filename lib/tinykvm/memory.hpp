@@ -119,6 +119,10 @@ struct vMemory {
 	vMemory(Machine&, const MachineOptions&, uint64_t, uint64_t, char*, size_t, int fd, bool own = true);
 	unsigned allocate_region_idx();
 	void install_mmap_ranges(const Machine& other);
+	/* Pooled members share the group's struct kvm, where the master's ranges
+	   are already installed, once, from group creation. Installing the same
+	   (GPA, HVA, size) triples again would collide in guest-physical space. */
+	void copy_mmap_ranges_without_install(const Machine& other);
 	void delete_foreign_mmap_ranges();
 	void delete_foreign_banks();
 	/* Loan memory from another machine */

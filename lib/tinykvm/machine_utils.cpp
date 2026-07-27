@@ -242,6 +242,11 @@ bool Machine::mmap_backed_area(
 {
 	static constexpr bool MANUAL_PREADV = false;
 	ScopedProfiler<MachineProfiling::MMapFiles> prof(profiling());
+	if (UNLIKELY(this->is_pooled())) {
+		/* This installs a memory region and advances mmap_physical, both of
+		   which are the VM group's, shared with every sibling. */
+		machine_exception("A pooled VM group member cannot create mmap-backed areas");
+	}
 	address_t& mmap_phys_base = memory.mmap_physical;
 
 	// Find the actual length of the file

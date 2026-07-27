@@ -30,6 +30,13 @@ static constexpr inline uint64_t PageMask() {
 #define TINYKVM_LAZY_VCPU_MMAP_DEFAULT false
 #endif
 
+/* Default for MachineOptions::vm_group. Build with
+   -DTINYKVM_VM_GROUP_DEFAULT=true to pool every fork, which is how the
+   unit test suite is A/B'ed against the one-VM-per-fork path. */
+#ifndef TINYKVM_VM_GROUP_DEFAULT
+#define TINYKVM_VM_GROUP_DEFAULT false
+#endif
+
 #include <array>
 #include <exception>
 #include <string>
@@ -128,6 +135,17 @@ namespace tinykvm
 		   constructed in a process that inherited it over fork().
 		   (AMD64 only.) */
 		bool lazy_vcpu_mmap = TINYKVM_LAZY_VCPU_MMAP_DEFAULT;
+		/* Pool this fork into a shared struct kvm with up to vm_group_size
+		   siblings of the same master, instead of creating a VM of its own.
+		   Removes the per-fork KVM_CREATE_VM, and with it both the
+		   mm_take_all_locks VMA walk and the host-global PM-notifier chain
+		   walk. Forks only, and refused for machines that enable
+		   allow_reset_to_new_master, a remote VM, SMP or hugepages.
+		   (AMD64 only.) */
+		bool vm_group = TINYKVM_VM_GROUP_DEFAULT;
+		/* Members per group (B). 0 = let VmGroup pick, bounded by
+		   KVM_CAP_MAX_VCPUS. */
+		uint32_t vm_group_size = 0;
 		/* Enable VM snapshot by file-mapping all physical memory
 		   to the given file. Depending on `snapshot_mode`,
 		   the file may be created if it does not exist,

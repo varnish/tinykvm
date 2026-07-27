@@ -2,16 +2,29 @@
 #include "common.hpp"
 #include "forward.hpp"
 #include <mutex>
+#include <sys/types.h>
 
 namespace tinykvm
 {
 	struct Machine;
+	struct VmGroupSeat;
 
 	struct vCPU
 	{
 		void init(int kvm_vcpu_id, int guest_cpu_index, Machine&, const MachineOptions&);
 		void smp_init(int id, Machine &);
 		void deinit();
+#if !defined(TINYKVM_ARCH_ARM64)
+		/* Pooled member: take over a VM group seat, creating its vCPU on
+		   first use and adopting it (fd, kvm_run mapping, timer) afterwards.
+		   guest_cpu_index stays 0: the seat only owns the KVM_CREATE_VCPU id. */
+		void init_from_seat(VmGroupSeat&, Machine&, const MachineOptions&);
+		/* The anti-deinit. Hands fd, kvm_run and timer back to the seat
+		   without closing or unmapping anything: a struct kvm's vCPU capacity
+		   is consumed permanently by every vCPU ever created in it, so
+		   closing the fd would burn the seat instead of freeing it. */
+		void detach_to_seat(VmGroupSeat&) noexcept;
+#endif
 #if !defined(TINYKVM_ARCH_ARM64)
 		/* Releases the shadow registers of a vCPU that never became mapped.
 		   deinit() is only reached from ~Machine, which is never run for a
@@ -76,6 +89,12 @@ namespace tinykvm
 		bool m_permanent_remote_connected = false;
 		uint8_t current_exception = 0;
 		uint32_t timer_ticks = 0;
+		/* The thread timer_id below is bound to. Every assignment of
+		   timer_id must set this too: it is what lets a VM group seat tell
+		   whether the timer it is handing to its next tenant fires on the
+		   tenant's thread or on a stale one. See Machine::create_vcpu_timer()
+		   (SIGEV_THREAD_ID) and vCPU::detach_to_seat(). */
+		pid_t timer_tid = 0;
 		void* timer_id = nullptr;
 		uint64_t last_fault_address = 0;
 		uint64_t remote_return_address = 0;
@@ -92,6 +111,11 @@ namespace tinykvm
 		}
 		void lazily_map_kvm_run();
 		void map_kvm_run();
+		/* Point the register accessors at an existing kvm_run mapping. */
+		void adopt_kvm_run(struct kvm_run*);
+		/* The seat-independent tail of init(): extended control registers
+		   and the SYSCALL/SYSRET MSRs, re-issued for every tenant. */
+		void init_extended_state(Machine&);
 #endif
 
 		struct kvm_run* kvm_run = nullptr;
