@@ -134,13 +134,14 @@ void vCPU::lazily_map_kvm_run()
 	}
 }
 
-void vCPU::init(int id, Machine& machine, const MachineOptions& options)
+void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const MachineOptions& options)
 {
-	this->cpu_id = id;
+	this->kvm_vcpu_id = kvm_vcpu_id;
+	this->guest_cpu_index = guest_cpu_index;
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
 	if (this->fd < 0) {
-		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
+		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->kvm_vcpu_id);
 		if (UNLIKELY(this->fd < 0)) {
 			Machine::machine_exception("Failed to KVM_CREATE_VCPU");
 		}
@@ -269,8 +270,11 @@ void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 
 void vCPU::smp_init(int id, Machine& machine)
 {
-	this->cpu_id = id;
-	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
+	/* SMP vCPUs keep both roles equal: id is dense per-machine today, and a
+	   machine's own SMP vCPUs get guest indices 1..k. Pooling refuses SMP. */
+	this->kvm_vcpu_id = id;
+	this->guest_cpu_index = id;
+	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->kvm_vcpu_id);
 	this->m_machine = &machine;
 	auto& memory = machine.main_memory();
 	memory.smp_guards_enabled = true; // Enable pagetable locking
@@ -474,7 +478,7 @@ void Machine::set_tls_base(__u64 baseaddr)
 uint64_t vCPU::vcpu_table_addr() const noexcept
 {
 	return usercode_header().translated_vm_cpuid(machine().memory)
-		+ sizeof(PerVCPUTable) * this->cpu_id;
+		+ sizeof(PerVCPUTable) * this->guest_cpu_index;
 }
 void vCPU::set_vcpu_table_at(unsigned index, int value)
 {

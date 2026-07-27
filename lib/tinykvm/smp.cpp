@@ -79,7 +79,7 @@ void SMP::MPvCPU::async_exec(MPvCPU_data& data)
 		auto& vcpu = *data.vcpu;
 		try {
 			/*printf("Working from vCPU %d, RIP=0x%llX  RSP=0x%llX  ARG=0x%llX\n",
-				cpu.cpu_id, regs->rip, regs->rsp, regs->rsi);*/
+				cpu.kvm_vcpu_id, regs->rip, regs->rsp, regs->rsi);*/
 			vcpu.set_registers(data.regs);
 
 			vcpu.run(data.ticks);
