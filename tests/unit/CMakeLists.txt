@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.10)
 project(tinykvm_unittests CXX)
 
-set(CMAKE_CXX_FLAGS "-Wall -Wextra -ggdb3")
+# Appended, not assigned: the compile-time A/B defaults
+# (-DTINYKVM_LAZY_VCPU_MMAP_DEFAULT=true, -DTINYKVM_VM_GROUP_DEFAULT=true) are
+# passed in as -DCMAKE_CXX_FLAGS, and assigning here silently discarded them --
+# so the "whole suite also passes with the flag on" runs were not testing
+# anything. They must reach the tests as well as the library: the defaults live
+# in MachineOptions, i.e. at the caller.
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -ggdb3")
 
 add_subdirectory(../../lib tinykvm)
 add_subdirectory(../Catch2 Catch2)

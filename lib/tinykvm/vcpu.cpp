@@ -242,13 +242,14 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
 
-	/* The seat's vCPU is created on the first acquisition and adopted by
-	   every tenant after that. Never closed while the group lives. */
-	if (seat.vcpu_fd < 0) {
-		seat.vcpu_fd = ioctl(machine.fd, KVM_CREATE_VCPU, seat.kvm_vcpu_id);
-		if (UNLIKELY(seat.vcpu_fd < 0)) {
-			Machine::machine_exception("Failed to KVM_CREATE_VCPU in a VM group", errno);
-		}
+	/* The seat's vCPU was created when the group materialized the seat, and is
+	   adopted by every tenant after that; it is never closed while the group
+	   lives. Creating it at materialization rather than here is what keeps a
+	   KVM_CREATE_VCPU failure (EMFILE, or the group's KVM_CAP_MAX_VCPUS wall)
+	   from leaving a seat with no vCPU at the head of the free list, where it
+	   would fail every subsequent acquire for the life of the group. */
+	if (UNLIKELY(seat.vcpu_fd < 0)) {
+		Machine::machine_exception("VM group seat has no vCPU", seat.kvm_vcpu_id);
 	}
 	this->fd = seat.vcpu_fd;
 

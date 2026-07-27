@@ -10,6 +10,7 @@
 namespace tinykvm {
 struct Machine;
 struct MachineOptions;
+struct VmGroupSet;
 
 /* Host KVM limits, queried once from Machine::init(). The count of vCPUs a
    single struct kvm can hold (KVM_CAP_MAX_VCPUS) is what bounds a group: ids
@@ -31,7 +32,11 @@ struct KvmLimits {
    destruction without closing anything. */
 struct VmGroupSeat {
 	int      kvm_vcpu_id = -1;
-	int      vcpu_fd     = -1;      /* never closed before group teardown */
+	/* Created once, when the seat is materialized, and never closed before
+	   group teardown. A seat that reaches a member always has this open: a
+	   seat whose materialization failed is kept only so the group destructor
+	   can release what it did get, and is never handed out. */
+	int      vcpu_fd     = -1;
 	void*    kvm_run     = nullptr; /* nullptr while never run (lever C) */
 	void*    timer_id    = nullptr;
 	/* The thread the timer above is bound to (SIGEV_THREAD_ID/sigev_tid). A
@@ -67,20 +72,35 @@ struct VmGroup {
 	   the upper base is part of the layout at all. At the default 8 MiB
 	   working-memory budget - a 16 MiB stride - this caps B at 2048. */
 	static constexpr uint64_t ARENA_SPAN_LIMIT = 0x800000000ULL;
-	/* vCPU ids left unused, so a host that also creates VMs outside of any
-	   group does not fail at the KVM_CAP_MAX_VCPUS wall. */
+	/* vCPU ids left unused inside this struct kvm. KVM_CAP_MAX_VCPUS is a
+	   per-struct-kvm count, not a host-global one, so this is not headroom
+	   for other VMs on the box - it is headroom for vCPUs this group's own
+	   VM may need beyond its seats (and slack against a host whose real cap
+	   is lower than the reported capability). */
 	static constexpr unsigned VCPU_HEADROOM  = 64;
+	/* Memslots a group consumes besides its seats: slot 0 is the master's
+	   main memory, slot 1 is reserved for remote memory (never installed by
+	   a group, but MemoryBanks::FIRST_BANK_IDX skips it), and one slot per
+	   master mmap range. Each seat then adds exactly one. */
+	static constexpr unsigned BASE_MEMSLOTS  = 2;
 
-	VmGroup(const Machine& master, const MachineOptions&, unsigned target_size);
+	VmGroup(const Machine& master, const MachineOptions&, unsigned target_size,
+		std::weak_ptr<VmGroupSet> owner = {});
 	~VmGroup();
 	VmGroup(const VmGroup&) = delete;
 	VmGroup& operator=(const VmGroup&) = delete;
 
 	/* Take a seat, materializing a new one if the group is not full yet.
-	   Returns nullptr when the group is full. */
+	   Returns nullptr when the group is full. Throws if a new seat cannot be
+	   materialized (no vCPU capacity, no address space); the half-built seat
+	   is retained for teardown and never handed out, so a failure costs one
+	   seat of capacity and cannot poison the free list. */
 	VmGroupSeat* acquire_seat();
 	/* Hand a seat back. Recycles @dirty_bytes of the arena partition with
-	   madvise; performs no memslot operations and closes nothing. */
+	   madvise; performs no memslot operations and closes nothing. When this
+	   empties the group it asks the owning set to reconsider retirement - so
+	   the caller must hold a shared_ptr to this group across the call (Machine
+	   does: m_group is cleared only afterwards). */
 	void release_seat(VmGroupSeat*, uint64_t dirty_bytes) noexcept;
 
 	int      vm_fd() const noexcept { return m_fd; }
@@ -96,15 +116,27 @@ struct VmGroup {
 	size_t mmap_range_count() const noexcept { return m_mmap_ranges; }
 
 	/* Hazard-4 accounting, read by the host-side placement policy: the
-	   shared EPT/mmu_lock knee sits at ~4 concurrently faulting members. */
+	   shared EPT/mmu_lock knee sits at ~4 concurrently faulting members.
+	   PHASE 3 API: nothing in tinykvm calls enter_guest()/exit_guest() - the
+	   counter is incremented by the host around the run of a member it hands
+	   work to (fast-agent's striped reserve), because tinykvm cannot see the
+	   difference between a member that is about to fault a lot and one that
+	   is idling in a vmcall. Reads as 0 until then. */
 	unsigned in_guest_now() const noexcept { return m_in_guest.load(std::memory_order_relaxed); }
 	void enter_guest() noexcept { m_in_guest.fetch_add(1, std::memory_order_relaxed); }
 	void exit_guest() noexcept { m_in_guest.fetch_sub(1, std::memory_order_relaxed); }
 
 private:
+	friend struct VmGroupSet;
 	VmGroupSeat* materialize_seat();
 	void install_slot(uint32_t idx, uint64_t gpa, char* hva, uint64_t size);
 
+	/* Weak, not raw: a group can outlive the set that made it (a member is
+	   still holding it while the master goes away), and release_seat() must be
+	   able to find out *and* keep the set alive for the duration of the
+	   notification. A raw pointer read under the group lock does not do that -
+	   the set can be freed between the read and the call. */
+	std::weak_ptr<VmGroupSet> m_owner;
 	int      m_fd = -1;
 	uint32_t m_id;
 	unsigned m_capacity;
@@ -123,7 +155,7 @@ private:
 /* Per-master registry of groups. Groups are per-master: the shared slot 0 is
    the master's (physbase, host pointer, size) triple, so members of different
    masters can never share a struct kvm. */
-struct VmGroupSet {
+struct VmGroupSet : public std::enable_shared_from_this<VmGroupSet> {
 	explicit VmGroupSet(const Machine& master) : m_master{master} {}
 
 	/* Acquire a seat, opening a new group when every live group is full.
@@ -131,13 +163,61 @@ struct VmGroupSet {
 	   work out round-robin across groups (striping) is the host's job. */
 	std::pair<std::shared_ptr<VmGroup>, VmGroupSeat*> acquire(const MachineOptions&);
 
+	/* Called by VmGroup::release_seat() when a group's last member leaves.
+	   Retiring a group drops the set's reference so it destructs - closing its
+	   VM fd (and with it its PM-notifier registration), its seats' vCPU fds,
+	   kvm_run mappings and POSIX timers, and unmapping their arena windows.
+	   The releasing member still holds a reference, so a retired group's
+	   destructor runs on the releasing thread after release_seat() returns.
+
+	   POLICY, in the order applied to every currently empty group:
+
+	   (a) An empty *ineligible* group is retired at once. Ineligible means it
+	       can never serve anyone again: its frozen working-memory ceiling is
+	       below what this master's forks are asking for, or its installed mmap
+	       range count no longer matches the master's. Keeping such a group
+	       resident is pure waste - and, worse, the "keep one group" rule
+	       applied blindly keeps whichever group emptied *first*, which can be
+	       exactly this useless one while the group that is actually being used
+	       gets created and destroyed on every fork.
+
+	       (b) One empty *eligible* group is kept as a warm spare - hysteresis
+	       of one whole group. Without it, occupancy straddling a group boundary
+	       (B live members, then the B+1st forked and destroyed over and over)
+	       pays a KVM_CREATE_VM plus a full teardown per fork, synchronously on
+	       a request thread in ~Machine. Measured at B=4 by the
+	       "[straddle-probe]" case in tests/unit/vm_group.cpp: 525 us/iteration
+	       with the spare, 11,604 us/iteration retiring every empty group -
+	       which is the unpooled cost (10,825 us/iteration) exactly, i.e. the
+	       entire pooling win, inverted. Preference goes to the group that just
+	       emptied: it is the one about to be refilled, and its seats' vCPUs,
+	       kvm_run mappings and timers are already warm.
+
+	   (c) Empty eligible groups beyond that one spare are retired.
+
+	   Eligibility is judged against what the master's forks currently ask for
+	   (the most recent acquire()'s budget) and the master's mmap range count as
+	   of that acquire - cached, never read from the master here, because a
+	   group may outlive its master and this path must not touch it. */
+	void note_seat_released(VmGroup&) noexcept;
+
 	std::vector<std::shared_ptr<VmGroup>> groups() const;
 	size_t group_count() const noexcept;
 
 private:
+	/* Both callers compare in whole pages, exactly as
+	   MemoryBanks::init_from_partition() does, so that group eligibility and
+	   the ceiling check there can never disagree. */
+	bool is_eligible(const VmGroup&) const noexcept;
+
 	const Machine& m_master;
 	mutable std::mutex m_mtx;
 	std::vector<std::shared_ptr<VmGroup>> m_groups;
+	/* Snapshot of what the master's forks currently want, taken at every
+	   acquire(). Read by note_seat_released(), which must not dereference
+	   m_master: a group (and hence this notification) can outlive the master. */
+	uint32_t m_wanted_cow_pages = 0;
+	size_t   m_master_ranges = 0;
 };
 
 } // tinykvm

@@ -281,6 +281,25 @@ struct Machine
 	const VmGroupSeat* seat() const noexcept { return m_seat; }
 	/* The groups this master hands out to its pooled forks (lazily created). */
 	VmGroupSet& groups() const;
+#if !defined(NDEBUG) && defined(TINYKVM_ARCH_AMD64)
+	/* Hazard 6, the isolation invariant of a shared struct kvm: no physical
+	   target reachable from this member's page tables - leaf mappings *and* the
+	   page-table pages themselves - may fall inside the group's arena range
+	   unless it is inside this member's own partition. Targets in memory the
+	   whole group shares (the master's main memory, or one of the mmap ranges
+	   the group installed once) are fine, and targets in guest-physical space
+	   the group's VM has no memslot for are not reachable by the guest at all
+	   (see the note at the definition: an unpooled VM has those too).
+	   This is not merely a backstop. vMemory::fork_reset()'s copy-back path -
+	   fa-serve's production recycle mode - takes the destination of every
+	   restored page from this member's own PTEs, so it is partition-scoped if
+	   and only if this holds; that is why it runs before the copy-back loop.
+	   Throws MachineException on violation. Debug builds only, and a no-op for
+	   a machine that is not pooled. */
+	void assert_pte_partition_invariant() const;
+#else
+	void assert_pte_partition_invariant() const {}
+#endif
 
 	/* TLB-invalidation signal for the generic syscall-return stub.
 	   When the host CoW-remaps a guest leaf page while handling a syscall on
@@ -412,11 +431,23 @@ private:
 	vCPU  vcpu;
 	int   fd = 0;
 	/* Non-null when this Machine is a pooled member: the VM fd above is the
-	   group's, and every resource behind the seat belongs to the group. */
+	   group's, and every resource behind the seat belongs to the group.
+	   NB: these three (32 bytes) are mutually exclusive in practice - m_groups
+	   is only ever set on a master, m_group/m_seat only on a member - and were
+	   considered for collapsing behind a single pointer. Left as-is
+	   deliberately: it would put an allocation and an indirection on the fork
+	   constructor and on ~Machine (both hot, and the fork path is the thing
+	   this whole feature exists to make cheaper), to save 24 bytes on an object
+	   that is already several hundred. Revisit only if Machine's size becomes a
+	   measured problem. */
 	std::shared_ptr<VmGroup> m_group = nullptr;
 	VmGroupSeat* m_seat = nullptr;
-	/* Masters only, and only when pooling is used. */
-	mutable std::unique_ptr<VmGroupSet> m_groups = nullptr;
+	/* Masters only, and only when pooling is used. shared_ptr rather than
+	   unique_ptr because the groups hold a weak_ptr back to it: a group can
+	   outlive the set (a member still holds it while the master goes away), and
+	   VmGroup::release_seat() has to be able both to notice that and to keep the
+	   set alive across the notification. */
+	mutable std::shared_ptr<VmGroupSet> m_groups = nullptr;
 	bool  m_prepped = false;
 	bool  m_forked = false;
 	bool  m_just_reset = false;

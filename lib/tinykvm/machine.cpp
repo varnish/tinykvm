@@ -257,9 +257,24 @@ void Machine::release_group_seat() noexcept
 {
 #if defined(TINYKVM_ARCH_AMD64)
 	if (this->m_group != nullptr) {
+		/* NB: the debug PTE-in-partition invariant is deliberately *not* run
+		   here, although a member leaving the pool is the last moment anything
+		   can be said about what it did to the group. Two reasons:
+		   1. It is unsafe on this path. A member may outlive its master (see
+		      VmGroup::m_owner), and by then ~vMemory has munmapped the master's
+		      main memory - which is where the walk starts. That is an
+		      uncatchable SIGSEGV in every Debug build, in a destructor, for a
+		      check that is only advisory here.
+		   2. It is not where the invariant is load-bearing. reset_to() is: the
+		      copy-back path resolves its write destinations through these very
+		      page tables, so a violation there corrupts a sibling. A violation
+		      found at release time has already happened and cannot be undone.
+		   The negative tests drive the reset_to() call site. */
 		vcpu.detach_to_seat(*this->m_seat);
 		this->m_group->release_seat(this->m_seat, memory.banks.partition_used());
 		this->m_seat = nullptr;
+		/* May retire the group: VmGroupSet dropped its reference from
+		   release_seat() above, so this can be the last one. */
 		this->m_group = nullptr;
 		this->fd = -1;
 	}
@@ -310,6 +325,15 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 
 	/* Disconnect from the remote, if it's still connected */
 	this->remote_disconnect();
+
+#ifndef NDEBUG
+	/* Hazard 6, where it is load-bearing rather than a backstop: the copy-back
+	   reset below (fa-serve's production recycle mode) takes the destination of
+	   every restored page from this member's own page tables, so it writes
+	   inside this member's partition if and only if the page tables are inside
+	   it. Prove that before the loop, not after. A no-op unless pooled. */
+	this->assert_pte_partition_invariant();
+#endif
 
 	bool full_reset = false;
 	if (UNLIKELY(this->m_binary.begin() != other.m_binary.begin() ||
