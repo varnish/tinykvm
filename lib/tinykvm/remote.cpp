@@ -328,7 +328,7 @@ Machine::address_t Machine::remote_activate_now()
 	}
 	else if constexpr (false)
 	{
-		const int this_cpuid = this->vcpu.cpu_id;
+		const int this_cpuid = this->vcpu.guest_cpu_index;
 		if (remote.has_threads() && this_cpuid > 0 && remote.threads().size() > 1) {
 			// So, the idea here is to just pick a thread if there are enough
 			// threads to cover all possible vCPU IDs. This is a bit hacky, and
