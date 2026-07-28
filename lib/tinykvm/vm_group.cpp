@@ -2,6 +2,7 @@
 
 #include "machine.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cerrno>
 #include <cstdio>
 #include <linux/kvm.h>
@@ -15,6 +16,14 @@
 #include <functional>
 #endif
 extern "C" int close(int);
+
+/* Kernel >= 6.13. Defined here so a build against older headers still compiles
+   the Madvise mode in; the runtime probe below is what decides whether it is
+   ever used, and pre-6.13 kernels answer an unknown advice value with EINVAL. */
+#ifndef MADV_GUARD_INSTALL
+#define MADV_GUARD_INSTALL 102
+#define MADV_GUARD_REMOVE  103
+#endif
 
 namespace tinykvm {
 static constexpr bool VERBOSE_VM_GROUP = false;
@@ -50,6 +59,83 @@ void KvmLimits::query(int kvm_fd) noexcept
 static uint64_t align_up(uint64_t value, uint64_t alignment) noexcept
 {
 	return (value + (alignment - 1)) & ~(alignment - 1);
+}
+
+TINYKVM_COLD()
+bool VmGroup::madv_guard_supported() noexcept
+{
+	/* Probed once per process: one page, one madvise, one munmap. There is no
+	   capability to query, so the only way to know is to try it. An older
+	   kernel rejects the unknown advice value with EINVAL and does nothing
+	   else, so this is safe to run anywhere. */
+	static const bool supported = [] () -> bool {
+		const uint64_t page = vMemory::PageSize();
+		char* probe = (char *) mmap(NULL, page, PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+		if (UNLIKELY(probe == MAP_FAILED)) {
+			return false;
+		}
+		const bool ok = (madvise(probe, page, MADV_GUARD_INSTALL) == 0);
+		munmap(probe, page);
+		return ok;
+	}();
+	return supported;
+}
+
+static const char* host_guard_name(VmGroupHostGuard mode) noexcept
+{
+	switch (mode) {
+	case VmGroupHostGuard::Off:      return "off";
+	case VmGroupHostGuard::Madvise:  return "madvise";
+	case VmGroupHostGuard::Mprotect: return "mprotect";
+	case VmGroupHostGuard::Auto:     break;
+	}
+	return "auto";
+}
+
+TINYKVM_COLD()
+static VmGroupHostGuard resolve_host_guard(VmGroupHostGuard wanted)
+{
+	switch (wanted) {
+	case VmGroupHostGuard::Off:
+		return VmGroupHostGuard::Off;
+	case VmGroupHostGuard::Mprotect:
+		return VmGroupHostGuard::Mprotect;
+	case VmGroupHostGuard::Madvise:
+		/* An explicit request that cannot be honoured is refused, not
+		   downgraded: silently running without the host-side guard is exactly
+		   the situation the caller asked to be protected from, and it would
+		   only be discovered as a sibling's memory being corrupted. */
+		if (UNLIKELY(!VmGroup::madv_guard_supported())) {
+			throw MachineException(
+				"VM group host guard mode 'madvise' needs MADV_GUARD_INSTALL "
+				"(Linux 6.13 or later)", MADV_GUARD_INSTALL);
+		}
+		return VmGroupHostGuard::Madvise;
+	case VmGroupHostGuard::Auto:
+		break;
+	}
+	/* Auto: the strongest guard that is free, then the strongest that is
+	   affordable.
+	   Madvise costs nothing per seat that matters (guard PTE markers, no VMA
+	   split), so it is taken whenever the kernel has it.
+	   Otherwise the choice is between paying 2 VMAs per seat and having no
+	   host-side guard at all, and it is decided by build mode rather than by
+	   preference: Mprotect is what turns a linear overrun into a SIGSEGV at the
+	   scene, which is worth its cost while code is being developed and tested;
+	   in a release build the same cost is precisely the per-seat mmap_lock and
+	   mm_take_all_locks overhead pooling exists to remove, and the remaining
+	   walls (the allocator wall in MemoryBanks::allocate_new_bank(), the
+	   GPA-side guard) are the ones that actually stop the bug rather than
+	   report it. */
+	if (VmGroup::madv_guard_supported()) {
+		return VmGroupHostGuard::Madvise;
+	}
+#if !defined(NDEBUG)
+	return VmGroupHostGuard::Mprotect;
+#else
+	return VmGroupHostGuard::Off;
+#endif
 }
 
 TINYKVM_COLD()
@@ -152,6 +238,88 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 			span);
 	}
 
+	const VmGroupHostGuard guard = resolve_host_guard(options.vm_group_host_guard);
+	this->m_host_guard.store(guard, std::memory_order_relaxed);
+
+	/* ONE host reservation for the whole group, made here, instead of one per
+	   seat in materialize_seat(). That per-seat mmap+mprotect pair was the
+	   residual O(N) in a pooled populate: two VMAs and two mmap_lock write
+	   acquisitions per seat, and every VMA is walked and locked again by every
+	   later KVM_CREATE_VM (mm_take_all_locks).
+
+	   I1: the reservation is byte-for-byte the group's guest-physical span,
+	   m_capacity * m_arena_stride - the same length that was just checked
+	   against the master's GPA layout, and bounded at ARENA_SPAN_LIMIT
+	   (32 GiB) by span_wall above. MAP_NORESERVE, so nothing is committed
+	   until a bank is touched.
+	   I2: consequently seat i lives at m_arena_hva + i*stride while its GPA is
+	   m_arena_base + i*stride, i.e. (arena_gpa - arena_hva) is one constant
+	   for every seat of the group.
+
+	   Capacity halving on failure rather than a hard refusal: a failed
+	   *per-seat* mmap used to cost exactly one seat, but a failed group window
+	   fails the whole group and with it the create_fork() that asked for it.
+	   Degrading B keeps the failure mode at "smaller groups" instead of "no
+	   forks". The span and overlap checks above need no re-run: every one of
+	   them only gets looser as capacity shrinks - a shorter span starting at
+	   the same base cannot begin to overlap a region it already cleared. */
+	const int arena_prot = (guard == VmGroupHostGuard::Mprotect)
+		? PROT_NONE : (PROT_READ | PROT_WRITE);
+	while (true) {
+		this->m_arena_span = uint64_t(m_capacity) * m_arena_stride;
+		void* window = mmap(NULL, m_arena_span, arena_prot,
+			MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+		if (LIKELY(window != MAP_FAILED)) {
+			this->m_arena_hva = (char *) window;
+			break;
+		}
+		if (UNLIKELY(m_capacity == 1)) {
+			throw MemoryException("Failed to reserve the VM group arena",
+				m_arena_base, m_arena_span);
+		}
+		const int reason = errno;
+		this->m_capacity /= 2;
+		/* Once per process: a host that cannot fit the window will not fit it
+		   for the next group either, and this is a warning, not an event. */
+		static std::atomic<bool> warned {false};
+		if (!warned.exchange(true, std::memory_order_relaxed)) {
+			fprintf(stderr, "tinykvm: VM group arena reservation of %lu MiB failed"
+				" (errno %d); degrading B to %u\n",
+				m_arena_span >> 20, reason, m_capacity);
+		}
+	}
+
+	/* Opt the window out of transparent hugepages unless the caller explicitly
+	   asked for them. One syscall per group, advisory, and it does not split
+	   the mapping (MADV_NOHUGEPAGE is a flag on the VMA).
+
+	   Why it is needed here and was not needed before: a mapping this long is
+	   near-certain to be PMD-aligned - the kernel's THP-aware unmapped-area
+	   search hands out 2 MiB-aligned addresses for large anonymous requests -
+	   so with system THP at `always` every 8 MiB bank that gets touched at all
+	   could be backed by 2 MiB pages. Banks are sparsely used by design (a
+	   fork writes a handful of pages into one), so that is RSS inflation of up
+	   to 512x per touched page, multiplied by B seats. The old per-seat
+	   windows were 56 MiB and could get the same treatment in principle, but
+	   rarely did; a single 32 GiB region reliably does.
+
+	   Mirroring the unpooled path, deliberately and with one difference. The
+	   unpooled bank allocator (MemoryBanks::try_alloc) applies no advice at
+	   all, so bank memory inherits the system THP policy; only *main* memory
+	   opts in, via options.transparent_hugepages in
+	   vMemory::allocate_mapped_memory(). Honouring that same field is what
+	   keeps an explicit opt-in working; defaulting to NOHUGEPAGE rather than
+	   to "inherit" is the difference, and it is what keeps a group's RSS
+	   comparable to the unpooled forks it replaces instead of being decided by
+	   a host-wide sysfs setting nothing in tinykvm can see. The hugetlb
+	   options (options.hugepages, hugepages_arena_size, using_hugepages())
+	   need no handling: a pooled fork is refused outright if it sets any of
+	   them (Machine::Machine's group path, and
+	   MemoryBanks::init_from_partition), so this constructor never sees one. */
+	if (!options.transparent_hugepages) {
+		madvise(this->m_arena_hva, this->m_arena_span, MADV_NOHUGEPAGE);
+	}
+
 	this->m_fd = Machine::create_kvm_vm();
 	try {
 		/* A fork copies the master's physbase *and* host pointer, so one
@@ -168,15 +336,24 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 		}
 		this->m_mmap_ranges = master.main_memory().mmap_ranges.size();
 	} catch (...) {
+		/* ~VmGroup does not run for a constructor that throws, so everything
+		   acquired above this point has to be released by hand - including the
+		   group window, which is now this object's only arena mapping. */
 		close(this->m_fd);
 		this->m_fd = -1;
+		munmap(this->m_arena_hva, this->m_arena_span);
+		this->m_arena_hva = nullptr;
+		this->m_arena_span = 0;
 		throw;
 	}
 
 	if (options.verbose_loader || VERBOSE_VM_GROUP) {
-		printf("VM group %u: B=%u, arena 0x%lX + %u x %lu MiB (%lu MiB span, %lu MiB guard)\n",
+		printf("VM group %u: B=%u, arena 0x%lX + %u x %lu MiB (%lu MiB span, "
+			"%lu MiB guard), host 0x%lX + %lu MiB, guard mode %s\n",
 			m_id, m_capacity, m_arena_base, m_capacity, m_arena_stride >> 20,
-			span >> 20, GUARD_BAND >> 20);
+			m_arena_span >> 20, GUARD_BAND >> 20,
+			(uintptr_t)m_arena_hva, m_arena_span >> 20,
+			host_guard_name(guard));
 	}
 }
 
@@ -184,7 +361,21 @@ TINYKVM_COLD()
 VmGroup::~VmGroup()
 {
 	/* Whole-group teardown is the only place a seat's vCPU may be closed and
-	   its kvm_run unmapped. */
+	   its kvm_run unmapped. A seat's arena_hva is a slice of the group window
+	   and is not unmapped here (or anywhere else): I5, exactly one munmap of
+	   arena memory in the tree, at the bottom of this function.
+
+	   THE ORDER MATTERS, and it is the reason the single big munmap is cheap.
+	   While the VM fd is open, this group's struct kvm has an mmu_notifier
+	   registered on this mm, so every munmap of memory that a memslot points
+	   at drives kvm_mmu_notifier_invalidate_range_start for it - zapping EPT
+	   and taking the group's mmu_lock. Closing the vCPU fds first (they hold
+	   references to the struct kvm, so the VM is not torn down while they are
+	   open) and then the VM fd means the notifier is already unregistered by
+	   the time the arena mapping goes away: the 32 GiB munmap then does
+	   nothing but drop one VMA and its (MAP_NORESERVE, mostly untouched) page
+	   tables. Unmapping first, as this used to, would make it the expensive
+	   half of retirement instead. */
 	for (auto& seat : m_seats) {
 		if (seat->timer_id != nullptr) {
 			timer_delete((timer_t)seat->timer_id);
@@ -195,13 +386,13 @@ VmGroup::~VmGroup()
 		if (seat->vcpu_fd >= 0) {
 			close(seat->vcpu_fd);
 		}
-		if (seat->arena_hva != nullptr) {
-			/* The whole stride was reserved, guard band included. */
-			munmap(seat->arena_hva, m_arena_stride);
-		}
 	}
 	if (this->m_fd >= 0) {
 		close(this->m_fd);
+	}
+	/* nullptr when the constructor threw before or during the reservation. */
+	if (this->m_arena_hva != nullptr) {
+		munmap(this->m_arena_hva, this->m_arena_span);
 	}
 }
 
@@ -248,32 +439,95 @@ VmGroupSeat* VmGroup::materialize_seat()
 		Machine::machine_exception("Failed to KVM_CREATE_VCPU in a VM group", errno);
 	}
 
-	/* One MAP_NORESERVE window per seat, covered by exactly one memslot.
-	   MemoryBanks carves its banks out of this at fixed offsets, with no
-	   mmap and no install per bank.
+	/* The seat's slice of the group's single MAP_NORESERVE window, reserved
+	   once in the constructor. Nothing is mapped here: a seat is an offset.
+	   I2 - the slice sits at the same index * stride offset in host memory as
+	   the seat's partition does in guest-physical memory, so
+	   (arena_gpa - arena_hva) is one constant for the whole group.
+	   MemoryBanks carves its banks out of this at fixed offsets, with no mmap
+	   and no memslot install per bank; the group's one memslot per seat (I3,
+	   below) covers the whole partition.
 
-	   The window is reserved at the *full* stride but only its first
-	   arena_size bytes are made accessible, so the guard band exists on both
-	   sides of the boundary: unbacked in guest-physical space (the memslot
-	   stops at arena_size), and PROT_NONE in the host address space. The
-	   second half matters because seat windows land adjacent in host memory:
-	   without it a host-side linear overrun off the end of a partition - a
-	   page_duplicate() or memcpy() walking past the last bank - would quietly
-	   land in a sibling's guest memory, where an unpooled VM's standalone
-	   bank mmap would have SIGSEGV'd. */
-	char* window = (char *) mmap(NULL, m_arena_stride, PROT_NONE,
-		MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
-	if (UNLIKELY(window == MAP_FAILED)) {
-		throw MemoryException("Failed to allocate VM group arena partition",
-			seat->arena_gpa, m_arena_stride);
-	}
-	if (UNLIKELY(mprotect(window, seat->arena_size, PROT_READ | PROT_WRITE) < 0)) {
-		munmap(window, m_arena_stride);
-		throw MemoryException("Failed to open the VM group arena partition window",
-			seat->arena_gpa, seat->arena_size);
-	}
-	seat->arena_hva = window;
+	   The guard band exists on both sides of the partition boundary.
+	   Guest-physical: free and unconditional, because the memslot stops at
+	   arena_size while the stride reaches GUARD_BAND further.
+	   Host: m_host_guard, frozen at construction (except for the one downgrade
+	   below). Mprotect pays 2 VMAs per seat because it has to - PROT_NONE is a
+	   VMA attribute, so opening the usable part of a partition splits the
+	   window. Madvise pays none: guard markers are PTE-level. Off pays
+	   nothing and does nothing. */
+	seat->arena_hva = m_arena_hva + uint64_t(index) * m_arena_stride;
+	/* I2, stated as code: the delta is the group's, not the seat's. And, by I1,
+	   the slice is wholly inside the reservation. */
+	assert(seat->arena_gpa - uintptr_t(seat->arena_hva)
+		== m_arena_base - uintptr_t(m_arena_hva));
+	assert(uint64_t(index) * m_arena_stride + m_arena_stride <= m_arena_span);
+	switch (m_host_guard.load(std::memory_order_relaxed)) {
+	case VmGroupHostGuard::Mprotect:
+		/* The window was reserved PROT_NONE, so this both grants access to the
+		   partition and leaves the band behind it inaccessible. */
+		if (UNLIKELY(mprotect(seat->arena_hva, seat->arena_size,
+			PROT_READ | PROT_WRITE) < 0))
+		{
+			throw MemoryException("Failed to open the VM group arena partition window",
+				seat->arena_gpa, seat->arena_size);
+		}
+		break;
+	case VmGroupHostGuard::Madvise: {
+		/* The window is already RW for its whole length in this mode, so the
+		   guard is installed rather than carved: MADV_GUARD_INSTALL puts guard
+		   markers in the PTEs of the range, leaving one VMA. A touch anywhere
+		   in the range takes SIGSEGV exactly as PROT_NONE would.
 
+		   Only the first HOST_GUARD_BYTES of the band, not all of it: see
+		   HOST_GUARD_BYTES. The markers survive the MADV_DONTNEED that
+		   release_seat() does on recycling, and that madvise is clamped to
+		   arena_size anyway, so a seat is guarded once, here, for the life of
+		   the group. */
+		const uint64_t glen =
+			std::min(HOST_GUARD_BYTES, m_arena_stride - seat->arena_size);
+		if (UNLIKELY(madvise(seat->arena_hva + seat->arena_size, glen,
+			MADV_GUARD_INSTALL) < 0))
+		{
+			/* The kernel was probed for MADV_GUARD_INSTALL at construction, so
+			   this is not "unsupported" but a refusal for this range (pinned
+			   pages, a policy the mapping does not allow). The guard is
+			   hardening, not correctness: the partition wall in
+			   MemoryBanks::allocate_new_bank() is what stops an out-of-bounds
+			   bank, and the memslot geometry is what stops the guest. Failing
+			   the seat - and with it the create_fork() that asked for it - would
+			   trade a real outage for a lost backstop, so warn and carry on.
+
+			   Off is the only mode this can degrade to: the window is mapped RW
+			   for its whole length in Madvise mode, so Mprotect's invariant
+			   (reserved PROT_NONE, opened per seat) does not hold for it and
+			   switching to it would leave later seats' bands accessible while
+			   pretending otherwise. */
+			const int reason = errno;
+			this->m_host_guard.store(VmGroupHostGuard::Off,
+				std::memory_order_relaxed);
+			static std::atomic<bool> warned {false};
+			if (!warned.exchange(true, std::memory_order_relaxed)) {
+				fprintf(stderr, "tinykvm: VM group %u seat %d: MADV_GUARD_INSTALL"
+					" failed (errno %d); continuing with no host-side arena"
+					" guard for this group\n",
+					m_id, seat->kvm_vcpu_id, reason);
+			}
+		}
+		break;
+	}
+	case VmGroupHostGuard::Off:
+	case VmGroupHostGuard::Auto:
+		/* Off: the window is already RW for its whole length, and nothing is
+		   done per seat at all. Auto is unreachable: it was resolved in the
+		   constructor. */
+		break;
+	}
+
+	/* I3: memslot geometry is untouched by any of the above - one slot per
+	   seat, at the seat's own GPA, covering exactly arena_size bytes. Only
+	   where the HVA comes from has changed, and a live group still performs
+	   zero memslot operations. */
 	seat->memslot = m_next_slot;
 	this->install_slot(seat->memslot, seat->arena_gpa, seat->arena_hva,
 		seat->arena_size);
@@ -388,6 +642,12 @@ std::pair<std::shared_ptr<VmGroup>, VmGroupSeat*>
 	   may not touch: a group can outlive its master. */
 	this->m_master_ranges = m_master.main_memory().mmap_ranges.size();
 	this->m_wanted_cow_pages = options.max_cow_mem / vMemory::PageSize();
+	/* The *requested* mode, unresolved: a group stores what it resolved to, and
+	   is_eligible() compares the two. Auto means "whatever a group already
+	   has", so snapshotting it unresolved is what lets an Auto member join any
+	   group instead of only the ones this call's kernel/build happened to
+	   resolve to. */
+	this->m_wanted_host_guard = options.vm_group_host_guard;
 
 	std::shared_ptr<VmGroup> best = nullptr;
 	unsigned fewest = 0;
@@ -398,7 +658,8 @@ std::pair<std::shared_ptr<VmGroup>, VmGroupSeat*>
 		   so a bigger member needs a group whose ceiling froze bigger) and the
 		   master's mmap range count as installed at group creation (if the
 		   master has grown more since, this group's VM has no memslot for
-		   them; a new group installs the current set). */
+		   them; a new group installs the current set), and the host guard mode
+		   the group resolved to. */
 		if (!this->is_eligible(*group)) {
 			continue;
 		}
@@ -429,6 +690,24 @@ std::pair<std::shared_ptr<VmGroup>, VmGroupSeat*>
 
 bool VmGroupSet::is_eligible(const VmGroup& group) const noexcept
 {
+	/* The host guard mode is frozen at group construction like the
+	   working-memory ceiling is, and for the same reason: the group's window
+	   was *mapped* according to it (PROT_NONE and opened per seat for Mprotect,
+	   RW throughout for the other two), so it cannot be retrofitted onto a live
+	   group. A member that explicitly asked for a mode must therefore get a
+	   group that resolved to it, not a group that quietly gives it something
+	   else - the same rule that makes a 24 MiB member open its own group rather
+	   than be clamped into an 8 MiB one.
+	   Auto matches any group: it means "whatever this host can give", which a
+	   group that already exists has already decided. In practice a process
+	   resolves its choice once (fa-serve reads the env at startup), so every
+	   member of a master asks for the same thing and this never bifurcates the
+	   set. */
+	if (m_wanted_host_guard != VmGroupHostGuard::Auto
+		&& group.host_guard() != m_wanted_host_guard)
+	{
+		return false;
+	}
 	return group.max_cow_mem() / vMemory::PageSize() >= m_wanted_cow_pages
 		&& group.mmap_range_count() == m_master_ranges;
 }

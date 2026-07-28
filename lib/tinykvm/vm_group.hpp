@@ -1,4 +1,8 @@
 #pragma once
+/* For VmGroupHostGuard, which is part of MachineOptions and therefore of the
+   public API. The dependency is one-way on purpose: common.hpp knows nothing
+   about VmGroup. */
+#include "common.hpp"
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -47,6 +51,9 @@ struct VmGroupSeat {
 	bool     vcpu_initialized = false; /* KVM_SET_CPUID2 already issued */
 	uint64_t arena_gpa   = 0;       /* start of this seat's arena partition */
 	uint64_t arena_size  = 0;       /* usable bytes (stride minus guard band) */
+	/* A slice of the group's single arena mapping, at index * stride; not
+	   owned by the seat and never unmapped by it. The whole group window is
+	   released once, in ~VmGroup. */
 	char*    arena_hva   = nullptr;
 	uint32_t memslot     = 0;       /* the single slot covering the partition */
 	bool     live        = false;   /* held by a member right now */
@@ -58,12 +65,31 @@ struct VmGroupSeat {
    a live group performs no memslot operations in steady state. */
 struct VmGroup {
 	/* Arena partitions are strided by the ceiling of the working-memory
-	   budget rounded up to a whole bank, plus one unmapped bank of guard
-	   band. The guard band restores a hardware backstop for a linear
-	   overrun past the end of a partition. */
+	   budget rounded up to a whole bank, plus one bank of guard band, which
+	   restores a hardware backstop for a linear overrun past the end of a
+	   partition.
+
+	   The guard band has two sides, and they cost differently.
+	   Guest-physical: always on, and free. A seat's memslot covers only its
+	   first arena_size bytes, so the band has no backing in the group's VM at
+	   all - a guest touching it faults exactly as it would on any GPA the VM
+	   has no memslot for. Nothing has to be done to get this.
+	   Host address space: m_host_guard, and not free - see VmGroupHostGuard.
+	   It only matters because seat windows are adjacent slices of one mapping:
+	   without it a host-side linear overrun off the end of a partition - a
+	   page_duplicate() or memcpy() walking past the last bank - lands in a
+	   sibling's guest memory, where an unpooled VM's standalone bank mmap
+	   would have SIGSEGV'd. */
 	static constexpr uint64_t BANK_ALIGNMENT = 8ULL << 20;
 	static constexpr uint64_t GUARD_BAND     = 8ULL << 20;
 	static constexpr unsigned DEFAULT_SIZE   = 1024;
+	/* How much of the guard band the Madvise mode actually guards. The threat
+	   model is a *linear* overrun, so the first guarded page catches it; the
+	   rest of the band is reserved address space and needs nothing done to it.
+	   Guarding the whole 8 MiB would cost a page-table page per 2 MiB per seat
+	   (guard PTEs are per-page markers, so the band can no longer stay an
+	   empty PMD) for no added coverage. */
+	static constexpr uint64_t HOST_GUARD_BYTES = 64ULL << 10;
 	/* All the guest-physical room an arena has, and therefore a hard ceiling
 	   on B x stride. MemoryBanks picks the arena base from one of two
 	   addresses 32 GiB apart (MemoryBanks::ARENA_BASE_ADDRESS = 0x7000000000,
@@ -110,6 +136,24 @@ struct VmGroup {
 	unsigned high_water() const noexcept;    /* seats ever materialized */
 	uint64_t arena_base() const noexcept { return m_arena_base; }
 	uint64_t arena_stride() const noexcept { return m_arena_stride; }
+	/* The group's single host reservation. I1: arena_span() is byte-for-byte
+	   capacity() * arena_stride(), the same length as the GPA span at
+	   arena_base(). I2: therefore arena_gpa - arena_hva is one constant for
+	   every seat of the group. */
+	char*    arena_hva() const noexcept { return m_arena_hva; }
+	uint64_t arena_span() const noexcept { return m_arena_span; }
+	/* The resolved mode, never Auto: Auto is decided in the constructor.
+	   Read by VmGroupSet::is_eligible(), which will not put a member that asked
+	   for an explicit mode into a group that resolved to a different one - the
+	   window's protection was chosen from this and cannot be retrofitted. Can
+	   be downgraded to Off once, if MADV_GUARD_INSTALL is refused for a seat's
+	   range after the kernel probe said it was available. */
+	VmGroupHostGuard host_guard() const noexcept {
+		return m_host_guard.load(std::memory_order_relaxed);
+	}
+	/* Whether this kernel implements MADV_GUARD_INSTALL (>= 6.13). Probed
+	   once, on first call. */
+	static bool madv_guard_supported() noexcept;
 	uint32_t max_cow_mem() const noexcept { return m_max_cow_mem; }
 	/* Master mmap ranges installed at group creation. A member whose master
 	   has grown more of them cannot join this group. */
@@ -142,6 +186,27 @@ private:
 	unsigned m_capacity;
 	uint64_t m_arena_base;
 	uint64_t m_arena_stride;
+	/* One MAP_NORESERVE reservation for the whole group, made once in the
+	   constructor and released once in the destructor. Seats take slices of
+	   it; none of them owns anything. nullptr only on the constructor's own
+	   failure paths. */
+	char*    m_arena_hva = nullptr;
+	uint64_t m_arena_span = 0;
+	/* Resolved from MachineOptions::vm_group_host_guard at construction and
+	   frozen thereafter: seats of one group all use the same mode, and
+	   VmGroupSet::is_eligible() treats it as a group property a member has to
+	   match. The one exception is the Madvise -> Off downgrade in
+	   materialize_seat(), which only ever removes a backstop, never changes how
+	   the window is mapped.
+
+	   Atomic only because of that downgrade. It is written under m_mtx and every
+	   in-tree read happens to be serialized against it by the *set* lock
+	   (materialize_seat() is reached only through VmGroupSet::acquire(), which
+	   holds it, and is_eligible() is only called under it), but host_guard() is
+	   public and unlocked, so a host reading it during a downgrade would
+	   otherwise be a data race on a plain byte. Relaxed throughout: nothing is
+	   ordered against it. */
+	std::atomic<VmGroupHostGuard> m_host_guard { VmGroupHostGuard::Auto };
 	uint32_t m_max_cow_mem;   /* frozen ceiling; resets may not exceed it */
 	uint32_t m_next_slot;
 	size_t   m_mmap_ranges = 0;
@@ -166,7 +231,7 @@ struct VmGroupSet : public std::enable_shared_from_this<VmGroupSet> {
 	/* Called by VmGroup::release_seat() when a group's last member leaves.
 	   Retiring a group drops the set's reference so it destructs - closing its
 	   VM fd (and with it its PM-notifier registration), its seats' vCPU fds,
-	   kvm_run mappings and POSIX timers, and unmapping their arena windows.
+	   kvm_run mappings and POSIX timers, and unmapping its one arena window.
 	   The releasing member still holds a reference, so a retired group's
 	   destructor runs on the releasing thread after release_seat() returns.
 
@@ -218,6 +283,9 @@ private:
 	   m_master: a group (and hence this notification) can outlive the master. */
 	uint32_t m_wanted_cow_pages = 0;
 	size_t   m_master_ranges = 0;
+	/* Unresolved, as the member asked for it: Auto matches any group, an
+	   explicit mode only a group that resolved to exactly it. */
+	VmGroupHostGuard m_wanted_host_guard = VmGroupHostGuard::Auto;
 };
 
 } // tinykvm
