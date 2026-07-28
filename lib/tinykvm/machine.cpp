@@ -457,6 +457,20 @@ uint64_t Machine::stack_push_cstr(__u64& sp, const char* string, size_t length)
 void Machine::install_memory(uint32_t idx, const VirtualMem& mem,
 	[[maybe_unused]] bool readonly)
 {
+	/* A pooled member owns no memslots: every one of this VM's slots belongs to
+	   the group and is shared with every sibling. The slot index would come from
+	   this member's own MemoryBanks allocator, which starts at FIRST_BANK_IDX -
+	   i.e. it would land on the group's first mmap-range slot, or on its arena
+	   slot, and replace a region every sibling is running out of. Nothing in the
+	   tree reaches this today (the group installs main memory and the mmap
+	   ranges itself, partitioned banks are carved rather than installed, and the
+	   remaining callers are refused earlier or are masters), so this closes a
+	   class rather than a live bug - and makes "a live group performs no memslot
+	   operations" executable instead of conventional. */
+	if (UNLIKELY(this->is_pooled())) {
+		machine_exception("A pooled VM group member cannot install a memory region", idx);
+	}
+	VmGroup::note_memslot_op();
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
 		.flags = readonly ? (uint32_t)KVM_MEM_READONLY : 0u,
@@ -475,6 +489,15 @@ void Machine::install_memory(uint32_t idx, const VirtualMem& mem,
 }
 void Machine::delete_memory(uint32_t idx)
 {
+	/* Worse than installing one, and refused for the same reason: deleting a
+	   slot of the group's VM removes memory from every sibling at once, with
+	   slots_lock held and an expedited SRCU sync, on a VM whose other members
+	   may be inside KVM_RUN. Under PerGroup arena slots the slot in question is
+	   the whole arena. */
+	if (UNLIKELY(this->is_pooled())) {
+		machine_exception("A pooled VM group member cannot delete a memory region", idx);
+	}
+	VmGroup::note_memslot_op();
 	const struct kvm_userspace_memory_region memreg {
 		.slot = idx,
 		.flags = 0u,

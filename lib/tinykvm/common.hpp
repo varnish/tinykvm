@@ -37,6 +37,15 @@ static constexpr inline uint64_t PageMask() {
 #define TINYKVM_VM_GROUP_DEFAULT false
 #endif
 
+/* Default for MachineOptions::vm_group_arena_slot, as an *enumerator name* of
+   VmGroupArenaSlot (the macro is pasted after the scope operator below, so
+   -DTINYKVM_VM_GROUP_ARENA_SLOT_DEFAULT=PerSeat is what switches it). Build
+   with PerSeat to get the pre-phase-6 one-memslot-per-seat geometry, which is
+   how the unit test suite is A/B'ed against the one-slot-per-group path. */
+#ifndef TINYKVM_VM_GROUP_ARENA_SLOT_DEFAULT
+#define TINYKVM_VM_GROUP_ARENA_SLOT_DEFAULT PerGroup
+#endif
+
 #include <array>
 #include <exception>
 #include <string>
@@ -54,12 +63,17 @@ namespace tinykvm
 		bool     blackout = false; /* Unmapped virtual area */
 	};
 
-	/* How a VM group protects the *host* address space against a linear
-	   overrun off the end of a seat's arena partition. The guest-physical side
-	   of the guard band is free and always on (a seat's memslot stops at
-	   arena_size, so the band has no backing in the group's VM at all); this
-	   is only about what the host sees when C++ code - page_duplicate(), a
-	   memcpy() walking past the last bank - runs off the end.
+	/* How a VM group protects the guard band at the end of each seat's arena
+	   partition against a linear overrun.
+
+	   Named for the *host* address space, which is all it used to cover: with
+	   one memslot per seat (VmGroupArenaSlot::PerSeat) the guest-physical side
+	   of the band was free and unconditional, because a seat's memslot stopped
+	   at arena_size and the band had no backing in the group's VM at all. That
+	   is no longer a property of the layout but of the slot mode: under
+	   PerGroup one memslot covers the whole arena span, bands included, and KVM
+	   resolves a band GPA through the HVA of that memslot - so this mode now
+	   governs *both* sides of the band. See VmGroupArenaSlot.
 	   Auto resolves once, at group construction:
 	     Madvise if the kernel supports MADV_GUARD_INSTALL, else
 	     Mprotect in debug builds, else Off.
@@ -69,17 +83,47 @@ namespace tinykvm
 	       usable part RW), which is the layout tinykvm shipped before the
 	       group window existed. Every VMA is walked and locked by every later
 	       KVM_CREATE_VM (mm_take_all_locks), so this is the expensive mode.
+	       Covers the whole band on both sides.
 	     Madvise: 0 VMAs - MADV_GUARD_INSTALL marks PTEs, it does not split the
-	       mapping - but needs kernel >= 6.13.
-	     Off: 0 VMAs and no probe. Host-side overrun protection then falls to
-	       the allocator wall in MemoryBanks::allocate_new_bank() (which
-	       refuses a bank past the partition end before deriving its HVA), the
-	       GPA-side guard, and, in debug builds, the PTE-partition invariant. */
+	       mapping - but needs kernel >= 6.13. Covers the first
+	       VmGroup::HOST_GUARD_BYTES of the band on both sides, which is the
+	       linear-overrun class.
+	     Off: 0 VMAs and no probe, and no band enforcement on either side under
+	       PerGroup. Overrun protection then falls to the allocator wall in
+	       MemoryBanks::allocate_new_bank() (which refuses a bank past the
+	       partition end before deriving its HVA) and, in debug builds - which
+	       includes every build made through the cc crate - the PTE-partition
+	       invariant that runs before each copy-back reset. */
 	enum class VmGroupHostGuard : uint8_t {
 		Auto = 0,
 		Off,
 		Madvise,
 		Mprotect,
+	};
+
+	/* How many memslots a VM group's arena costs.
+	   PerSeat: one KVM_SET_USER_MEMORY_REGION per seat, covering exactly that
+	     seat's usable partition. The guard bands are then outside every
+	     memslot, so a guest touch of one is an unconditional MMIO exit that
+	     Machine throws on - free, and independent of vm_group_host_guard.
+	     Costs one ioctl per seat on the fork path, taken with slots_lock and
+	     ending in synchronize_srcu_expedited() whose cost grows with the
+	     group's registered vCPU count, and makes KVM_CAP_NR_MEMSLOTS a wall
+	     on B.
+	   PerGroup: one memslot for the whole arena span, installed at group
+	     construction. A live group then performs zero memslot operations and
+	     no seat performs any; B loses its memslot wall; and KVM validates the
+	     whole span against the group's other slots one ioctl earlier. The
+	     price is that the guard bands are now inside a memslot, so the band
+	     guard becomes whatever vm_group_host_guard enforces on the host
+	     pages behind it - nothing, in Off.
+	   Deliberately no Auto: keying it off NDEBUG is the trap
+	   vm_group_host_guard's Auto fell into, since the cc crate never defines
+	   NDEBUG in any cargo profile, so "release" would silently mean "debug"
+	   for every consumer that reaches tinykvm through the bridge. */
+	enum class VmGroupArenaSlot : uint8_t {
+		PerSeat = 0,
+		PerGroup,
 	};
 
 	struct MachineProfiling {
@@ -186,6 +230,13 @@ namespace tinykvm
 		   set never bifurcates. An explicit Madvise on a kernel without
 		   MADV_GUARD_INSTALL is an error rather than a silent downgrade. */
 		VmGroupHostGuard vm_group_host_guard = VmGroupHostGuard::Auto;
+		/* Whether this group's arena is one memslot per seat or one for the
+		   whole span. See VmGroupArenaSlot above. Frozen at group construction
+		   like the guard mode is - the slots are installed from it - and
+		   therefore part of group eligibility too, but compared by plain
+		   equality: there is no Auto to match anything. */
+		VmGroupArenaSlot vm_group_arena_slot =
+			VmGroupArenaSlot::TINYKVM_VM_GROUP_ARENA_SLOT_DEFAULT;
 		/* Enable VM snapshot by file-mapping all physical memory
 		   to the given file. Depending on `snapshot_mode`,
 		   the file may be created if it does not exist,

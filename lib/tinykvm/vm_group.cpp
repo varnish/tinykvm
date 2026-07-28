@@ -34,6 +34,11 @@ static_assert(VmGroup::BASE_MEMSLOTS == MemoryBanks::FIRST_BANK_IDX,
 	"VM group base memslot count must match the first free bank index");
 static KvmLimits g_kvm_limits;
 static std::atomic<uint32_t> g_group_counter {0};
+/* Every KVM_SET_USER_MEMORY_REGION this process issues, counted so the tests can
+   state the phase-6 claim exactly: a group installs its arena once and a live
+   group performs no memslot operations at all. Relaxed: it is a counter read
+   after the operations it counts have been serialized by other means. */
+static std::atomic<uint64_t> g_memslot_ops {0};
 
 const KvmLimits& KvmLimits::get() noexcept
 {
@@ -82,6 +87,20 @@ bool VmGroup::madv_guard_supported() noexcept
 	return supported;
 }
 
+uint64_t VmGroup::memslot_ops() noexcept
+{
+	return g_memslot_ops.load(std::memory_order_relaxed);
+}
+void VmGroup::note_memslot_op() noexcept
+{
+	g_memslot_ops.fetch_add(1, std::memory_order_relaxed);
+}
+
+static const char* arena_slot_name(VmGroupArenaSlot mode) noexcept
+{
+	return (mode == VmGroupArenaSlot::PerGroup) ? "pergroup" : "perseat";
+}
+
 static const char* host_guard_name(VmGroupHostGuard mode) noexcept
 {
 	switch (mode) {
@@ -125,9 +144,11 @@ static VmGroupHostGuard resolve_host_guard(VmGroupHostGuard wanted)
 	   scene, which is worth its cost while code is being developed and tested;
 	   in a release build the same cost is precisely the per-seat mmap_lock and
 	   mm_take_all_locks overhead pooling exists to remove, and the remaining
-	   walls (the allocator wall in MemoryBanks::allocate_new_bank(), the
-	   GPA-side guard) are the ones that actually stop the bug rather than
-	   report it. */
+	   walls (the allocator wall in MemoryBanks::allocate_new_bank(), and - under
+	   VmGroupArenaSlot::PerSeat - the GPA-side guard) are the ones that actually
+	   stop the bug rather than report it. NB under PerGroup there is no separate
+	   GPA-side guard to fall back on: this choice decides both sides of the band,
+	   which is what the constructor's honesty line is for. */
 	if (VmGroup::madv_guard_supported()) {
 		return VmGroupHostGuard::Madvise;
 	}
@@ -146,6 +167,12 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 {
 	const auto& limits = KvmLimits::get();
 
+	/* Frozen before the capacity math, which depends on it: under PerGroup the
+	   arena costs one memslot no matter how many seats the group has, so
+	   KVM_CAP_NR_MEMSLOTS stops being a wall on B. There is nothing to resolve
+	   - VmGroupArenaSlot has no Auto on purpose. */
+	this->m_arena_slot_mode = options.vm_group_arena_slot;
+
 	/* The working-memory ceiling is frozen here: every member of this group
 	   is bound by it, and a reset may not raise it. */
 	this->m_max_cow_mem = options.max_cow_mem;
@@ -158,16 +185,24 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 	const auto& mem = master.main_memory();
 	this->m_arena_base = mem.banks.arena_begin();
 
-	/* B is the smallest of four walls.
+	/* B is the smallest of these walls.
 	   1. What was asked for.
 	   2. KVM_CAP_MAX_VCPUS, a count wall - and closing a vCPU fd does not
 	      reclaim capacity, so it bounds the seats a group may ever hand out,
 	      not just the ones it holds at once.
-	   3. KVM_CAP_NR_MEMSLOTS. One slot per seat covers its whole partition
-	      (that is the point of the partition), plus the group's shared base
-	      slots: main memory, the reserved remote slot, and the master's mmap
-	      ranges. Enormous on current hosts (32764), but it is a real wall and
-	      MemoryBank::idx is a uint16_t, so query it rather than assume.
+	   3. KVM_CAP_NR_MEMSLOTS, but only under PerSeat, where one slot per seat
+	      covers its whole partition (that is the point of the partition), plus
+	      the group's shared base slots: main memory, the reserved remote slot,
+	      and the master's mmap ranges. Enormous on current hosts (32764), but
+	      it is a real wall and MemoryBank::idx is a uint16_t, so query it
+	      rather than assume. Under PerGroup the arena is one slot for the whole
+	      span, so this stops scaling with B and becomes a feasibility check:
+	      the group needs one slot left over, and that slot's index must fit in
+	      a uint16_t. NB: a host that does not report KVM_CAP_NR_MEMSLOTS at all
+	      falls back to KVM's documented 32 above, which capped B at 30 under
+	      PerSeat; under PerGroup B on such a host is bounded by the walls below
+	      instead, which is a real behavioural difference and the one thing
+	      about this phase that is visible without measuring it.
 	   4. The guest-physical room the arena has (below). Pooling multiplies
 	      the arena by B, so a working-memory budget that is unremarkable for
 	      a single VM can walk the span into a neighbouring region. */
@@ -179,25 +214,58 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 	const unsigned base_slots =
 		BASE_MEMSLOTS + unsigned(master.main_memory().mmap_ranges.size());
 	unsigned slot_wall = 0u;
-	if (limits.nr_memslots > base_slots) {
-		slot_wall = limits.nr_memslots - base_slots;
+	if (m_arena_slot_mode == VmGroupArenaSlot::PerSeat) {
+		if (limits.nr_memslots > base_slots) {
+			slot_wall = limits.nr_memslots - base_slots;
+		}
+		if (UNLIKELY(slot_wall == 0)) {
+			Machine::machine_exception("VM group has no memslots left for seats",
+				limits.nr_memslots);
+		}
+		/* A uint16_t slot index is what MemoryBank::idx and the memslot install
+		   path carry, so the last seat's slot must still fit in one. */
+		slot_wall = std::min(slot_wall, unsigned(UINT16_MAX) - base_slots);
+	} else {
+		/* Feasibility, not a wall: exactly one slot is needed for the arena
+		   whatever B turns out to be, and its index is base_slots. */
+		if (UNLIKELY(limits.nr_memslots <= base_slots)) {
+			Machine::machine_exception("VM group has no memslot left for its arena",
+				limits.nr_memslots);
+		}
+		if (UNLIKELY(base_slots + 1u > unsigned(UINT16_MAX))) {
+			Machine::machine_exception("VM group arena memslot index does not fit in a uint16_t",
+				base_slots);
+		}
 	}
-	if (UNLIKELY(slot_wall == 0)) {
-		Machine::machine_exception("VM group has no memslots left for seats",
-			limits.nr_memslots);
-	}
-	/* A uint16_t slot index is what MemoryBank::idx and the memslot install
-	   path carry, so the last seat's slot must still fit in one. */
-	slot_wall = std::min(slot_wall, unsigned(UINT16_MAX) - base_slots);
 	const uint64_t span_wall = ARENA_SPAN_LIMIT / m_arena_stride;
 	if (UNLIKELY(span_wall == 0)) {
 		Machine::machine_exception("VM group working memory exceeds the whole arena range",
 			m_arena_stride);
 	}
-	this->m_capacity = std::min(std::min(wanted, slot_wall),
+	this->m_capacity = std::min(wanted,
 		std::min(wall, std::min(limits.max_vcpu_id, unsigned(span_wall))));
+	if (m_arena_slot_mode == VmGroupArenaSlot::PerSeat) {
+		this->m_capacity = std::min(m_capacity, slot_wall);
+	}
 	if (UNLIKELY(this->m_capacity == 0)) {
 		Machine::machine_exception("VM group has no vCPU capacity on this host");
+	}
+	/* I6, the other half of the static_assert on the stride constants in
+	   vm_group.hpp: with the arena in one memslot, KVM is free to build a 2 MiB
+	   EPT leaf anywhere inside the span (only if the window is actually backed
+	   by transparent hugepages, which the constructor opts out of below unless
+	   the caller asked for them), and only alignment keeps such a leaf from
+	   straddling a partition boundary and mapping a slice of a sibling's memory
+	   into this member. Every boundary is arena_base + i*stride with stride a
+	   BANK_ALIGNMENT multiple, so all of them are aligned iff arena_base is.
+	   Checked unconditionally rather than with assert(): a release build that
+	   silently lost the property would lose it in the shape of cross-member
+	   memory visibility, and this costs one modulo per group. MemoryBanks picks
+	   arena_begin() from two 32 GiB-apart constants, so it always holds - this
+	   is a backstop against that layout changing. */
+	if (UNLIKELY(m_arena_base % BANK_ALIGNMENT != 0)) {
+		Machine::machine_exception("VM group arena base is not bank-aligned",
+			m_arena_base);
 	}
 	/* B == 1 is legal (a host reporting KVM_CAP_MAX_VCPUS just above
 	   VCPU_HEADROOM, or a working-memory budget so large that the arena span
@@ -240,6 +308,26 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 
 	const VmGroupHostGuard guard = resolve_host_guard(options.vm_group_host_guard);
 	this->m_host_guard.store(guard, std::memory_order_relaxed);
+
+	/* The one combination in which a guard band is not enforced on either side.
+	   Under PerSeat the guest-physical side was free and unconditional; under
+	   PerGroup the band is inside the group's one memslot, so it is exactly as
+	   protected as its host pages are - and in Off they are plain RW anonymous
+	   memory. Said once per process, like the reservation-degrade warning above:
+	   this is a property of how the process was configured, not an event. */
+	if (m_arena_slot_mode == VmGroupArenaSlot::PerGroup
+		&& guard == VmGroupHostGuard::Off)
+	{
+		static std::atomic<bool> warned {false};
+		if (!warned.exchange(true, std::memory_order_relaxed)) {
+			fprintf(stderr, "tinykvm: VM group arena slot mode 'pergroup' with host"
+				" guard 'off': neither side of the arena guard band is enforced, so"
+				" an overrun past a partition reaches the band silently. The"
+				" remaining walls are the partition wall in"
+				" MemoryBanks::allocate_new_bank() and the PTE-partition invariant"
+				" run before every copy-back reset.\n");
+		}
+	}
 
 	/* ONE host reservation for the whole group, made here, instead of one per
 	   seat in materialize_seat(). That per-seat mmap+mprotect pair was the
@@ -320,8 +408,15 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 		madvise(this->m_arena_hva, this->m_arena_span, MADV_NOHUGEPAGE);
 	}
 
-	this->m_fd = Machine::create_kvm_vm();
 	try {
+		/* Inside the try, not before it: KVM_CREATE_VM can fail (a host at its
+		   VM limit, or out of the kernel memory a struct kvm needs), and the
+		   window reserved just above is up to 32 GiB of MAP_NORESERVE address
+		   space that nothing else would release on that path - ~VmGroup does not
+		   run for a constructor that throws. It leaked one window per failed
+		   attempt before. */
+		this->m_fd = Machine::create_kvm_vm();
+
 		/* A fork copies the master's physbase *and* host pointer, so one
 		   group-level slot 0 serves every member. */
 		const auto vmem = master.main_memory().vmem();
@@ -335,11 +430,37 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 			this->install_slot(m_next_slot++, range.physbase, range.ptr, range.size);
 		}
 		this->m_mmap_ranges = master.main_memory().mmap_ranges.size();
+
+		/* PerGroup: the whole arena, in one memslot, here - the last memslot
+		   operation this group will ever perform. I1/I2 are what make it
+		   possible: the reservation is byte-for-byte the guest-physical span and
+		   seat i sits at the same index*stride offset on both sides, so the span
+		   maps onto the window affinely and one kvm_userspace_memory_region
+		   describes every seat's partition (and every guard band between them)
+		   at once.
+
+		   Installed after the capacity-halving loop above, deliberately: that
+		   loop is the only thing that can still change m_capacity, and hence
+		   m_arena_span, so installing before it could register a slot longer
+		   than the window that ends up behind it. And inside this try, because
+		   KVM validates the region here - overlap with slot 0 or with an mmap
+		   range comes back as -EEXIST, one ioctl earlier and over the whole span
+		   rather than per seat as it materializes - and the catch below is what
+		   releases the VM fd and the window on that path. */
+		if (m_arena_slot_mode == VmGroupArenaSlot::PerGroup) {
+			this->m_arena_slot = m_next_slot++;
+			this->install_slot(m_arena_slot, m_arena_base, m_arena_hva,
+				m_arena_span);
+		}
 	} catch (...) {
 		/* ~VmGroup does not run for a constructor that throws, so everything
 		   acquired above this point has to be released by hand - including the
-		   group window, which is now this object's only arena mapping. */
-		close(this->m_fd);
+		   group window, which is now this object's only arena mapping, and the
+		   VM fd, which may or may not have been opened yet (create_kvm_vm() is
+		   the first thing in the try). */
+		if (this->m_fd >= 0) {
+			close(this->m_fd);
+		}
 		this->m_fd = -1;
 		munmap(this->m_arena_hva, this->m_arena_span);
 		this->m_arena_hva = nullptr;
@@ -349,11 +470,13 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 
 	if (options.verbose_loader || VERBOSE_VM_GROUP) {
 		printf("VM group %u: B=%u, arena 0x%lX + %u x %lu MiB (%lu MiB span, "
-			"%lu MiB guard), host 0x%lX + %lu MiB, guard mode %s\n",
+			"%lu MiB guard), host 0x%lX + %lu MiB, guard mode %s, "
+			"arena slots %s (slot %u)\n",
 			m_id, m_capacity, m_arena_base, m_capacity, m_arena_stride >> 20,
 			m_arena_span >> 20, GUARD_BAND >> 20,
 			(uintptr_t)m_arena_hva, m_arena_span >> 20,
-			host_guard_name(guard));
+			host_guard_name(guard), arena_slot_name(m_arena_slot_mode),
+			m_arena_slot);
 	}
 }
 
@@ -375,7 +498,16 @@ VmGroup::~VmGroup()
 	   the time the arena mapping goes away: the 32 GiB munmap then does
 	   nothing but drop one VMA and its (MAP_NORESERVE, mostly untouched) page
 	   tables. Unmapping first, as this used to, would make it the expensive
-	   half of retirement instead. */
+	   half of retirement instead.
+
+	   Under PerGroup the ordering matters more, not less: one memslot points at
+	   the *whole* window, so an early munmap would drive one
+	   invalidate_range_start over the entire span - every resident page of every
+	   seat, in one zap under the group's mmu_lock - where before it was at worst
+	   one partition's worth per memslot. Nothing here deletes that memslot
+	   either: closing the VM fd retires the struct kvm and every slot with it,
+	   and an explicit KVM_SET_USER_MEMORY_REGION per slot would only add
+	   ioctls with slots_lock and an expedited SRCU sync each. */
 	for (auto& seat : m_seats) {
 		if (seat->timer_id != nullptr) {
 			timer_delete((timer_t)seat->timer_id);
@@ -405,6 +537,7 @@ void VmGroup::install_slot(uint32_t idx, uint64_t gpa, char* hva, uint64_t size)
 		.memory_size = size,
 		.userspace_addr = (uintptr_t) hva,
 	};
+	VmGroup::note_memslot_op();
 	if (UNLIKELY(ioctl(this->m_fd, KVM_SET_USER_MEMORY_REGION, &memreg) < 0)) {
 		throw MemoryException("Failed to install VM group memory region", gpa, size);
 	}
@@ -445,23 +578,49 @@ VmGroupSeat* VmGroup::materialize_seat()
 	   the seat's partition does in guest-physical memory, so
 	   (arena_gpa - arena_hva) is one constant for the whole group.
 	   MemoryBanks carves its banks out of this at fixed offsets, with no mmap
-	   and no memslot install per bank; the group's one memslot per seat (I3,
-	   below) covers the whole partition.
+	   and no memslot install per bank; the memslot covering the partition is
+	   the group's one arena slot, or this seat's own, depending on the slot mode
+	   (I3, below).
 
-	   The guard band exists on both sides of the partition boundary.
-	   Guest-physical: free and unconditional, because the memslot stops at
-	   arena_size while the stride reaches GUARD_BAND further.
+	   The guard band exists on both sides of the partition boundary, and what
+	   enforces each side depends on both modes - see the band comment in
+	   vm_group.hpp. Guest-physical: free and unconditional under PerSeat
+	   (the seat's memslot stops at arena_size while the stride reaches
+	   GUARD_BAND further); under PerGroup it is the host protection below, seen
+	   through the group's memslot by KVM's fault path.
 	   Host: m_host_guard, frozen at construction (except for the one downgrade
 	   below). Mprotect pays 2 VMAs per seat because it has to - PROT_NONE is a
 	   VMA attribute, so opening the usable part of a partition splits the
 	   window. Madvise pays none: guard markers are PTE-level. Off pays
-	   nothing and does nothing. */
+	   nothing and does nothing.
+
+	   NB under PerGroup both of the guarded modes now run on host memory that a
+	   live memslot points at, so each one costs an
+	   mmu_notifier_invalidate_range_start and the group's mmu_lock. The zap is
+	   empty (the range has no EPT entries yet - this seat has never run) and
+	   there is no SRCU synchronization, unlike a memslot install; release_seat()
+	   has done exactly this with MADV_DONTNEED since phase 1. */
 	seat->arena_hva = m_arena_hva + uint64_t(index) * m_arena_stride;
 	/* I2, stated as code: the delta is the group's, not the seat's. And, by I1,
-	   the slice is wholly inside the reservation. */
-	assert(seat->arena_gpa - uintptr_t(seat->arena_hva)
-		== m_arena_base - uintptr_t(m_arena_hva));
-	assert(uint64_t(index) * m_arena_stride + m_arena_stride <= m_arena_span);
+	   the slice is wholly inside the reservation.
+	   Unconditional, not assert(): under PerGroup these two comparisons are the
+	   whole of what makes the group's single arena memslot correct for this seat.
+	   The slot was installed over [arena_base, arena_base + span) against
+	   arena_hva, so a seat whose GPA/HVA pair did not sit at the same offset in
+	   both would silently be served another seat's host pages by KVM - a
+	   cross-member memory leak with no fault anywhere to notice it. Two
+	   comparisons, once per seat ever materialized. */
+	if (UNLIKELY(seat->arena_gpa - uintptr_t(seat->arena_hva)
+		!= m_arena_base - uintptr_t(m_arena_hva)))
+	{
+		Machine::machine_exception("A VM group seat is not affine to its arena mapping",
+			seat->arena_gpa);
+	}
+	if (UNLIKELY(uint64_t(index) * m_arena_stride + m_arena_stride > m_arena_span))
+	{
+		Machine::machine_exception("A VM group seat lies outside its arena mapping",
+			seat->arena_gpa);
+	}
 	switch (m_host_guard.load(std::memory_order_relaxed)) {
 	case VmGroupHostGuard::Mprotect:
 		/* The window was reserved PROT_NONE, so this both grants access to the
@@ -494,23 +653,51 @@ VmGroupSeat* VmGroup::materialize_seat()
 			   pages, a policy the mapping does not allow). The guard is
 			   hardening, not correctness: the partition wall in
 			   MemoryBanks::allocate_new_bank() is what stops an out-of-bounds
-			   bank, and the memslot geometry is what stops the guest. Failing
-			   the seat - and with it the create_fork() that asked for it - would
-			   trade a real outage for a lost backstop, so warn and carry on.
+			   bank. Failing the seat - and with it the create_fork() that asked
+			   for it - would trade a real outage for a lost backstop, so warn and
+			   carry on.
 
 			   Off is the only mode this can degrade to: the window is mapped RW
 			   for its whole length in Madvise mode, so Mprotect's invariant
 			   (reserved PROT_NONE, opened per seat) does not hold for it and
 			   switching to it would leave later seats' bands accessible while
-			   pretending otherwise. */
+			   pretending otherwise.
+
+			   What the degrade costs depends on the slot mode, so it is stated in
+			   full rather than as "no host-side guard". Under PerSeat the
+			   guest-physical side is untouched by this: the seats' memslots stop at
+			   arena_size whatever the host guard does, so a guest touch of a band is
+			   still an MMIO exit. Under PerGroup the band is inside the group's one
+			   memslot and KVM resolves it through the host page behind it, so
+			   dropping the host guard drops the guest-side guard with it and *both*
+			   sides of the band go unenforced for this group. Neither of the other
+			   two honesty lines covers that: the constructor's is keyed on the mode
+			   the group was *built* with (Madvise here, not Off) and is once per
+			   process anyway.
+			   Per group, not once per process: unlike a configuration choice, a
+			   degrade is an event, and which groups it happened to is the whole
+			   content of it - one group of a process may be unguarded while the rest
+			   are fine. Cold path by construction (one line per group at most, and
+			   only on a kernel that probed the feature and then refused it). */
 			const int reason = errno;
 			this->m_host_guard.store(VmGroupHostGuard::Off,
 				std::memory_order_relaxed);
-			static std::atomic<bool> warned {false};
-			if (!warned.exchange(true, std::memory_order_relaxed)) {
+			if (m_arena_slot_mode == VmGroupArenaSlot::PerGroup) {
+				fprintf(stderr, "tinykvm: VM group %u seat %d: MADV_GUARD_INSTALL"
+					" failed (errno %d); this group degrades to host guard 'off', and"
+					" with arena slot mode 'pergroup' that leaves *neither* side of its"
+					" guard bands enforced - a guest touch of a band now faults in an"
+					" anonymous page instead of exiting. The remaining walls for this"
+					" group are the partition wall in"
+					" MemoryBanks::allocate_new_bank() and the PTE-partition invariant"
+					" run before every copy-back reset.\n",
+					m_id, seat->kvm_vcpu_id, reason);
+			} else {
 				fprintf(stderr, "tinykvm: VM group %u seat %d: MADV_GUARD_INSTALL"
 					" failed (errno %d); continuing with no host-side arena"
-					" guard for this group\n",
+					" guard for this group (the guest-physical side is unaffected:"
+					" arena slot mode 'perseat' leaves the bands outside every"
+					" memslot)\n",
 					m_id, seat->kvm_vcpu_id, reason);
 			}
 		}
@@ -524,14 +711,26 @@ VmGroupSeat* VmGroup::materialize_seat()
 		break;
 	}
 
-	/* I3: memslot geometry is untouched by any of the above - one slot per
-	   seat, at the seat's own GPA, covering exactly arena_size bytes. Only
-	   where the HVA comes from has changed, and a live group still performs
-	   zero memslot operations. */
-	seat->memslot = m_next_slot;
-	this->install_slot(seat->memslot, seat->arena_gpa, seat->arena_hva,
-		seat->arena_size);
-	m_next_slot += 1;
+	/* I3, as of phase 6: under PerGroup there is one memslot per group, installed
+	   at construction, and this seat is simply a range inside it - so a live
+	   group performs zero memslot operations, and no seat performs any. What
+	   materializing a seat costs is one KVM_CREATE_VCPU, some arithmetic, and
+	   (in the guarded modes) one mprotect or madvise.
+	   Under PerSeat it is the pre-phase-6 geometry: one slot per seat, at the
+	   seat's own GPA, covering exactly arena_size bytes and leaving the guard
+	   band unbacked. That ioctl takes slots_lock and ends in
+	   synchronize_srcu_expedited(), whose cost grows with the number of vCPUs
+	   registered in this struct kvm - so within one group the k-th seat's
+	   install is dearer than the first, which is the superlinearity PerGroup
+	   removes (see the [memslot-probe] case in tests/unit/vm_group.cpp). */
+	if (m_arena_slot_mode == VmGroupArenaSlot::PerGroup) {
+		seat->memslot = m_arena_slot;
+	} else {
+		seat->memslot = m_next_slot;
+		this->install_slot(seat->memslot, seat->arena_gpa, seat->arena_hva,
+			seat->arena_size);
+		m_next_slot += 1;
+	}
 
 	return seat;
 }
@@ -572,8 +771,14 @@ VmGroupSeat* VmGroup::acquire_seat()
 void VmGroup::release_seat(VmGroupSeat* seat, uint64_t dirty_bytes) noexcept
 {
 	/* Give the dirty part of the partition back to the kernel. Recycling is
-	   madvise-only: deleting a live group's memslot would zap the whole
-	   group's EPT and refault every resident page of every sibling. */
+	   madvise-only, and clamped to arena_size so it never reaches the guard band:
+	   deleting a memslot here would take slots_lock and an expedited SRCU sync on
+	   a VM whose other members are inside KVM_RUN, and it would zap EPT for a
+	   region that is not this seat's alone - under PerSeat the deletion drops the
+	   whole group's EPT generation (kvm_swap_active_memslots), and under PerGroup
+	   the slot being deleted is literally every sibling's partition as well. The
+	   madvise costs one invalidate_range_start over this seat's dirty range and
+	   nothing else. */
 	if (dirty_bytes > 0 && seat->arena_hva != nullptr) {
 		madvise(seat->arena_hva, std::min(dirty_bytes, seat->arena_size),
 			MADV_DONTNEED);
@@ -648,6 +853,9 @@ std::pair<std::shared_ptr<VmGroup>, VmGroupSeat*>
 	   group instead of only the ones this call's kernel/build happened to
 	   resolve to. */
 	this->m_wanted_host_guard = options.vm_group_host_guard;
+	/* The arena slot mode, which has no Auto: a member gets a group built the way
+	   it asked for, or a new group. */
+	this->m_wanted_arena_slot = options.vm_group_arena_slot;
 
 	std::shared_ptr<VmGroup> best = nullptr;
 	unsigned fewest = 0;
@@ -702,10 +910,31 @@ bool VmGroupSet::is_eligible(const VmGroup& group) const noexcept
 	   group that already exists has already decided. In practice a process
 	   resolves its choice once (fa-serve reads the env at startup), so every
 	   member of a master asks for the same thing and this never bifurcates the
-	   set. */
+	   set.
+
+	   host_guard() is read, not the mode the group was built with, so a group that
+	   degraded from Madvise to Off (materialize_seat()'s MADV_GUARD_INSTALL failure
+	   path) stops accepting members that asked for Madvise from then on, while the
+	   members already in it keep running. That is deliberate and unchanged by phase
+	   6, including the part that reads worse under PerGroup: such a group has no
+	   band enforcement on either side any more - the host guard *is* the
+	   guest-physical guard once the band is inside the group's memslot - and it is
+	   still a perfectly serviceable group for a member that asked for Off, or for
+	   one that asked for whatever this host can give. Reopening the question per
+	   member would mean refusing to place forks over a hardening backstop that
+	   failed once; the degrade says so on stderr instead, per group. */
 	if (m_wanted_host_guard != VmGroupHostGuard::Auto
 		&& group.host_guard() != m_wanted_host_guard)
 	{
+		return false;
+	}
+	/* The arena slot mode, for the same reason and with no Auto to soften it: the
+	   group's arena memslots were *installed* from it, so a PerSeat member in a
+	   PerGroup group would be handed a partition whose guard band is backed (and
+	   would count on a per-seat slot that does not exist), and a PerGroup member
+	   in a PerSeat group would count on a whole-span slot that was never
+	   installed. Plain equality both ways. */
+	if (group.arena_slot_mode() != m_wanted_arena_slot) {
 		return false;
 	}
 	return group.max_cow_mem() / vMemory::PageSize() >= m_wanted_cow_pages
