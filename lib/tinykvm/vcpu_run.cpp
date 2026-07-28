@@ -99,6 +99,7 @@ void vCPU::disable_timer()
 long vCPU::run_once()
 {
 	int result;
+	int run_errno = 0;
 	/* A fork may have deferred its kvm_run mapping until now. This is the
 	   only place where the register accessors are allowed to change what
 	   they point at, so that no caller can hold a register reference across
@@ -107,17 +108,34 @@ long vCPU::run_once()
 	{
 		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());
 		result = ioctl(this->fd, KVM_RUN, 0);
+		/* Captured here, not below: the profiler's destructor runs at the end of
+		   this scope and is entitled to make syscalls of its own, any one of
+		   which would overwrite errno before it is read. */
+		run_errno = errno;
 	}
 	// Handle potential KVM_RUN failure or execution timeout
 	if (UNLIKELY(result < 0)) {
-		if (this->timer_ticks) {
+		/* Whether this is a timeout is decided by whether the timer *fired*, not
+		   by whether one was armed. `timer_ticks` is the configured timeout in
+		   milliseconds (vCPU::run() sets it from its argument), so testing it
+		   alone relabels every KVM_RUN failure inside a timed run - an EFAULT
+		   from a guest touch of unbacked or protected host memory in particular -
+		   as "Timeout Exception", and discards errno with it.
+		   The timer manifests two ways, both accepted here: the SIGUSR2 handler
+		   sets the thread_local timer_was_triggered, and the signal makes KVM_RUN
+		   return EINTR. Either one, with a timer armed, is a genuine timeout;
+		   fa-serve's request deadline handling depends on it still being a
+		   MachineTimeoutException. Anything else keeps its errno and is reported
+		   as what it was. */
+		const bool timer_armed = (this->timer_ticks != 0);
+		if (timer_armed && (timer_was_triggered || run_errno == EINTR)) {
 			if constexpr (VERBOSE_TIMER) {
 				printf("Timer %p triggered\n", timer_id);
 			}
 			Machine::timeout_exception("Timeout Exception", this->timer_ticks);
-		} else if (errno == EINTR) {
+		} else if (run_errno == EINTR) {
 			Machine::timeout_exception("Interrupted (signal)", 0);
-		} else if (errno == EFAULT) {
+		} else if (run_errno == EFAULT) {
 #ifdef KVM_EXIT_MEMORY_FAULT
 			if (kvm_run->exit_reason == KVM_EXIT_MEMORY_FAULT) {
 				// This is a memory fault, we can throw a MemoryException
@@ -128,7 +146,7 @@ long vCPU::run_once()
 #endif
 			Machine::machine_exception("KVM_RUN failed with EFAULT, but exit_reason is unknown\n", kvm_run->exit_reason);
 		} else {
-			Machine::machine_exception("KVM_RUN failed (errno)", errno);
+			Machine::machine_exception("KVM_RUN failed (errno)", run_errno);
 		}
 	} else if (this->timer_ticks) {
 		// Occasionally we miss timer interruptions, and we must catch it via TLS.
