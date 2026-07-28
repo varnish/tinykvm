@@ -54,6 +54,34 @@ namespace tinykvm
 		bool     blackout = false; /* Unmapped virtual area */
 	};
 
+	/* How a VM group protects the *host* address space against a linear
+	   overrun off the end of a seat's arena partition. The guest-physical side
+	   of the guard band is free and always on (a seat's memslot stops at
+	   arena_size, so the band has no backing in the group's VM at all); this
+	   is only about what the host sees when C++ code - page_duplicate(), a
+	   memcpy() walking past the last bank - runs off the end.
+	   Auto resolves once, at group construction:
+	     Madvise if the kernel supports MADV_GUARD_INSTALL, else
+	     Mprotect in debug builds, else Off.
+	   Costs:
+	     Mprotect: 2 VMAs and 2 mmap_lock write acquisitions per seat (the
+	       group window is reserved PROT_NONE and each seat mprotect()s its
+	       usable part RW), which is the layout tinykvm shipped before the
+	       group window existed. Every VMA is walked and locked by every later
+	       KVM_CREATE_VM (mm_take_all_locks), so this is the expensive mode.
+	     Madvise: 0 VMAs - MADV_GUARD_INSTALL marks PTEs, it does not split the
+	       mapping - but needs kernel >= 6.13.
+	     Off: 0 VMAs and no probe. Host-side overrun protection then falls to
+	       the allocator wall in MemoryBanks::allocate_new_bank() (which
+	       refuses a bank past the partition end before deriving its HVA), the
+	       GPA-side guard, and, in debug builds, the PTE-partition invariant. */
+	enum class VmGroupHostGuard : uint8_t {
+		Auto = 0,
+		Off,
+		Madvise,
+		Mprotect,
+	};
+
 	struct MachineProfiling {
 		enum Location {
 			VCpuRun = 0,
@@ -146,6 +174,18 @@ namespace tinykvm
 		/* Members per group (B). 0 = let VmGroup pick, bounded by
 		   KVM_CAP_MAX_VCPUS. */
 		uint32_t vm_group_size = 0;
+		/* Host-side guard band mode for this group's arena. See
+		   VmGroupHostGuard above. Resolved and frozen at group construction:
+		   the group's arena window is *mapped* according to it, so it cannot be
+		   retrofitted onto a group that already exists. It is therefore part of
+		   group eligibility, exactly like max_cow_mem is - Auto joins any
+		   existing group (it means "whatever this host can give", which such a
+		   group has already decided), while an explicit Off/Madvise/Mprotect
+		   only joins a group that resolved to that same mode and otherwise
+		   opens a new one. In practice a process picks once at startup, so the
+		   set never bifurcates. An explicit Madvise on a kernel without
+		   MADV_GUARD_INSTALL is an error rather than a silent downgrade. */
+		VmGroupHostGuard vm_group_host_guard = VmGroupHostGuard::Auto;
 		/* Enable VM snapshot by file-mapping all physical memory
 		   to the given file. Depending on `snapshot_mode`,
 		   the file may be created if it does not exist,

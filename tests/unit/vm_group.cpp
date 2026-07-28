@@ -13,6 +13,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 extern std::vector<uint8_t> build_and_load(const std::string& code);
@@ -118,6 +119,76 @@ static std::string maps_perms_at(const void* addr)
 	return result;
 }
 
+/* Every VMA in this process. This is the number the group window exists to keep
+   flat in the number of seats: mm_take_all_locks() walks and write-locks every
+   one of them on every later KVM_CREATE_VM, and each mmap()/mprotect() that
+   creates or splits one takes the mmap_lock for writing. */
+static size_t count_vmas()
+{
+	FILE* f = fopen("/proc/self/maps", "r");
+	REQUIRE(f != nullptr);
+	size_t count = 0;
+	char line[512];
+	while (fgets(line, sizeof(line), f) != nullptr) {
+		/* A line longer than the buffer arrives as several fgets: count only
+		   the piece that ends it, so one VMA is always one count. */
+		if (strchr(line, '\n') != nullptr)
+			count += 1;
+	}
+	fclose(f);
+	return count;
+}
+
+/* The VMAs overlapping [begin, begin+len) -- i.e. a group window's own share of
+   the count above. Process-wide counting states the claim that matters ("a seat
+   costs the process nothing"), but it also moves when the test binary's heap
+   grows or when two unrelated mappings coalesce; this states the geometry of one
+   window exactly, and is what distinguishes the three guard modes. */
+static size_t count_vmas_in(const char* begin, uint64_t len)
+{
+	const unsigned long lo = (unsigned long) begin;
+	const unsigned long hi = lo + len;
+	FILE* f = fopen("/proc/self/maps", "r");
+	REQUIRE(f != nullptr);
+	size_t count = 0;
+	char line[512];
+	while (fgets(line, sizeof(line), f) != nullptr) {
+		unsigned long b = 0, e = 0;
+		if (sscanf(line, "%lx-%lx ", &b, &e) != 2)
+			continue;
+		if (b < hi && e > lo)
+			count += 1;
+	}
+	fclose(f);
+	return count;
+}
+
+/* Write a byte through @addr in a child process; returns 0 if the child exited
+   cleanly, or the signal that killed it.
+
+   fork() from a test that holds live KVM fds is safe for this: the child
+   touches one address and leaves through _exit(), so it runs no atexit handler,
+   never flushes Catch2's reporter, and issues no ioctl on the inherited fds.
+   The buffers are flushed before forking so the child has nothing of ours to
+   duplicate, and the store goes through a volatile pointer so it cannot be
+   optimised away. */
+static int probe_write_in_child(volatile char* addr)
+{
+	fflush(nullptr);
+	const pid_t pid = fork();
+	REQUIRE(pid >= 0);
+	if (pid == 0) {
+		*addr = 0x5A;
+		_exit(0);
+	}
+	int status = 0;
+	REQUIRE(waitpid(pid, &status, 0) == pid);
+	if (WIFSIGNALED(status))
+		return WTERMSIG(status);
+	REQUIRE(WIFEXITED(status));
+	return -WEXITSTATUS(status);
+}
+
 static tinykvm::MachineOptions pooled_options()
 {
 	tinykvm::MachineOptions options;
@@ -125,6 +196,23 @@ static tinykvm::MachineOptions pooled_options()
 	options.max_cow_mem = MAX_COWMEM;
 	options.vm_group = true;
 	options.vm_group_size = GROUP_SIZE;
+	return options;
+}
+
+/* Pooled options with the host guard mode pinned. Every test that counts VMAs
+   or reads /proc/self/maps uses this rather than the default: Auto resolves from
+   the kernel version and the build's NDEBUG, so a test that let it decide would
+   assert a different layout on a 6.13 box or in a release build.
+
+   lazy_vcpu_mmap comes with it, because the seat's kvm_run page is the other
+   thing that costs a VMA per seat. Lazy means a member that never enters the
+   guest maps nothing, so "flat in the number of seats" can be asserted exactly
+   rather than modulo one mapping per member that happened to run. */
+static tinykvm::MachineOptions pooled_options(tinykvm::VmGroupHostGuard guard)
+{
+	auto options = pooled_options();
+	options.vm_group_host_guard = guard;
+	options.lazy_vcpu_mmap = true;
 	return options;
 }
 
@@ -597,6 +685,14 @@ TEST_CASE("The arena span bounds the group size", "[VmGroup]")
 	REQUIRE(uint64_t(group->capacity()) * stride <= tinykvm::VmGroup::ARENA_SPAN_LIMIT);
 	REQUIRE(group->arena_base() + uint64_t(group->capacity()) * stride
 		<= tinykvm::MemoryBanks::ARENA_BASE_ADDRESS + tinykvm::VmGroup::ARENA_SPAN_LIMIT);
+
+	/* I1: the host reservation is byte-for-byte the guest-physical span, so the
+	   same wall bounds both. This is the case where it matters - a 1032 MiB
+	   stride puts the reservation in the tens of gigabytes of address space, and
+	   ARENA_SPAN_LIMIT is what keeps it finite. */
+	REQUIRE(group->arena_span() == uint64_t(group->capacity()) * stride);
+	REQUIRE(group->arena_span() <= tinykvm::VmGroup::ARENA_SPAN_LIMIT);
+	REQUIRE(group->arena_hva() != nullptr);
 }
 
 TEST_CASE("A seat reused from another thread rebinds its timer", "[VmGroup]")
@@ -1222,3 +1318,635 @@ TEST_CASE("Pooled page tables stay inside their partition", "[VmGroup]")
 	}
 }
 #endif
+
+/* --- Phase 5: one host mapping per group ---------------------------------- */
+
+TEST_CASE("A group's arena is one host mapping", "[VmGroup]")
+{
+	/* The residual O(N) that phase 5 removes. Materializing a seat used to cost
+	   an mmap plus an mprotect - two VMAs and two mmap_lock write acquisitions -
+	   so a group of B seats cost 2B VMAs that every later KVM_CREATE_VM in the
+	   process had to walk and lock again. The reservation is now made once, for
+	   the whole group, and a seat is an offset into it.
+
+	   Pinned to Off, the mode with nothing per seat at all: Mprotect still pays
+	   its 2 VMAs by design (asserted separately below), and Auto would pick
+	   between them by kernel version and build mode. */
+	const auto binary = group_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"group"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto options = pooled_options(tinykvm::VmGroupHostGuard::Off);
+
+	/* Warm-up pass, discarded, and deliberately *unpooled*. Constructing a
+	   Machine allocates, and a heap growing for the first time can add a VMA of
+	   its own, which a process-wide count would charge to a seat. Unpooled forks
+	   put the allocator in its steady state without materializing a seat: a
+	   pooled warm-up would leave the group as the warm spare, and the measured
+	   pass would then recycle its seats instead of creating new ones - which is
+	   exactly the work under test. */
+	{
+		std::vector<std::unique_ptr<tinykvm::Machine>> warmup;
+		warmup.reserve(GROUP_SIZE);
+		for (size_t i = 0; i < GROUP_SIZE; i++)
+			warmup.push_back(std::make_unique<tinykvm::Machine> (machine, solo_options()));
+	}
+
+	std::vector<std::unique_ptr<tinykvm::Machine>> forks;
+	forks.reserve(GROUP_SIZE);
+	forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+	const size_t vmas_one_seat = count_vmas();
+	const auto* group = forks[0]->group();
+	REQUIRE(group->host_guard() == tinykvm::VmGroupHostGuard::Off);
+	REQUIRE(group->high_water() == 1);
+
+	/* I1: the reservation is the group's whole guest-physical span, no more and
+	   no less - it is what makes a seat's host address derivable from its index
+	   rather than something the seat has to be told. */
+	REQUIRE(group->arena_hva() != nullptr);
+	REQUIRE(group->arena_span() == uint64_t(group->capacity()) * group->arena_stride());
+	/* One VMA for the whole window, and it stays one as seats appear. */
+	REQUIRE(count_vmas_in(group->arena_hva(), group->arena_span()) == 1);
+
+	for (size_t i = 1; i < GROUP_SIZE; i++) {
+		forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+		REQUIRE(forks.back()->group() == group);
+		REQUIRE(group->high_water() == i + 1);
+		/* Flat, not merely sublinear: a new seat costs zero VMAs, in the window
+		   and in the process. */
+		REQUIRE(count_vmas_in(group->arena_hva(), group->arena_span()) == 1);
+		REQUIRE(count_vmas() == vmas_one_seat);
+	}
+	REQUIRE(group->live_members() == GROUP_SIZE);
+	REQUIRE(group->high_water() == GROUP_SIZE);
+
+	/* And every seat is exactly where its index says it is. The index is the
+	   seat's kvm_vcpu_id, not the member's position in this vector: seats come
+	   off a LIFO free list, so a member is not guaranteed the seat whose number
+	   matches its own construction order. */
+	for (size_t i = 0; i < GROUP_SIZE; i++) {
+		const auto* seat = forks[i]->seat();
+		const uint64_t index = uint64_t(seat->kvm_vcpu_id);
+		REQUIRE(index < group->capacity());
+		REQUIRE(uintptr_t(seat->arena_hva)
+			== uintptr_t(group->arena_hva()) + index * group->arena_stride());
+		/* Wholly inside the reservation, guard band included. */
+		REQUIRE(uintptr_t(seat->arena_hva) + group->arena_stride()
+			<= uintptr_t(group->arena_hva()) + group->arena_span());
+	}
+}
+
+TEST_CASE("A group's seats are affine to its arena mapping", "[VmGroup]")
+{
+	/* I2. Every seat of a group has the same guest-physical-to-host delta,
+	   because both sides are index * stride from their respective bases. This is
+	   what MemoryBanks::allocate_new_bank() relies on when it derives a bank's
+	   host address as m_partition_hva + (addr - m_arena_begin): the derivation is
+	   affine, so if the constant were per-seat rather than per-group a bank of
+	   one member could resolve into the memory of another. */
+	const auto binary = group_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"group"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	/* Every mode, because the delta is a property of the reservation and not of
+	   how the window is protected. Madvise is included only where the kernel has
+	   it; the two others always run. */
+	std::vector<tinykvm::VmGroupHostGuard> modes {
+		tinykvm::VmGroupHostGuard::Off,
+		tinykvm::VmGroupHostGuard::Mprotect,
+	};
+	if (tinykvm::VmGroup::madv_guard_supported())
+		modes.push_back(tinykvm::VmGroupHostGuard::Madvise);
+
+	for (const auto mode : modes) {
+		std::vector<std::unique_ptr<tinykvm::Machine>> forks;
+		for (size_t i = 0; i < GROUP_SIZE; i++)
+			forks.push_back(std::make_unique<tinykvm::Machine> (machine, pooled_options(mode)));
+
+		const auto* group = forks[0]->group();
+		REQUIRE(group->host_guard() == mode);
+		const uint64_t delta = group->arena_base() - uintptr_t(group->arena_hva());
+		for (size_t i = 0; i < GROUP_SIZE; i++) {
+			const auto* seat = forks[i]->seat();
+			REQUIRE(forks[i]->group() == group);
+			REQUIRE(seat->arena_gpa - uintptr_t(seat->arena_hva) == delta);
+			/* Stated the other way too: the delta reproduces the partition the
+			   member's banks were initialised with. */
+			REQUIRE(seat->arena_gpa == forks[i]->main_memory().banks.arena_begin());
+		}
+	}
+}
+
+TEST_CASE("Siblings sharing one arena mapping stay isolated", "[VmGroup]")
+{
+	/* F3's residual weight, now that the partitions are slices of one mapping
+	   instead of separate ones. Pinned to Off deliberately: that is the mode with
+	   no host-side guard between slices at all, so if anything about the affine
+	   derivation, the memslot geometry or the MADV_DONTNEED recycling were wrong,
+	   this is the configuration in which it shows up as one member reading or
+	   writing another's memory rather than as a SIGSEGV. */
+	const auto binary = group_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"group"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto set_value = machine.address_of("set_value");
+	const auto read_value = machine.address_of("read_value");
+	REQUIRE(set_value != 0x0);
+	REQUIRE(read_value != 0x0);
+
+	const auto options = pooled_options(tinykvm::VmGroupHostGuard::Off);
+
+	/* A pattern per member, written through guest code so it lands in the
+	   member's CoW'ed pages, i.e. in its slice of the shared mapping. */
+	static constexpr int PATTERN_BASE = 0x51A0;
+	std::vector<std::unique_ptr<tinykvm::Machine>> forks;
+	for (size_t i = 0; i < GROUP_SIZE; i++) {
+		forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+		forks.back()->timed_vmcall(set_value, 4.0f, int(PATTERN_BASE + i));
+		REQUIRE(forks.back()->return_value() == long(PATTERN_BASE + i));
+	}
+	const auto* group = forks[0]->group();
+	REQUIRE(group->host_guard() == tinykvm::VmGroupHostGuard::Off);
+	REQUIRE(group->live_members() == GROUP_SIZE);
+
+	/* Every member still reads its own pattern: the guest-side statement of
+	   isolation. */
+	for (size_t i = 0; i < GROUP_SIZE; i++) {
+		forks[i]->timed_vmcall(read_value, 4.0f);
+		REQUIRE(forks[i]->return_value() == long(PATTERN_BASE + i));
+	}
+
+	/* And the host-side statement, which is the one the shared mapping puts at
+	   risk: read each slice directly out of the group's reservation and require
+	   that a member's pattern appears only in its own. Searched as a raw byte
+	   pattern because where inside the partition the guest put `value` is the
+	   loader's business, not this test's. */
+	const auto find_pattern = [&] (const char* begin, uint64_t len, int pattern) -> bool {
+		for (uint64_t off = 0; off + sizeof(int) <= len; off += sizeof(int)) {
+			int word = 0;
+			memcpy(&word, begin + off, sizeof(word));
+			if (word == pattern)
+				return true;
+		}
+		return false;
+	};
+	for (size_t i = 0; i < GROUP_SIZE; i++) {
+		const auto* own = forks[i]->seat();
+		const uint64_t used = forks[i]->main_memory().banks.partition_used();
+		REQUIRE(used > 0);
+		/* The member's own pattern is in its own slice - without this the
+		   cross-checks below could pass vacuously. */
+		REQUIRE(find_pattern(own->arena_hva, used, PATTERN_BASE + int(i)));
+		for (size_t j = 0; j < GROUP_SIZE; j++) {
+			if (j == i)
+				continue;
+			const auto* other = forks[j]->seat();
+			REQUIRE(other->arena_hva != own->arena_hva);
+			/* No overlap in the first place, which is the structural half. */
+			REQUIRE((other->arena_hva + other->arena_size <= own->arena_hva
+				|| own->arena_hva + own->arena_size <= other->arena_hva));
+			/* And nothing of member i in member j's slice, which is the
+			   observed half. */
+			REQUIRE(!find_pattern(other->arena_hva,
+				forks[j]->main_memory().banks.partition_used(),
+				PATTERN_BASE + int(i)));
+		}
+	}
+
+	/* Recycling: release one member and give its seat to a new tenant. The
+	   scrub is a MADV_DONTNEED over a *slice* of a mapping shared with live
+	   siblings now, which is the new regression surface - it must zero the slice
+	   and touch nothing else. */
+	char* const recycled = forks[1]->seat()->arena_hva;
+	const uint64_t recycled_used = forks[1]->main_memory().banks.partition_used();
+	const int    recycled_id = forks[1]->seat()->kvm_vcpu_id;
+	REQUIRE(recycled_used > 0);
+	forks[1].reset();
+
+	for (uint64_t off = 0; off < recycled_used; off += 512)
+		REQUIRE(recycled[off] == 0);
+	/* The siblings are untouched by the scrub, patterns and all. */
+	for (size_t j = 0; j < GROUP_SIZE; j++) {
+		if (j == 1 || forks[j] == nullptr)
+			continue;
+		forks[j]->timed_vmcall(read_value, 4.0f);
+		REQUIRE(forks[j]->return_value() == long(PATTERN_BASE + int(j)));
+		REQUIRE(find_pattern(forks[j]->seat()->arena_hva,
+			forks[j]->main_memory().banks.partition_used(),
+			PATTERN_BASE + int(j)));
+	}
+
+	/* The new tenant lands on the recycled seat and reads the master's state,
+	   not its predecessor's. */
+	tinykvm::Machine tenant { machine, options };
+	REQUIRE(tenant.seat()->kvm_vcpu_id == recycled_id);
+	REQUIRE(tenant.seat()->arena_hva == recycled);
+	tenant.timed_vmcall(read_value, 4.0f);
+	REQUIRE(tenant.return_value() == 0);
+	tenant.timed_vmcall(set_value, 4.0f, 0x6E77);
+	REQUIRE(tenant.return_value() == 0x6E77);
+	/* ...and still nobody else's. */
+	for (size_t j = 0; j < GROUP_SIZE; j++) {
+		if (j == 1 || forks[j] == nullptr)
+			continue;
+		REQUIRE(!find_pattern(forks[j]->seat()->arena_hva,
+			forks[j]->main_memory().banks.partition_used(), 0x6E77));
+	}
+}
+
+TEST_CASE("The mprotect guard mode carves a PROT_NONE band per seat", "[VmGroup]")
+{
+	/* The same claim as "A seat's guard band is unmapped on the host side too",
+	   with the mode pinned rather than inherited from Auto, plus the price. The
+	   band is now the part of the group's reservation a seat has *not* opened,
+	   instead of the tail of a per-seat mapping - the observable layout is
+	   identical, which is the point. */
+	const auto binary = group_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"group"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto options = pooled_options(tinykvm::VmGroupHostGuard::Mprotect);
+
+	std::vector<std::unique_ptr<tinykvm::Machine>> forks;
+	forks.reserve(GROUP_SIZE);
+	forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+	const auto* group = forks[0]->group();
+	REQUIRE(group->host_guard() == tinykvm::VmGroupHostGuard::Mprotect);
+	REQUIRE(group->high_water() == 1);
+
+	const auto* seat = forks[0]->seat();
+	const uint64_t guard = group->arena_stride() - seat->arena_size;
+	REQUIRE(guard == tinykvm::VmGroup::GUARD_BAND);
+	REQUIRE(maps_perms_at(seat->arena_hva) == "rw-p");
+	REQUIRE(maps_perms_at(seat->arena_hva + seat->arena_size - 1) == "rw-p");
+	REQUIRE(maps_perms_at(seat->arena_hva + seat->arena_size) == "---p");
+	REQUIRE(maps_perms_at(seat->arena_hva + seat->arena_size + guard - 1) == "---p");
+
+	/* Reserved, not merely absent: a PROT_NONE band still occupies the address
+	   space, so nothing else can be mapped into it. */
+	REQUIRE(!maps_perms_at(seat->arena_hva + seat->arena_size).empty());
+
+	/* The documented price of the mode. Opening a seat's usable part splits the
+	   reservation, because PROT_NONE is a VMA attribute and not a PTE one: one RW
+	   VMA for the partition and one for the band behind it, per seat. This is the
+	   number Madvise and Off exist to avoid, and the reason Auto only picks this
+	   mode when a debug build says the backstop is worth it.
+
+	   Counted inside the window, so the claim is about the window and not about
+	   whatever else the process is doing; and only over *newly materialized*
+	   seats, since a recycled seat was mprotected by its first tenant and costs
+	   its second nothing. */
+	REQUIRE(count_vmas_in(group->arena_hva(), group->arena_span()) == 2);
+	for (size_t i = 1; i < GROUP_SIZE; i++) {
+		forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+		REQUIRE(forks.back()->group() == group);
+		REQUIRE(group->high_water() == i + 1);
+		REQUIRE(count_vmas_in(group->arena_hva(), group->arena_span())
+			== 2 * (i + 1));
+		const auto* s = forks.back()->seat();
+		REQUIRE(maps_perms_at(s->arena_hva) == "rw-p");
+		REQUIRE(maps_perms_at(s->arena_hva + s->arena_size) == "---p");
+	}
+}
+
+TEST_CASE("The madvise guard mode guards without splitting the mapping", "[VmGroup]")
+{
+	/* MADV_GUARD_INSTALL (Linux 6.13) puts guard markers in the PTEs of a range:
+	   a touch faults exactly as PROT_NONE would, but the VMA is untouched, so the
+	   band costs no VMA and no mmap_lock write. That is the whole reason the mode
+	   exists - it is Mprotect's backstop at Off's price. */
+	if (!tinykvm::VmGroup::madv_guard_supported())
+		SKIP("kernel has no MADV_GUARD_INSTALL (needs Linux 6.13 or later)");
+
+	const auto binary = group_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"group"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto options = pooled_options(tinykvm::VmGroupHostGuard::Madvise);
+	/* Unpooled warm-up, so the process-wide count below is not charged for the
+	   heap's first growth. See the note in "A group's arena is one host mapping". */
+	{
+		std::vector<std::unique_ptr<tinykvm::Machine>> warmup;
+		warmup.reserve(GROUP_SIZE);
+		for (size_t i = 0; i < GROUP_SIZE; i++)
+			warmup.push_back(std::make_unique<tinykvm::Machine> (machine, solo_options()));
+	}
+
+	std::vector<std::unique_ptr<tinykvm::Machine>> forks;
+	forks.reserve(GROUP_SIZE);
+	forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+	const size_t vmas_one_seat = count_vmas();
+	const auto* group = forks[0]->group();
+	const auto* seat = forks[0]->seat();
+	REQUIRE(group->host_guard() == tinykvm::VmGroupHostGuard::Madvise);
+	REQUIRE(group->high_water() == 1);
+
+	/* No split: the band reads with the same permissions as the partition, and
+	   neither the window's VMA count nor the process's moves as seats appear. */
+	REQUIRE(maps_perms_at(seat->arena_hva) == "rw-p");
+	REQUIRE(maps_perms_at(seat->arena_hva + seat->arena_size) == "rw-p");
+	REQUIRE(count_vmas_in(group->arena_hva(), group->arena_span()) == 1);
+	for (size_t i = 1; i < GROUP_SIZE; i++) {
+		forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+		REQUIRE(forks.back()->group() == group);
+		REQUIRE(group->high_water() == i + 1);
+		REQUIRE(count_vmas_in(group->arena_hva(), group->arena_span()) == 1);
+		REQUIRE(count_vmas() == vmas_one_seat);
+	}
+
+	/* ...and yet it faults. Probed in a child, because the whole point is that
+	   the access is fatal. */
+	REQUIRE(probe_write_in_child(seat->arena_hva) == 0);
+	REQUIRE(probe_write_in_child(seat->arena_hva + seat->arena_size - 1) == 0);
+	REQUIRE(probe_write_in_child(seat->arena_hva + seat->arena_size) == SIGSEGV);
+	REQUIRE(probe_write_in_child(
+		seat->arena_hva + seat->arena_size
+		+ tinykvm::VmGroup::HOST_GUARD_BYTES - 1) == SIGSEGV);
+
+	/* The coverage is bounded, and honestly so: only the first HOST_GUARD_BYTES
+	   of the band are guarded. The threat model is a linear overrun, which the
+	   first guarded page catches; marking the whole 8 MiB band would cost a page
+	   table page per 2 MiB per seat for no added coverage. An access that jumps
+	   clean over the guarded prefix therefore does not fault - state it rather
+	   than imply the band is covered end to end. */
+	REQUIRE(tinykvm::VmGroup::HOST_GUARD_BYTES
+		< group->arena_stride() - seat->arena_size);
+	REQUIRE(probe_write_in_child(
+		seat->arena_hva + seat->arena_size
+		+ tinykvm::VmGroup::HOST_GUARD_BYTES) == 0);
+}
+
+TEST_CASE("A recycled seat keeps its madvise guard markers", "[VmGroup]")
+{
+	/* Guard markers are installed once, when the seat is materialized, and the
+	   seat outlives every tenant. Recycling runs MADV_DONTNEED over the dirty
+	   part of the partition, and the markers have to survive it - both because
+	   the range is clamped to arena_size and never reaches them, and because
+	   MADV_DONTNEED does not remove guard markers in the first place. If either
+	   changed, a reused seat would silently be the unguarded one. */
+	if (!tinykvm::VmGroup::madv_guard_supported())
+		SKIP("kernel has no MADV_GUARD_INSTALL (needs Linux 6.13 or later)");
+
+	const auto binary = group_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"group"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto set_value = machine.address_of("set_value");
+	const auto read_value = machine.address_of("read_value");
+	REQUIRE(set_value != 0x0);
+	REQUIRE(read_value != 0x0);
+
+	const auto options = pooled_options(tinykvm::VmGroupHostGuard::Madvise);
+
+	char* arena_hva = nullptr;
+	uint64_t arena_size = 0;
+	int seat_id = -1;
+	{
+		/* Dirty the partition, so the release actually has something to scrub. */
+		tinykvm::Machine first { machine, options };
+		REQUIRE(first.group()->host_guard() == tinykvm::VmGroupHostGuard::Madvise);
+		first.timed_vmcall(set_value, 4.0f, 4242);
+		REQUIRE(first.return_value() == 4242);
+		REQUIRE(first.main_memory().banks.partition_used() > 0);
+		arena_hva  = first.seat()->arena_hva;
+		arena_size = first.seat()->arena_size;
+		seat_id    = first.seat()->kvm_vcpu_id;
+		REQUIRE(probe_write_in_child(arena_hva + arena_size) == SIGSEGV);
+	}
+
+	/* Same seat, new tenant. */
+	tinykvm::Machine second { machine, options };
+	REQUIRE(second.seat()->kvm_vcpu_id == seat_id);
+	REQUIRE(second.seat()->arena_hva == arena_hva);
+	second.timed_vmcall(read_value, 4.0f);
+	REQUIRE(second.return_value() == 0);
+
+	/* Still guarded, and the partition still usable right up to the boundary. */
+	REQUIRE(probe_write_in_child(arena_hva + arena_size - 1) == 0);
+	REQUIRE(probe_write_in_child(arena_hva + arena_size) == SIGSEGV);
+}
+
+TEST_CASE("The off guard mode leaves the whole stride accessible", "[VmGroup]")
+{
+	/* Off is the flat-VMA goal state: the reservation is mapped RW once and
+	   nothing is done per seat, so there is no host-side backstop between
+	   adjacent slices. That is a deliberate trade, and this test states both
+	   halves of it - what is given up, and what is not. */
+	const auto binary = group_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"group"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto options = pooled_options(tinykvm::VmGroupHostGuard::Off);
+	/* Unpooled warm-up, so the process-wide count below is not charged for the
+	   heap's first growth. See the note in "A group's arena is one host mapping". */
+	{
+		std::vector<std::unique_ptr<tinykvm::Machine>> warmup;
+		warmup.reserve(GROUP_SIZE);
+		for (size_t i = 0; i < GROUP_SIZE; i++)
+			warmup.push_back(std::make_unique<tinykvm::Machine> (machine, solo_options()));
+	}
+
+	std::vector<std::unique_ptr<tinykvm::Machine>> forks;
+	forks.reserve(GROUP_SIZE);
+	forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+	const size_t vmas_one_seat = count_vmas();
+	const auto* group = forks[0]->group();
+	const auto* seat = forks[0]->seat();
+	REQUIRE(group->host_guard() == tinykvm::VmGroupHostGuard::Off);
+	REQUIRE(group->high_water() == 1);
+
+	/* Given up: the whole stride reads as one accessible region, band included,
+	   and a write into the band does not fault. */
+	REQUIRE(maps_perms_at(seat->arena_hva) == "rw-p");
+	REQUIRE(maps_perms_at(seat->arena_hva + seat->arena_size) == "rw-p");
+	REQUIRE(maps_perms_at(seat->arena_hva + group->arena_stride() - 1) == "rw-p");
+	REQUIRE(probe_write_in_child(seat->arena_hva + seat->arena_size) == 0);
+
+	/* Bought: nothing per seat, in the window or in the process. */
+	REQUIRE(count_vmas_in(group->arena_hva(), group->arena_span()) == 1);
+	for (size_t i = 1; i < GROUP_SIZE; i++) {
+		forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+		REQUIRE(forks.back()->group() == group);
+		REQUIRE(group->high_water() == i + 1);
+		REQUIRE(count_vmas_in(group->arena_hva(), group->arena_span()) == 1);
+		REQUIRE(count_vmas() == vmas_one_seat);
+	}
+
+	/* Not given up: the guest-physical guard, which costs nothing and is not a
+	   function of the mode. A seat's memslot stops at arena_size, so the band is
+	   simply not backed in the group's VM - and the wall that keeps a member's
+	   banks inside its partition is in the allocator, where a bank's host
+	   address is derived.
+
+	   Reaching that wall takes deliberate effort, and that is by design: the
+	   partition is arena_size = max_cow_mem rounded up to a whole bank, so the
+	   working-memory ceiling always runs out first and the wall is a backstop
+	   rather than the operative limit. Raising the ceiling past the partition
+	   with set_max_pages() is what exposes it - allocate_new_bank() refuses
+	   before it derives a host address, which is precisely what stops an
+	   overrun from resolving into the next slice. */
+	auto& banks = forks[0]->main_memory().banks;
+	REQUIRE(banks.is_partitioned());
+	REQUIRE(banks.partition_used() <= seat->arena_size);
+	const size_t page_size = tinykvm::vMemory::PageSize();
+	banks.set_max_pages((seat->arena_size + 4 * tinykvm::VmGroup::BANK_ALIGNMENT)
+		/ page_size, 0);
+	bool refused = false;
+	for (size_t i = 0; i < 16 && !refused; i++) {
+		try {
+			banks.get_available_bank(tinykvm::MemoryBank::N_PAGES);
+		} catch (const tinykvm::MemoryException& e) {
+			using Catch::Matchers::Equals;
+			REQUIRE_THAT(e.what(),
+				Equals("Memory bank exceeds the VM group arena partition"));
+			refused = true;
+		}
+	}
+	REQUIRE(refused);
+	/* Nothing was handed out past the partition on the way there. */
+	REQUIRE(banks.partition_used() <= seat->arena_size);
+
+	/* That member's banks are now in a state its destructor should not be asked
+	   to reason about, so retire it explicitly before the group is judged. */
+	forks[0].reset();
+}
+
+TEST_CASE("Retiring a group returns its arena mapping to the host", "[VmGroup]")
+{
+	/* Proof of I5 and of the destructor's ordering: one munmap releases the
+	   whole group window, and it releases all of it. A leak here would be
+	   invisible to every other test - the address space is enormous and nothing
+	   would fail - but would accumulate one reservation per retired group for
+	   the life of the process. */
+	const auto binary = group_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"group"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto options = pooled_options(tinykvm::VmGroupHostGuard::Off);
+	const size_t vms_baseline = count_kvm_vms();
+
+	/* One group, filled and drained. It is kept as the warm spare, so this is
+	   the "one group resident" reference point - and the allocator is warm by
+	   the end of it. */
+	{
+		std::vector<std::unique_ptr<tinykvm::Machine>> forks;
+		forks.reserve(GROUP_SIZE);
+		for (size_t i = 0; i < GROUP_SIZE; i++)
+			forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+	}
+	REQUIRE(machine.groups().group_count() == 1);
+	REQUIRE(count_kvm_vms() == vms_baseline + 1);
+	const size_t vmas_one_group = count_vmas();
+
+	/* Now B+1 members: a second group opens. Both were reserved with the same
+	   stride and capacity, so the two windows are the same size. */
+	char* retiring_hva = nullptr;
+	uint64_t retiring_span = 0;
+	{
+		std::vector<std::unique_ptr<tinykvm::Machine>> forks;
+		forks.reserve(GROUP_SIZE + 1);
+		for (size_t i = 0; i < GROUP_SIZE + 1; i++)
+			forks.push_back(std::make_unique<tinykvm::Machine> (machine, options));
+		REQUIRE(machine.groups().group_count() == 2);
+		REQUIRE(count_kvm_vms() == vms_baseline + 2);
+		const auto* first_group = forks[0]->group();
+		REQUIRE(forks[GROUP_SIZE]->group() != first_group);
+		retiring_hva  = first_group->arena_hva();
+		retiring_span = first_group->arena_span();
+		REQUIRE(retiring_hva != nullptr);
+		REQUIRE(maps_perms_at(retiring_hva) == "rw-p");
+		REQUIRE(maps_perms_at(retiring_hva + retiring_span - 1) == "rw-p");
+	}
+	/* The members are destroyed in order, so group 1 empties first and keeps the
+	   spare; group 2 then empties, and with two empty eligible groups and one
+	   spare, group 1 is retired. */
+	REQUIRE(machine.groups().group_count() == 1);
+	REQUIRE(count_kvm_vms() == vms_baseline + 1);
+
+	/* Gone, from the first byte to the last: one munmap of the whole span, not
+	   of a stride or of whatever the last seat happened to own. */
+	REQUIRE(maps_perms_at(retiring_hva) == "");
+	REQUIRE(maps_perms_at(retiring_hva + retiring_span - 1) == "");
+	REQUIRE(maps_perms_at(retiring_hva + retiring_span / 2) == "");
+
+	/* And the process is back to one group's worth of VMAs. */
+	REQUIRE(count_vmas() == vmas_one_group);
+}
+
+TEST_CASE("The host guard mode is part of group eligibility", "[VmGroup]")
+{
+	/* The mode decides how the group's window is *mapped*, so it cannot be
+	   retrofitted onto a group that already exists - which puts it in the same
+	   class as the frozen working-memory ceiling: a member that explicitly asked
+	   for a mode must get a group that resolved to it, and a mismatch has to mean
+	   "open a new group" rather than "this fork cannot be built". */
+	const auto binary = group_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"group"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto get_value = machine.address_of("get_value");
+	REQUIRE(get_value != 0x0);
+
+	/* Group A, explicitly Off. */
+	tinykvm::Machine off_member { machine, pooled_options(tinykvm::VmGroupHostGuard::Off) };
+	off_member.timed_vmcall(get_value, 4.0f);
+	REQUIRE(off_member.return_value() == 1);
+	const auto* group_a = off_member.group();
+	REQUIRE(group_a->host_guard() == tinykvm::VmGroupHostGuard::Off);
+	REQUIRE(machine.groups().group_count() == 1);
+	REQUIRE(group_a->live_members() == 1);
+	REQUIRE(group_a->capacity() > 1); /* A has room, so only mode can refuse it */
+
+	/* A member wanting Mprotect cannot have A's window, which is mapped RW
+	   throughout rather than reserved PROT_NONE - so a second group opens, even
+	   though A is nowhere near full. */
+	tinykvm::Machine mp_member { machine, pooled_options(tinykvm::VmGroupHostGuard::Mprotect) };
+	mp_member.timed_vmcall(get_value, 4.0f);
+	REQUIRE(mp_member.return_value() == 1);
+	const auto* group_b = mp_member.group();
+	REQUIRE(group_b != group_a);
+	REQUIRE(group_b->host_guard() == tinykvm::VmGroupHostGuard::Mprotect);
+	REQUIRE(machine.groups().group_count() == 2);
+	/* A is untouched and still holds its member. */
+	REQUIRE(group_a->live_members() == 1);
+
+	/* A second explicit member of each mode reuses its own group rather than
+	   opening a third: the test is "resolved mode equals requested mode", not
+	   "every explicit request is its own group". */
+	tinykvm::Machine off_two { machine, pooled_options(tinykvm::VmGroupHostGuard::Off) };
+	REQUIRE(off_two.group() == group_a);
+	tinykvm::Machine mp_two { machine, pooled_options(tinykvm::VmGroupHostGuard::Mprotect) };
+	REQUIRE(mp_two.group() == group_b);
+	REQUIRE(machine.groups().group_count() == 2);
+
+	/* And Auto joins whatever is there. It means "whatever this host can give",
+	   which a group that already exists has already decided, so it must not open
+	   a third group - the case that matters, because Auto is the default and a
+	   bifurcating default would double the number of struct kvms. */
+	auto auto_options = pooled_options();
+	auto_options.lazy_vcpu_mmap = true;
+	REQUIRE(auto_options.vm_group_host_guard == tinykvm::VmGroupHostGuard::Auto);
+	tinykvm::Machine auto_member { machine, auto_options };
+	REQUIRE(machine.groups().group_count() == 2);
+	REQUIRE((auto_member.group() == group_a || auto_member.group() == group_b));
+	auto_member.timed_vmcall(get_value, 4.0f);
+	REQUIRE(auto_member.return_value() == 1);
+}
