@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.10)
 project(tinykvm_unittests CXX)
 
 # Appended, not assigned: the compile-time A/B defaults
-# (-DTINYKVM_LAZY_VCPU_MMAP_DEFAULT=true, -DTINYKVM_VM_GROUP_DEFAULT=true) are
+# (-DTINYKVM_LAZY_VCPU_MMAP_DEFAULT=true, -DTINYKVM_VM_GROUP_DEFAULT=true,
+# -DTINYKVM_VM_GROUP_ARENA_SLOT_DEFAULT=PerSeat) are
 # passed in as -DCMAKE_CXX_FLAGS, and assigning here silently discarded them --
 # so the "whole suite also passes with the flag on" runs were not testing
 # anything. They must reach the tests as well as the library: the defaults live
