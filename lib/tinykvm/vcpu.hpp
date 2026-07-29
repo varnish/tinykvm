@@ -116,6 +116,18 @@ namespace tinykvm
 		/* The seat-independent tail of init(): extended control registers
 		   and the SYSCALL/SYSRET MSRs, re-issued for every tenant. */
 		void init_extended_state(Machine&);
+#else
+		/* ARM has no lazy/shadow register path (registers are read via
+		   KVM_*_ONE_REG on the vCPU fd, not out of kvm_run->s.regs), so a
+		   deferred mapping only needs to appear before the first KVM_RUN.
+		   Called at the top of run_once(); a no-op once mapped. */
+		void ensure_kvm_run();
+		/* Run the EL1 TLB-flush stub if setup_cow_mode() deferred one. Called at
+		   the top of run_once() so a fork/reset's TTBR0 swap is always flushed
+		   before the guest executes with the new page tables, without paying the
+		   flush (a guest run) at construction. Clears the flag before running the
+		   stub, so the stub's own run_once() does not re-enter. */
+		void flush_pending_guest_tlb();
 #endif
 
 		struct kvm_run* kvm_run = nullptr;
