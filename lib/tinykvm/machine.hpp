@@ -296,6 +296,18 @@ struct Machine
 	   a machine that is not pooled. */
 	void assert_pte_partition_invariant() const;
 #else
+	/* No-op on ARM64 even in Debug: the invariant above is AMD64-specific. ARM
+	   guest RAM is identity-mapped in coarse 1 GiB EL0-RWX block descriptors
+	   (arm64 install_identity_map: l1[1..4] over [1 GiB, 4 GiB)), and the arena
+	   lives at 0x80000000 *inside* l1[2]'s block, so every pooled member's page
+	   tables necessarily map the whole arena -- all sibling partitions -- through
+	   one inherited block. On AMD64 the arena is at 448 GiB, far outside the low
+	   identity map, so the per-partition walk is meaningful there and vacuous
+	   here. ARM isolation is instead upheld by the guest allocator confining a
+	   member's writes to its partition and copy-back touching only CoW-recorded
+	   (written) pages; vm_group_recycle / vm_group_concurrency exercise both.
+	   A partition-aware ARM arena mapping (to make cross-member reads fault, as
+	   on AMD64) is tracked as follow-up, not part of this port. */
 	void assert_pte_partition_invariant() const {}
 #endif
 
