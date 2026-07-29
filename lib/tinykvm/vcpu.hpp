@@ -14,17 +14,17 @@ namespace tinykvm
 		void init(int kvm_vcpu_id, int guest_cpu_index, Machine&, const MachineOptions&);
 		void smp_init(int id, Machine &);
 		void deinit();
-#if !defined(TINYKVM_ARCH_ARM64)
 		/* Pooled member: take over a VM group seat, creating its vCPU on
 		   first use and adopting it (fd, kvm_run mapping, timer) afterwards.
-		   guest_cpu_index stays 0: the seat only owns the KVM_CREATE_VCPU id. */
+		   guest_cpu_index stays 0: the seat only owns the KVM_CREATE_VCPU id.
+		   Both arches implement this; the per-seat one-time bring-up differs
+		   (KVM_SET_CPUID2 on AMD64, KVM_ARM_VCPU_INIT on ARM64). */
 		void init_from_seat(VmGroupSeat&, Machine&, const MachineOptions&);
 		/* The anti-deinit. Hands fd, kvm_run and timer back to the seat
 		   without closing or unmapping anything: a struct kvm's vCPU capacity
 		   is consumed permanently by every vCPU ever created in it, so
 		   closing the fd would burn the seat instead of freeing it. */
 		void detach_to_seat(VmGroupSeat&) noexcept;
-#endif
 #if !defined(TINYKVM_ARCH_ARM64)
 		/* Releases the shadow registers of a vCPU that never became mapped.
 		   deinit() is only reached from ~Machine, which is never run for a
