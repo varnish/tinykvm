@@ -1,9 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <tinykvm/machine.hpp>
+#include <tinykvm/memory.hpp>
+#include <tinykvm/paging.hpp>
 extern std::vector<uint8_t> build_and_load(const std::string &code);
 /* mmap tests touch mapped pages from guest code; keep enough physical headroom. */
 static const uint64_t MAX_MEMORY = 64ul << 20; /* 64MB */
+static const uint64_t MAX_COWMEM = 16ul << 20; /* 16MB */
 static const std::vector<std::string> env{
 	"LC_TYPE=C", "LC_ALL=C", "USER=root"};
 
@@ -238,4 +244,76 @@ int do_munmap(void* addr, size_t size) {
 			}
 		}
 	}
+}
+
+TEST_CASE("Fork reset restores file-backed mmap pages from the master", "[MMAP]")
+{
+	/* A file-backed mmap region lives at vMemory::MMAP_PHYS_BASE, which is the
+	   one part of the guest address space that is *not* identity-mapped. A fork
+	   that writes such a page records it in cow_written_pages, and the
+	   reset_keep_all_work_memory copy-back has to resolve the master's source
+	   page through the page tables. Reading it as main_memory().safely_at(vaddr)
+	   lands on an unrelated (typically zero) identity-mapped page, so the fork
+	   silently comes back from reset with the wrong contents. */
+	const auto binary = build_and_load(R"M(
+int main() { return 666; }
+long peek(char* p) { return (unsigned char)p[0]; }
+long poke(char* p, int v) { p[0] = (unsigned char)v; return (unsigned char)p[0]; }
+)M");
+
+	char path[] = "/tmp/tinykvm-mmap-forkreset-XXXXXX";
+	const int fd = mkstemp(path);
+	REQUIRE(fd >= 0);
+	/* mmap_backed_area only installs MMAP_PHYS_BASE-backed memory for the 2MB-
+	   aligned-and-down part of the range, so the file has to be at least 2MB. */
+	const std::vector<char> pattern(4ul << 20, 0x5A);
+	REQUIRE(write(fd, pattern.data(), pattern.size()) == (ssize_t)pattern.size());
+
+	tinykvm::Machine machine{binary, {.max_mem = MAX_MEMORY, .split_hugepages = true}};
+	machine.setup_linux({"program"}, env);
+	machine.run(2.0f);
+	REQUIRE(machine.return_value() == 666);
+
+	uint64_t area = machine.mmap_allocate(8ul << 20);
+	area = (area + 0x1FFFFF) & ~0x1FFFFFULL;
+	REQUIRE(machine.mmap_backed_area(fd, 0, PROT_READ | PROT_WRITE, area, 4ul << 20));
+
+	/* Guard the premise: if this ever resolves to an identity-mapped page the
+	   test still passes for the wrong reason, which is exactly the trap here. */
+	auto& mem = machine.main_memory();
+	uint64_t entry = 0;
+	tinykvm::page_at(mem, area,
+		[&](uint64_t, uint64_t& e, size_t) { entry = e; }, true);
+	REQUIRE((entry & tinykvm::paging_address_mask()) >= tinykvm::vMemory::MMAP_PHYS_BASE);
+
+	machine.prepare_copy_on_write(65536);
+	const auto peek = machine.address_of("peek");
+	const auto poke = machine.address_of("poke");
+	REQUIRE(peek != 0x0);
+	REQUIRE(poke != 0x0);
+
+	auto fork = tinykvm::Machine{machine,
+		{.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM, .split_hugepages = true}};
+
+	fork.timed_vmcall(peek, 4.0f, area);
+	REQUIRE(fork.return_value() == 0x5A);
+
+	for (int i = 0; i < 3; i++)
+	{
+		fork.timed_vmcall(poke, 4.0f, area, 0x7E);
+		REQUIRE(fork.return_value() == 0x7E);
+
+		fork.reset_to(machine, {
+			.max_mem = MAX_MEMORY,
+			.max_cow_mem = MAX_COWMEM,
+			.reset_keep_all_work_memory = true,
+		});
+
+		/* The master still holds the file contents, so the fork must too. */
+		fork.timed_vmcall(peek, 4.0f, area);
+		REQUIRE(fork.return_value() == 0x5A);
+	}
+
+	close(fd);
+	unlink(path);
 }
