@@ -86,6 +86,15 @@ bool vCPU::timed_out() const
 
 void vCPU::run(uint32_t ticks)
 {
+	/* Run a deferred TTBR0-swap TLB flush (setup_cow_mode) before this run's
+	   own state is set up. It is itself a nested run() -- doing it here, ahead
+	   of the timer/stopped bookkeeping below, keeps that nested run from
+	   clobbering the outer turn's state; the cleared flag stops it recursing.
+	   Every guest execution funnels through run() (vmcall/timed_vmcall/vmresume
+	   all call Machine::run), so the flush always precedes use of the new page
+	   tables. */
+	this->flush_pending_guest_tlb();
+
 	timer_was_triggered = false;
 	this->timer_ticks = ticks;
 	if (timer_ticks != 0) {
@@ -128,6 +137,11 @@ void vCPU::disable_timer()
 
 long vCPU::run_once()
 {
+	/* Materialize a deferred kvm_run mapping before the first KVM_RUN (a no-op
+	   once mapped). Covers run(), step_one() and the immediate_exit re-entries,
+	   which all funnel through here. */
+	this->ensure_kvm_run();
+
 	int result;
 	int run_errno = 0;
 	{

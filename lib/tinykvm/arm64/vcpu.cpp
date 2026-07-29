@@ -34,6 +34,9 @@ namespace tinykvm {
 static long vcpu_mmap_size = 0;
 static int vm_ipa_bits = 40; /* KVM's legacy default IPA size */
 
+/* Defined below; forward-declared for vCPU::flush_pending_guest_tlb(). */
+static void arm64_flush_guest_tlb(vCPU& cpu);
+
 int arm64_vm_ipa_bits()
 {
 	return vm_ipa_bits;
@@ -76,7 +79,7 @@ void* Machine::create_vcpu_timer()
 	return timer_id;
 }
 
-void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const MachineOptions&)
+void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const MachineOptions& options)
 {
 	this->kvm_vcpu_id = kvm_vcpu_id;
 	this->guest_cpu_index = guest_cpu_index;
@@ -101,7 +104,12 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 		this->timer_id = Machine::create_vcpu_timer();
 		this->timer_tid = gettid();
 	}
-	if (this->kvm_run == nullptr) {
+	/* Defer the kvm_run mapping to the first run when lazy_vcpu_mmap is set:
+	   ensure_kvm_run() (run_once) creates it on demand. A fork that never runs
+	   then never pays the mapping's host VMA -- the property vm_group_vma_flat
+	   pins for pooled seats, but honoured here too so a lazy master/plain fork
+	   behaves the same. */
+	if (this->kvm_run == nullptr && !options.lazy_vcpu_mmap) {
 		kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 			PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
 		if (UNLIKELY(kvm_run == MAP_FAILED)) {
@@ -111,7 +119,7 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 }
 
 void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
-	const MachineOptions&)
+	const MachineOptions& options)
 {
 	this->kvm_vcpu_id = seat.kvm_vcpu_id;
 	this->guest_cpu_index = 0;
@@ -143,13 +151,15 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 	this->timer_id = seat.timer_id;
 	this->timer_tid = seat.owner_tid;
 
-	/* ARM maps kvm_run eagerly (there is no lazy/shadow-register path as on
-	   AMD64): adopt the seat's existing mapping, or create it once and record
-	   it on the seat so the next tenant adopts it. The mapping outlives every
-	   tenant and is torn down only when the group retires the seat. */
+	/* kvm_run belongs to the seat and outlives every tenant (torn down only
+	   when the group retires the seat). Adopt the seat's existing mapping if a
+	   prior tenant made it. Otherwise, under lazy_vcpu_mmap, defer to the first
+	   run (ensure_kvm_run) so a pooled fork that never runs costs no host VMA --
+	   the vm_group_vma_flat property; without lazy, map it now and record it on
+	   the seat. ensure_kvm_run() writes the seat back either way. */
 	if (seat.kvm_run != nullptr) {
 		this->kvm_run = (struct kvm_run *)seat.kvm_run;
-	} else {
+	} else if (!options.lazy_vcpu_mmap) {
 		this->kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 			PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
 		if (UNLIKELY(this->kvm_run == MAP_FAILED)) {
@@ -201,6 +211,33 @@ void vCPU::detach_to_seat(VmGroupSeat& seat) noexcept
 	this->timer_tid = 0;
 	this->m_regs_cached = false;
 	this->m_regs_dirty = false;
+}
+
+void vCPU::ensure_kvm_run()
+{
+	if (LIKELY(this->kvm_run != nullptr))
+		return;
+	this->kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
+		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
+	if (UNLIKELY(this->kvm_run == MAP_FAILED)) {
+		Machine::machine_exception("Failed to lazily map kvm_run");
+	}
+	/* A pooled member's mapping belongs to its seat so the next tenant adopts
+	   it rather than re-mapping: one host VMA per seat, never per tenant. Same
+	   write-back the AMD64 lazily_map_kvm_run() does. */
+	if (UNLIKELY(this->machine().m_seat != nullptr)) {
+		this->machine().m_seat->kvm_run = this->kvm_run;
+	}
+}
+
+void vCPU::flush_pending_guest_tlb()
+{
+	if (LIKELY(!this->machine().m_pending_tlb_flush))
+		return;
+	/* Clear before running the stub: arm64_flush_guest_tlb() runs the guest,
+	   re-entering run_once() -> here, and the cleared flag stops it recursing. */
+	this->machine().m_pending_tlb_flush = false;
+	arm64_flush_guest_tlb(*this);
 }
 
 void vCPU::smp_init(int, Machine&)
@@ -574,8 +611,12 @@ void Machine::setup_cow_mode(const Machine* other)
 			set_one_reg(cpu.fd, sys_reg_id(3, 0, 2, 0, 0), ttbr0);
 		});
 	}
-	/* The stub broadcasts (tlbi vmalle1is), covering SMP vCPUs too. */
-	arm64_flush_guest_tlb(this->vcpu);
+	/* The stub broadcasts (tlbi vmalle1is), covering SMP vCPUs too. Deferred to
+	   the first run_once() (flush_pending_guest_tlb): the flush is a guest run,
+	   so running it here would map kvm_run at construction and cost a warm-
+	   reserve fork a host VMA it may never use. Correctness is unchanged --
+	   every guest execution funnels through run_once(), which flushes first. */
+	this->m_pending_tlb_flush = true;
 }
 
 void Machine::print_pagetables() const

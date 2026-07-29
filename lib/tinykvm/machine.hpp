@@ -452,6 +452,13 @@ private:
 	bool  m_forked = false;
 	bool  m_just_reset = false;
 	uint64_t m_pending_tlb_signal = 0;
+#if defined(TINYKVM_ARCH_ARM64)
+	/* A fork/reset swapped this member's TTBR0 (setup_cow_mode) but the guest
+	   TLB flush -- which is a guest run of the EL1 stub, not a free CR3-style
+	   reload as on x86 -- is deferred to the first run_once() so a warm-reserve
+	   fork that never runs costs no kvm_run mapping (the VMA-flat property). */
+	bool  m_pending_tlb_flush = false;
+#endif
 	bool  m_loaded_from_snapshot = false;
 	bool  m_remote_pfaults = false;
 	bool  m_permanent_remote_connection = false;
