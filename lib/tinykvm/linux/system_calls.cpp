@@ -2550,11 +2550,14 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			/* SYS eventfd2 */
 			auto& regs = cpu.registers();
 			const int real_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-			const int vfd = cpu.machine().fds().manage(real_fd, false, true);
-			if (UNLIKELY(vfd < 0)) {
+			/* manage() throws on a negative fd, so the failure has to be caught
+			   here -- testing its return value afterwards never runs. Same
+			   shape as epoll_create1() below. */
+			if (UNLIKELY(real_fd < 0)) {
 				regs.sysret() = -errno;
 			}
 			else {
+				const int vfd = cpu.machine().fds().manage(real_fd, false, true);
 				regs.sysret() = vfd;
 				// Record the eventfd2 in the socket pairs
 				cpu.machine().fds().add_socket_pair({vfd, -1, FileDescriptors::SocketType::EVENTFD});
@@ -2569,11 +2572,15 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			const int clockid = regs.sysarg(0);
 			const int real_fd = timerfd_create(clockid, TFD_CLOEXEC | TFD_NONBLOCK);
-			const int vfd = cpu.machine().fds().manage(real_fd, false, true);
-			if (UNLIKELY(vfd < 0)) {
+			/* clockid is guest-controlled, so this call really does fail, and
+			   manage() throws std::runtime_error on a negative fd -- which would
+			   escape past every embedder that catches MachineException. Check
+			   before managing, as epoll_create1() below does. */
+			if (UNLIKELY(real_fd < 0)) {
 				regs.sysret() = -errno;
 			}
 			else {
+				const int vfd = cpu.machine().fds().manage(real_fd, false, true);
 				regs.sysret() = vfd;
 				// TODO: Record the timerfd in the socket pairs
 				//cpu.machine().fds().add_socket_pair({vfd, -1, FileDescriptors::SocketType::EVENTFD});
@@ -3307,12 +3314,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			const int flags = regs.sysarg(0);
 			const int real_fd = inotify_init1(flags);
-			const int vfd = cpu.machine().fds().manage(real_fd, false, true);
-			if (UNLIKELY(vfd < 0)) {
+			/* flags is guest-controlled: an invalid value fails here, and
+			   manage() throws on a negative fd rather than returning one. */
+			if (UNLIKELY(real_fd < 0)) {
 				regs.sysret() = -errno;
 			}
 			else {
-				regs.sysret() = vfd;
+				regs.sysret() = cpu.machine().fds().manage(real_fd, false, true);
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("inotify_init1(flags=0x%X) = %d (%lld)\n",

@@ -360,6 +360,33 @@ int main() {
 	REQUIRE(machine.return_value() == 0);
 }
 
+TEST_CASE("timerfd_create with a bad clockid returns an error", "[Syscalls]")
+{
+	/* clockid is guest-controlled and reaches timerfd_create() directly. On
+	   failure the handler passed the -1 to FileDescriptors::manage(), which
+	   throws std::runtime_error -- so the following `if (vfd < 0)` was dead
+	   code and the exception escaped the handler entirely. An embedder that
+	   catches MachineException (the documented contract) would not catch it. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <sys/timerfd.h>
+
+int main() {
+	/* Not a valid clockid. */
+	int fd = timerfd_create(0x7FFFFFFF, 0);
+	if (fd >= 0) return 1;
+	if (errno <= 0) return 2;
+	return 0;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"timerfd-bad-clockid"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
+
 TEST_CASE("madvise(MADV_DONTNEED) still zeroes in-range memory", "[Syscalls]")
 {
 	/* Positive counterpart to the clamp added to Machine::memzero(): the range
