@@ -358,7 +358,23 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			if (regs.sysarg(2) != 0) {
 				struct timespec ts {};
 				cpu.machine().copy_from_guest(&ts, regs.sysarg(2), sizeof(ts));
-				timeout = int(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+				/* tv_sec/tv_nsec come from the guest. Reject what Linux rejects,
+				   and compute in a range where tv_sec * 1000 cannot overflow --
+				   the multiply on a raw guest value was signed-overflow UB, and
+				   the int() truncation then produced an arbitrary timeout. */
+				if (UNLIKELY(ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L))
+				{
+					regs.sysret() = -EINVAL;
+					cpu.set_registers(regs);
+					SYSPRINT("ppoll(fds=0x%llX, count=%u, bad timespec) = %lld\n",
+						regs.sysarg(0), guest_count, regs.sysret());
+					return;
+				}
+				static constexpr int64_t MAX_TIMEOUT_MS = INT32_MAX;
+				const int64_t secs_ms = (ts.tv_sec > MAX_TIMEOUT_MS / 1000)
+					? MAX_TIMEOUT_MS : int64_t(ts.tv_sec) * 1000;
+				const int64_t total_ms = secs_ms + int64_t(ts.tv_nsec) / 1000000;
+				timeout = int(std::min(total_ms, MAX_TIMEOUT_MS));
 			}
 			if (auto& callback = cpu.machine().fds().poll_callback; callback) {
 				if (!callback(fds, guest_count, timeout))
