@@ -294,3 +294,37 @@ int main() {
 
 	REQUIRE(machine.return_value() == 0);
 }
+
+TEST_CASE("sendmmsg rejects an oversized message count", "[Syscalls]")
+{
+	/* vlen was only checked for being positive before being multiplied by
+	   sizeof(mmsghdr) and used as the length of a copy into a 1024-entry
+	   (64KB) stack array. A large vlen overflowed the VMM's stack with
+	   guest-supplied bytes. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+
+static char payload[262144];
+
+int main() {
+	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0) return 1;
+
+	memset(payload, 0x42, sizeof(payload));
+
+	/* 4096 mmsghdrs is 4x the handler's fixed capacity. */
+	long rc = syscall(SYS_sendmmsg, fd, payload, 4096, 0);
+	if (rc >= 0) return 2;
+	return 0;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"sendmmsg-vlen"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}

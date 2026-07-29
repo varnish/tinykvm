@@ -2909,6 +2909,17 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				std::array<struct mmsghdr, 1024> guest_msgs;
 				std::array<GuestIOvec, 1024> guest_iovecs;
 				std::vector<tinykvm::Machine::Buffer> buffers;
+				/* vcnt is guest-controlled and guest_msgs is a 64KB stack
+				   object: without this bound the copy below is a
+				   guest-controlled stack overflow. (iovlen is bounded below.) */
+				if (UNLIKELY(size_t(vcnt) > guest_msgs.size()))
+				{
+					regs.sysret() = -EINVAL;
+					cpu.set_registers(regs);
+					SYSPRINT("sendmmsg(fd=%d, vlen=%d) = %lld (EINVAL, vlen too large)\n",
+							 fd, vcnt, regs.sysret());
+					return;
+				}
 				// Fetch the mmsghdrs from the guest
 				cpu.machine().copy_from_guest(guest_msgs.data(), g_buf, vcnt * sizeof(struct mmsghdr));
 				// For each mmsghdr, fetch the iovec and sockaddr
