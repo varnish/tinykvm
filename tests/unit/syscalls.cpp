@@ -328,3 +328,146 @@ int main() {
 
 	REQUIRE(machine.return_value() == 0);
 }
+
+TEST_CASE("madvise(MADV_DONTNEED) still zeroes in-range memory", "[Syscalls]")
+{
+	/* Positive counterpart to the clamp added to Machine::memzero(): the range
+	   is now bounded to the addresses this VM's page tables can cover, so verify
+	   an ordinary in-range MADV_DONTNEED is still honoured and not clipped away.
+	   Uses several pages, and checks the page straddling the end of the range is
+	   handled too. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <string.h>
+#include <sys/mman.h>
+
+#define LEN (16 * 4096)
+
+int main() {
+	unsigned char *p = mmap(NULL, LEN, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (p == MAP_FAILED) return 1;
+
+	memset(p, 0xA5, LEN);
+	/* Confirm the write landed, so a zero result below means something. */
+	for (unsigned i = 0; i < LEN; i += 4096) {
+		if (p[i] != 0xA5) return 2;
+	}
+	if (p[LEN - 1] != 0xA5) return 3;
+
+	if (madvise(p, LEN, MADV_DONTNEED) != 0) return 4;
+
+	/* Every byte must now read back as zero. */
+	for (unsigned i = 0; i < LEN; i++) {
+		if (p[i] != 0x00) return 5;
+	}
+
+	/* Partial range: dirty it again, discard only the middle two pages. */
+	memset(p, 0x5A, LEN);
+	if (madvise(p + 4096, 2 * 4096, MADV_DONTNEED) != 0) return 6;
+	for (unsigned i = 0; i < 4096; i++) {
+		if (p[i] != 0x5A) return 7;               /* before: untouched */
+	}
+	for (unsigned i = 4096; i < 3 * 4096; i++) {
+		if (p[i] != 0x00) return 8;               /* discarded */
+	}
+	for (unsigned i = 3 * 4096; i < LEN; i++) {
+		if (p[i] != 0x5A) return 9;               /* after: untouched */
+	}
+	return 0;
+})M");
+
+	/* Dirtying 64KB of fresh anonymous memory in a non-forked master needs more
+	   headroom than the 8MB the other cases use. */
+	tinykvm::Machine machine { binary, { .max_mem = 64ul << 20 } };
+	machine.setup_linux({"madvise-dontneed"}, env);
+	machine.run(8.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
+
+TEST_CASE("madvise still zeroes when a remote VM is connected", "[Syscalls]")
+{
+	/* The clamp added to Machine::memzero() widens its bound to include a
+	   connected remote's range, so that address-space merging keeps working.
+	   That branch is only taken when has_remote() is true, which no other test
+	   reaches -- so exercise it and confirm zeroing of the VM's *own* memory is
+	   unaffected by the presence of a remote. */
+	const auto storage_binary = build_and_load(R"M(
+int main() { return 1234; }
+)M", "-Wl,-Ttext-segment=0x40400000");
+
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <stddef.h>
+#include <string.h>
+#include <sys/mman.h>
+
+#define LEN (8 * 4096)
+
+int main() {
+	unsigned char *p = mmap(NULL, LEN, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (p == MAP_FAILED) return 1;
+
+	memset(p, 0x3C, LEN);
+	if (p[0] != 0x3C || p[LEN - 1] != 0x3C) return 2;
+
+	if (madvise(p, LEN, MADV_DONTNEED) != 0) return 3;
+	for (unsigned i = 0; i < LEN; i++) {
+		if (p[i] != 0x00) return 4;
+	}
+	return 0;
+})M");
+
+	tinykvm::Machine storage { storage_binary.second, {
+		.max_mem = 16ULL << 20,
+		.vmem_base_address = 1ULL << 30, /* 1GB, above the main VM */
+	} };
+	storage.setup_linux({"storage"}, env);
+	storage.run(4.0f);
+	REQUIRE(storage.return_value() == 1234);
+
+	tinykvm::Machine machine { binary, { .max_mem = 64ul << 20 } };
+	machine.setup_linux({"madvise-remote"}, env);
+	machine.remote_connect(storage);
+	machine.set_remote_allow_page_faults(true);
+	REQUIRE(machine.has_remote());
+
+	machine.run(8.0f);
+	REQUIRE(machine.return_value() == 0);
+}
+
+TEST_CASE("madvise with an out-of-range length returns promptly", "[Syscalls]")
+{
+	/* madvise(MADV_DONTNEED) passes the guest's length straight to
+	   Machine::memzero(), which walks the range one page-table lookup per 4K
+	   and deliberately ignores pages that are not present -- so an
+	   out-of-range length is not an error, it is an unbounded walk. At ~10M
+	   pages/second a 16TB length is minutes and a 2^64 length is years, and
+	   because this runs inside the syscall handler the execution timeout does
+	   not apply: the host thread is simply gone.
+
+	   16TB is chosen so the pre-fix behaviour is slow enough to fail this
+	   assertion by a wide margin without hanging CI outright. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <sys/mman.h>
+
+int main() {
+	/* Return value is unimportant -- what matters is that we get here. */
+	madvise((void *)0x1000000, 1UL << 44, MADV_DONTNEED);
+	return 0;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"madvise-huge"}, env);
+
+	const auto t0 = std::chrono::steady_clock::now();
+	machine.run(30.0f);
+	const auto elapsed = std::chrono::duration<double>(
+		std::chrono::steady_clock::now() - t0).count();
+
+	REQUIRE(machine.return_value() == 0);
+	REQUIRE(elapsed < 5.0);
+}

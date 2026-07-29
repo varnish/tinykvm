@@ -20,6 +20,27 @@ void Machine::memzero(address_t addr, size_t len)
 	   user page on arm64 (bit 6 is AP[1] there), so a large PROT_NONE mmap
 	   reservation walked off the end of guest RAM. */
 	const uint64_t dirty_bit = paging_dirty_bit();
+
+	/* Clamp the range to the addresses this VM's page tables can actually
+	   cover before walking it. The loop below deliberately ignores missing
+	   pages rather than faulting, so an out-of-range length is not an error
+	   here -- it is an unbounded walk at one page-table lookup per 4K.
+	   madvise(MADV_DONTNEED) hands a guest-chosen length straight in, so
+	   without this a single guest syscall pins the host thread for years, and
+	   because it runs inside the syscall handler the execution timeout does not
+	   cover it. Pages past the end can never be dirty, so nothing is lost.
+	   remote_end (not physbase+size) is the bound, because it already accounts
+	   for extra virtual remappings; a connected remote VM's range is added on
+	   top so address-space merging keeps working. */
+	address_t limit = memory.remote_end;
+	if (this->has_remote()) {
+		limit = std::max(limit, m_remote->main_memory().remote_end);
+	}
+	if (addr >= limit)
+		return;
+	if (len > limit - addr)
+		len = limit - addr;
+
 	while (len != 0)
 	{
 		const size_t offset = addr & PageMask();
