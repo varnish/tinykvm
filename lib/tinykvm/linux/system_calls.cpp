@@ -79,9 +79,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			ssize_t result = 0;
 			if (bufcount == 1) {
 				result = read(fd, buffers[0].ptr, buffers[0].len);
-			} else {
-				result = readv(fd, (struct iovec *)&buffers[0], bufcount);
+			} else if (bufcount > 1) {
+				result = readv(fd, (struct iovec *)buffers.data(), bufcount);
 			}
+			/* A zero-length read gathers no buffers; buffers.data() is null and
+			   must not be indexed. Result stays 0, matching read(fd, _, 0). */
 			if (UNLIKELY(result < 0)) {
 				regs.sysret() = -errno;
 			} else {
@@ -125,8 +127,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				const int fd = cpu.machine().fds().translate_writable_vfd(regs.sysarg(0));
 				if (bufcount > 1) {
 					regs.sysret() = writev(fd, (const struct iovec *)buffers.data(), bufcount);
-				} else {
+				} else if (bufcount == 1) {
 					regs.sysret() = write(fd, buffers[0].ptr, buffers[0].len);
+				} else {
+					/* A zero-length write gathers no buffers. buffers[0] would
+					   dereference null here, so answer it directly -- the fd was
+					   still validated above, as write(badfd, _, 0) must fail. */
+					regs.sysret() = 0;
 				}
 				SYSPRINT("write(fd=%d (%d), data=0x%llX, size=%zu) = %lld\n",
 					vfd, fd, regs.sysarg(1), bytes, regs.sysret());
@@ -441,7 +448,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					const size_t cnt =
 						cpu.machine().writable_buffers_from_range(buffers, dst, read_length);
 					// Seek to the given offset in the file and read the contents into guest memory
-					if (preadv64(real_fd, (const iovec *)&buffers[0], cnt, voff) < 0) {
+					if (preadv64(real_fd, (const iovec *)buffers.data(), cnt, voff) < 0) {
 						PRINTMMAP("preadv64 failed: %s for %zu buffers, vfd %d fd %d at offset %ld\n",
 							strerror(errno), cnt, vfd, real_fd, voff);
 						for (size_t i = 0; i < cnt; i++)
@@ -741,8 +748,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const auto bufcount =
 				cpu.machine().writable_buffers_from_range(buffers, g_buf, bytes);
 
+			/* bufcount == 0 for a zero-length read: buffers.data() is null,
+			   which preadv64 accepts with an iovec count of 0. */
 			ssize_t result =
-				preadv64(fd, (iovec *)&buffers[0], bufcount, offset);
+				preadv64(fd, (iovec *)buffers.data(), bufcount, offset);
 			if (result < 0) {
 				regs.sysret() = -errno;
 			}
@@ -767,7 +776,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const auto bufcount =
 				cpu.machine().gather_buffers_from_range(buffers, g_buf, bytes);
 
-			if (pwritev64(fd, (const iovec *)&buffers[0], bufcount, offset) < 0) {
+			/* See pread64: buffers.data() is null when bufcount == 0. */
+			if (pwritev64(fd, (const iovec *)buffers.data(), bufcount, offset) < 0) {
 				regs.sysret() = -errno;
 			}
 			else {
@@ -1441,7 +1451,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					struct msghdr msg {};
 					msg.msg_name = nullptr;
 					msg.msg_namelen = 0;
-					msg.msg_iov = (struct iovec *)&buffers[0];
+					msg.msg_iov = (struct iovec *)buffers.data();
 					msg.msg_iovlen = bufcount;
 					msg.msg_control = nullptr;
 					msg.msg_controllen = 0;
@@ -1505,7 +1515,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					struct msghdr msg {};
 					msg.msg_name = &addr;
 					msg.msg_namelen = sizeof(addr);
-					msg.msg_iov = (struct iovec *)&buffers[0];
+					msg.msg_iov = (struct iovec *)buffers.data();
 					msg.msg_iovlen = bufcount;
 					msg.msg_control = nullptr;
 					msg.msg_controllen = 0;
@@ -1578,7 +1588,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				struct msghdr msg_recv {};
 				msg_recv.msg_name = &addr;
 				msg_recv.msg_namelen = sizeof(addr);
-				msg_recv.msg_iov = (struct iovec *)&buffers[0];
+				msg_recv.msg_iov = (struct iovec *)buffers.data();
 				msg_recv.msg_iovlen = bufcount;
 				msg_recv.msg_control = nullptr;
 				msg_recv.msg_controllen = 0;
@@ -1659,7 +1669,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				struct msghdr msg_send {};
 				msg_send.msg_name = nullptr;
 				msg_send.msg_namelen = 0;
-				msg_send.msg_iov = (struct iovec *)&buffers[0];
+				msg_send.msg_iov = (struct iovec *)buffers.data();
 				msg_send.msg_iovlen = bufcount;
 				msg_send.msg_control = nullptr;
 				msg_send.msg_controllen = 0;
@@ -2911,7 +2921,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						const size_t cnt =
 							cpu.machine().gather_buffers_from_range(
 								buffers, iov.iov_base, iov.iov_len);
-						ssize_t result = writev(fd, (const iovec *)&buffers[0], cnt);
+						ssize_t result = writev(fd, (const iovec *)buffers.data(), cnt);
 						if (result < 0)
 						{
 							total = -errno;
