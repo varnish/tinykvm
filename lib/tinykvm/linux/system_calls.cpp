@@ -2273,10 +2273,20 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			int fd = cpu.machine().fds().translate(regs.sysarg(0));
 
 			char buffer[2048];
-			regs.sysret() = syscall(SYS_getdents64, fd, buffer, sizeof(buffer));
-			if (regs.sysret() > 0)
+			/* NB: keep the host result in a *signed* local. sysret() is __u64,
+			   so testing it directly turns a -1 error return into a ~2^64
+			   length and copies the host stack into the guest. */
+			const ssize_t result = syscall(SYS_getdents64, fd, buffer, sizeof(buffer));
+			if (result > 0)
 			{
-				cpu.machine().copy_to_guest(regs.sysarg(1), buffer, regs.sysret());
+				cpu.machine().copy_to_guest(regs.sysarg(1), buffer, result);
+				regs.sysret() = result;
+			}
+			else if (result < 0) {
+				regs.sysret() = -errno;
+			}
+			else {
+				regs.sysret() = 0;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("GETDENTS64 to vfd=%lld, fd=%d, data=0x%llX = %lld\n",

@@ -131,6 +131,51 @@ int main() {
 	REQUIRE(machine.return_value() == 0);
 }
 
+TEST_CASE("getdents64 on a non-directory does not leak host memory", "[Syscalls]")
+{
+	/* The handler stored the host getdents64() return value in sysret(),
+	   which is __u64, and then tested it with `> 0`. On failure (-1) that
+	   became ~2^64 and was passed to copy_to_guest() as a length, streaming
+	   the host stack into guest memory until the copy walked off the end of
+	   the guest address space. getdents64 on a regular fd -- which returns
+	   ENOTDIR -- is enough to trigger it. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+
+/* In .bss, far away from anything the guest cares about. */
+char dirbuf[8192];
+
+int main() {
+	int fd = open("/scratch", O_RDONLY);
+	if (fd < 0) return 1;
+
+	memset(dirbuf, 0xAA, sizeof(dirbuf));
+
+	long rc = syscall(SYS_getdents64, fd, dirbuf, sizeof(dirbuf));
+	/* A regular file is not a directory: this must fail, not succeed. */
+	if (rc >= 0) return 2;
+
+	/* Nothing may have been written into the guest buffer. */
+	for (unsigned i = 0; i < sizeof(dirbuf); i++) {
+		if ((unsigned char)dirbuf[i] != 0xAA)
+			return 3;
+	}
+	return 0;
+})M");
+
+	ScratchFile file;
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	allow_scratch_file(machine, file);
+	machine.setup_linux({"getdents64-enotdir"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
+
 TEST_CASE("Socket and pipe I/O still round-trips", "[Syscalls]")
 {
 	/* Positive counterpart to the bounds checks and empty-buffer-list fixes
