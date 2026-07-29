@@ -1545,10 +1545,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					{
 						if (g_addrlen != 0x0) {
 							const socklen_t addrlen = msg.msg_namelen;
-							// Get a writable reference to the guest addrlen
-							socklen_t& guest_addrlen =
-								*cpu.machine().writable_memarray<socklen_t>(g_addrlen);
+							/* g_addrlen is a guest pointer with arbitrary
+							   alignment, so binding a socklen_t& to it is UB.
+							   Copy in and out instead. */
+							socklen_t guest_addrlen = 0;
+							cpu.machine().copy_from_guest(&guest_addrlen, g_addrlen, sizeof(guest_addrlen));
 							guest_addrlen = std::min(guest_addrlen, addrlen);
+							cpu.machine().copy_to_guest(g_addrlen, &guest_addrlen, sizeof(guest_addrlen));
 							// Write back the address if there is space
 							if (g_addr != 0x0 && guest_addrlen > 0) {
 								cpu.machine().copy_to_guest(g_addr, &addr, guest_addrlen);
@@ -1625,12 +1628,17 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					regs.sysret() = -errno;
 				} else {
 					if (msg.msg_name != nullptr && msg.msg_namelen > 0) {
-						// Write back the address if there is space
-						socklen_t& guest_addrlen = *cpu.machine().writable_memarray<socklen_t>(
-							g_msg + offsetof(struct msghdr, msg_namelen));
+						/* The guest chooses g_msg, so msg_namelen inside it has
+						   arbitrary alignment; binding a socklen_t& to it is UB.
+						   Copy in and out instead. */
+						const address_t g_namelen =
+							g_msg + offsetof(struct msghdr, msg_namelen);
+						socklen_t guest_addrlen = 0;
+						cpu.machine().copy_from_guest(&guest_addrlen, g_namelen, sizeof(guest_addrlen));
 						const address_t g_addr = (uintptr_t)msg.msg_name;
 						// Set/truncate the address length
 						guest_addrlen = std::min(guest_addrlen, msg_recv.msg_namelen);
+						cpu.machine().copy_to_guest(g_namelen, &guest_addrlen, sizeof(guest_addrlen));
 						if (g_addr != 0x0 && guest_addrlen > 0)	{
 							// Write back the address
 							cpu.machine().copy_to_guest(g_addr, &addr, guest_addrlen);
