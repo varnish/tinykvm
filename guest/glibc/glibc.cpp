@@ -1,5 +1,6 @@
 #include <cassert>
 #include <malloc.h>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -7,23 +8,66 @@ static void test_threads();
 extern "C" int gettid();
 
 static int threads_test_suite_ok = 0;
+
+/* ------------------------------------------------------------------------
+ * Snapshot-ordering workload.
+ *
+ * g_buffer is a large buffer that lives in BSS, so it is part of the booted
+ * snapshot image. main() touches every page (making it resident in the
+ * snapshot file), and test() then streams over it in a FIXED, SCATTERED page
+ * order (g_order). Because the access order is decorrelated from the buffer's
+ * virtual/physical layout, the on-disk page ordering decides whether the cold
+ * page faults during test() become one sequential file read (fault-order
+ * snapshot) or thousands of random reads (no-order snapshot).
+ * ------------------------------------------------------------------------ */
+static constexpr size_t WS_PAGE  = 4096;
+static constexpr size_t WS_BYTES = 128UL * 1024 * 1024; /* 128 MiB working set */
+static constexpr size_t WS_PAGES = WS_BYTES / WS_PAGE;
+
+static uint8_t  g_buffer[WS_BYTES];
+static uint32_t g_order[WS_PAGES];
+
+/* Deterministic Fisher-Yates shuffle (fixed seed) so that the fault-order
+   capture run and every replay run touch the pages in the identical order. */
+static void build_workset()
+{
+	for (size_t i = 0; i < WS_PAGES; i++)
+		g_order[i] = (uint32_t)i;
+
+	uint64_t s = 0x9E3779B97F4A7C15ULL;
+	for (size_t i = WS_PAGES - 1; i > 0; i--) {
+		s = s * 6364136223846793005ULL + 1442695040888963407ULL;
+		const size_t j = (size_t)((s >> 33) % (i + 1));
+		const uint32_t t = g_order[i]; g_order[i] = g_order[j]; g_order[j] = t;
+	}
+	/* Make every page resident in the snapshot with a non-zero, page-unique
+	   value so the file is not sparse for this region. */
+	for (size_t i = 0; i < WS_PAGES; i++)
+		g_buffer[i * WS_PAGE] = (uint8_t)(1 + (i & 0xFF));
+}
+
 int main()
 {
-	char* test = (char *)malloc(14);
-	strcpy(test, "Hello World!\n");
-	printf("%.*s", 13, test);
+	char* hello = (char *)malloc(14);
+	strcpy(hello, "Hello World!\n");
+	printf("%.*s", 13, hello);
 
+	build_workset();
 	test_threads();
 
 	// Prevent global destructors
 	std::quick_exit(0);
 }
 
+/* The replayed request: stream the working set in scattered page order. The
+   returned checksum keeps the reads from being optimised away. */
 extern "C" __attribute__((used))
-void test()
+uint64_t test()
 {
-	/* Verify that the threads test-suite passed */
-	assert(threads_test_suite_ok == 1);
+	uint64_t sum = 0;
+	for (size_t i = 0; i < WS_PAGES; i++)
+		sum += g_buffer[(size_t)g_order[i] * WS_PAGE];
+	return sum;
 }
 
 #include <pthread.h>

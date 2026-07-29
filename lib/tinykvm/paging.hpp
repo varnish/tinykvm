@@ -1,6 +1,7 @@
 #pragma once
 #include "memory.hpp"
 #include <functional>
+#include <unordered_map>
 
 namespace tinykvm {
 
@@ -12,8 +13,8 @@ extern uint64_t setup_amd64_paging(vMemory&,
 extern void print_pagetables(const vMemory&);
 
 using foreach_page_t = std::function<void(uint64_t, uint64_t&, size_t)>;
-extern void foreach_page(vMemory&, foreach_page_t callback, bool skip_oob_addresses = true);
-extern void foreach_page(const vMemory&, foreach_page_t callback, bool skip_oob_addresses = true);
+extern void foreach_page(vMemory&, foreach_page_t callback, bool skip_oob_addresses = true, bool include_unpresent = false);
+extern void foreach_page(const vMemory&, foreach_page_t callback, bool skip_oob_addresses = true, bool include_unpresent = false);
 extern void foreach_page_makecow(vMemory&, uint64_t kernel_end, uint64_t shared_memory_boundary, bool split_accessed_hugepages = false);
 extern std::vector<std::pair<uint64_t, uint64_t>> get_accessed_pages(const vMemory& memory);
 
@@ -31,7 +32,13 @@ struct WritablePageOptions {
 	bool allow_dirty = false;
 };
 extern WritablePage writable_page_at(vMemory&, uint64_t addr, uint64_t flags, WritablePageOptions = {});
-extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags);
+/* Resolve a readable page through the page tables. When root is non-zero the
+   walk starts there instead of memory.page_tables; callers that need the
+   *fork baseline* view of a master must pass physbase + PT_ADDR, because a
+   master with working memory executes on a banked PML4 whose entries have
+   been redirected to bank pages holding writes made after
+   prepare_copy_on_write() -- writes no fork ever sees (see setup_cow_mode). */
+extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags, uint64_t root = 0);
 extern size_t paging_merge_leaf_pages_into_hugepages(vMemory&, bool merge_if_dirty = false);
 extern uint64_t paging_default_usermode_flags(bool executable_heap);
 extern uint64_t paging_address_mask();
@@ -40,6 +47,18 @@ extern uint64_t paging_address_mask();
    arm64 is AP[1] (user access), so the mask must not be hardcoded in shared
    code (e.g. Machine::memzero). */
 extern uint64_t paging_dirty_bit();
+
+struct PageInfo {
+	uint64_t paddr;
+	uint64_t size;
+	bool is_branch; // true = page table node, false = leaf data page
+};
+// Collect all pages (leaf + branch) from the page tables.
+extern std::vector<PageInfo> collect_all_pages(const vMemory& memory, bool include_unpresent = true);
+// Rewire all physical addresses in page tables using a translation map.
+// Operates on raw memory at base_ptr, using new_root as the PML4 physical address.
+extern void rewire_page_tables(char* base_ptr, uint64_t physbase, uint64_t new_root,
+	const std::unordered_map<uint64_t, uint64_t>& translation, bool include_unpresent = true);
 
 static inline bool page_is_zeroed(const uint64_t* page) {
 	for (size_t i = 0; i < 512; i += 8) {

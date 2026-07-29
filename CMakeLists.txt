@@ -37,6 +37,11 @@ if (TINYKVM_ARCH STREQUAL "AMD64")
 	)
 	target_link_libraries(storagekvm tinykvm)
 
+	add_executable(snapshot_bench
+		src/snapshot_bench.cpp
+	)
+	target_link_libraries(snapshot_bench tinykvm)
+
 	add_executable(pipekvm
 		src/pipe.cpp
 	)

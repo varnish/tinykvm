@@ -202,8 +202,6 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 				//fprintf(stderr, "Copying virtual page %016lx from physical %016lx with size %lu\n",
 				//	addr, bank_addr, page_size);
 
-				// This is a writable page, we will copy it using the "real"
-				// address from the master VM.
 				auto* our_page = this->safely_at(bank_addr, page_size);
 				// Find the page in the main VM *through its page tables*.
 				// Only main memory is identity-mapped; the mmap physical
@@ -219,13 +217,21 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 #else
 				constexpr uint64_t flags = 1ULL; // DESC_VALID
 #endif
+				// Walk from the *fork baseline* root (physbase + PT_ADDR), not
+				// main_memory().page_tables: a master with working memory runs
+				// on a banked PML4 whose entries point at bank pages holding
+				// writes it made after prepare_copy_on_write(). setup_cow_mode()
+				// deliberately roots forks at PT_ADDR to exclude those, so a
+				// reset must use the same root or it restores a state no fresh
+				// fork would ever see.
 				constexpr uint64_t granule = vMemory::PageSize();
 				const uint64_t vbase = addr & ~(page_size - 1);
+				const uint64_t master_root = main_vm.main_memory().physbase + PT_ADDR;
 				for (size_t e = 0; e < page_size / granule; e++) {
 					auto* dest = (uint64_t*)our_page + e * (granule / sizeof(uint64_t));
 					try {
 						auto* master_page = tinykvm::readable_page_at(
-							main_vm.main_memory(), vbase + e * granule, flags);
+							main_vm.main_memory(), vbase + e * granule, flags, master_root);
 						page_duplicate(dest, (const uint64_t*)master_page);
 					} catch (const MemoryException&) {
 						// The master (frozen since fork) has no present page
@@ -532,11 +538,15 @@ char* vMemory::get_writable_page(uint64_t addr, uint64_t flags, bool zeroes, boo
 
 	WritablePageOptions zero_opts;
 	zero_opts.zeroes = zeroes;
-	auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
-	if (dirty) {
-		writable_page.set_dirty();
+	try {
+		auto writable_page = writable_page_at(*this, addr, flags, zero_opts);
+		if (dirty) {
+			writable_page.set_dirty();
+		}
+		return writable_page.page;
+	} catch (const RetryException& e) {
+		return get_writable_page(addr, flags, zeroes, dirty);
 	}
-	return writable_page.page;
 }
 
 char* vMemory::get_kernelpage_at(uint64_t addr) const
