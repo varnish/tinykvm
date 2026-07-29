@@ -32,7 +32,13 @@ struct WritablePageOptions {
 	bool allow_dirty = false;
 };
 extern WritablePage writable_page_at(vMemory&, uint64_t addr, uint64_t flags, WritablePageOptions = {});
-extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags);
+/* Resolve a readable page through the page tables. When root is non-zero the
+   walk starts there instead of memory.page_tables; callers that need the
+   *fork baseline* view of a master must pass physbase + PT_ADDR, because a
+   master with working memory executes on a banked PML4 whose entries have
+   been redirected to bank pages holding writes made after
+   prepare_copy_on_write() -- writes no fork ever sees (see setup_cow_mode). */
+extern char * readable_page_at(const vMemory&, uint64_t addr, uint64_t flags, uint64_t root = 0);
 extern size_t paging_merge_leaf_pages_into_hugepages(vMemory&, bool merge_if_dirty = false);
 extern uint64_t paging_default_usermode_flags(bool executable_heap);
 extern uint64_t paging_address_mask();

@@ -217,13 +217,21 @@ bool vMemory::fork_reset(const Machine& main_vm, const MachineOptions& options)
 #else
 				constexpr uint64_t flags = 1ULL; // DESC_VALID
 #endif
+				// Walk from the *fork baseline* root (physbase + PT_ADDR), not
+				// main_memory().page_tables: a master with working memory runs
+				// on a banked PML4 whose entries point at bank pages holding
+				// writes it made after prepare_copy_on_write(). setup_cow_mode()
+				// deliberately roots forks at PT_ADDR to exclude those, so a
+				// reset must use the same root or it restores a state no fresh
+				// fork would ever see.
 				constexpr uint64_t granule = vMemory::PageSize();
 				const uint64_t vbase = addr & ~(page_size - 1);
+				const uint64_t master_root = main_vm.main_memory().physbase + PT_ADDR;
 				for (size_t e = 0; e < page_size / granule; e++) {
 					auto* dest = (uint64_t*)our_page + e * (granule / sizeof(uint64_t));
 					try {
 						auto* master_page = tinykvm::readable_page_at(
-							main_vm.main_memory(), vbase + e * granule, flags);
+							main_vm.main_memory(), vbase + e * granule, flags, master_root);
 						page_duplicate(dest, (const uint64_t*)master_page);
 					} catch (const MemoryException&) {
 						// The master (frozen since fork) has no present page

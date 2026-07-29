@@ -518,9 +518,9 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 	return WritablePage{.page = (char*)data, .entry = e3, .size = L3_PAGE_SIZE};
 }
 
-char* readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags)
+char* readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags, uint64_t root)
 {
-	auto* l1 = memory.page_at(memory.page_tables);
+	auto* l1 = memory.page_at(root ? root : memory.page_tables);
 	const uint64_t e1 = l1[l1_index(addr)];
 	if (!is_valid(e1))
 		memory_exception("readable_page_at: l1 entry not present", addr, L1_BLOCK_SIZE);

@@ -929,10 +929,10 @@ entry_is_no_longer_copy_on_write:
 	memory_exception("page_at: pml4 entry not present", addr, PDE64_PDPT_SIZE);
 }
 
-char * readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags)
+char * readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags, uint64_t root)
 {
 	CLPRINT("Resolving a readable page for 0x%lX\n", addr);
-	auto* pml4 = memory.page_at(memory.page_tables);
+	auto* pml4 = memory.page_at(root ? root : memory.page_tables);
 	const uint64_t i = (addr >> 39) & 511;
 	if (is_flagged_page(flags, pml4[i])) {
 		const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
