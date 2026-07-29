@@ -329,6 +329,37 @@ int main() {
 	REQUIRE(machine.return_value() == 0);
 }
 
+TEST_CASE("prctl(PR_GET_NAME) does not read past its name literal", "[Syscalls]")
+{
+	/* The handler copied buflen bytes (up to 16) directly out of the 8-byte
+	   string literal "tinykvm", handing the guest whatever .rodata happened to
+	   follow it. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <string.h>
+#include <sys/prctl.h>
+
+int main() {
+	char name[16];
+	memset(name, 0xCC, sizeof(name));
+
+	if (prctl(PR_GET_NAME, name, sizeof(name), 0, 0) != 0) return 1;
+	if (strncmp(name, "tinykvm", 7) != 0) return 2;
+
+	/* Everything after the name must be NUL padding, not host .rodata. */
+	for (unsigned i = 7; i < sizeof(name); i++) {
+		if (name[i] != 0) return 3;
+	}
+	return 0;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"prctl-get-name"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
+
 TEST_CASE("madvise(MADV_DONTNEED) still zeroes in-range memory", "[Syscalls]")
 {
 	/* Positive counterpart to the clamp added to Machine::memzero(): the range

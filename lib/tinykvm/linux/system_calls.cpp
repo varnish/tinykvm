@@ -2214,7 +2214,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					regs.sysret() = -EINVAL;
 				else
 				{
-					const char *name = "tinykvm";
+					/* Copy out of a padded 16-byte buffer: reading buflen bytes
+					   straight from the literal ran off the end of it and handed
+					   the guest whatever .rodata followed. */
+					char name[16] {};
+					__builtin_strncpy(name, "tinykvm", sizeof(name) - 1);
 					cpu.machine().copy_to_guest(g_buf, name, buflen);
 					regs.sysret() = 0;
 				}
