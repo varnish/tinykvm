@@ -144,15 +144,11 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	} seat_guard;
 
 	if (options.vm_group) {
-#if defined(TINYKVM_ARCH_AMD64)
 		/* Armed before acquisition: release_group_seat() is a no-op until a
 		   seat is actually held, and pooled_fork_prepare() can throw after
 		   taking one. */
 		seat_guard.machine = this;
 		this->pooled_fork_prepare(other, options);
-#else
-		throw MachineException("VM groups are only supported on AMD64");
-#endif
 	} else {
 		/* Unfortunately we have to create a new VM because
 		   memory is tied to VMs and not vCPUs. */
@@ -176,12 +172,9 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	}
 
 	/* Initialize vCPU and long mode (fast path) */
-#if defined(TINYKVM_ARCH_AMD64)
 	if (this->is_pooled()) {
 		this->vcpu.init_from_seat(*this->m_seat, *this, options);
-	} else
-#endif
-	{
+	} else {
 		this->vcpu.init(0, 0, *this, options);
 	}
 	this->setup_cow_mode(&other);
@@ -210,7 +203,6 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	seat_guard.machine = nullptr;
 }
 
-#if defined(TINYKVM_ARCH_AMD64)
 void Machine::pooled_fork_prepare(const Machine& other, const MachineOptions& options)
 {
 	/* Each of these is unfixable rather than merely unimplemented for a
@@ -251,11 +243,9 @@ void Machine::pooled_fork_prepare(const Machine& other, const MachineOptions& op
 	memory.banks.init_from_partition(seat->arena_gpa, seat->arena_hva,
 		seat->arena_size, this->m_group->max_cow_mem());
 }
-#endif
 
 void Machine::release_group_seat() noexcept
 {
-#if defined(TINYKVM_ARCH_AMD64)
 	if (this->m_group != nullptr) {
 		/* NB: the debug PTE-in-partition invariant is deliberately *not* run
 		   here, although a member leaving the pool is the last moment anything
@@ -278,7 +268,6 @@ void Machine::release_group_seat() noexcept
 		this->m_group = nullptr;
 		this->fd = -1;
 	}
-#endif
 }
 
 __attribute__ ((cold))

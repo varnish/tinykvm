@@ -110,6 +110,99 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 	}
 }
 
+void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
+	const MachineOptions&)
+{
+	this->kvm_vcpu_id = seat.kvm_vcpu_id;
+	this->guest_cpu_index = 0;
+	this->last_fault_address = 0;
+	this->m_machine = &machine;
+
+	/* The seat's vCPU is created when the group materializes the seat and is
+	   adopted, never created, here -- see the AMD64 twin (vcpu.cpp) for why
+	   materialization owns KVM_CREATE_VCPU rather than this path. */
+	if (UNLIKELY(seat.vcpu_fd < 0)) {
+		Machine::machine_exception("VM group seat has no vCPU", seat.kvm_vcpu_id);
+	}
+	this->fd = seat.vcpu_fd;
+
+	/* Rebind the seat's execution timer to this thread when a different thread
+	   created it: the timer is thread-bound (SIGEV_THREAD_ID) but the seat is
+	   handed to whichever thread takes it next. Same reasoning, and the same
+	   cost, as the AMD64 path and Machine::migrate_to_this_thread(). */
+	const pid_t this_tid = gettid();
+	if (seat.timer_id != nullptr && seat.owner_tid != this_tid) {
+		timer_delete((timer_t)seat.timer_id);
+		seat.timer_id = nullptr;
+		seat.owner_tid = 0;
+	}
+	if (seat.timer_id == nullptr) {
+		seat.timer_id = Machine::create_vcpu_timer();
+		seat.owner_tid = this_tid;
+	}
+	this->timer_id = seat.timer_id;
+	this->timer_tid = seat.owner_tid;
+
+	/* ARM maps kvm_run eagerly (there is no lazy/shadow-register path as on
+	   AMD64): adopt the seat's existing mapping, or create it once and record
+	   it on the seat so the next tenant adopts it. The mapping outlives every
+	   tenant and is torn down only when the group retires the seat. */
+	if (seat.kvm_run != nullptr) {
+		this->kvm_run = (struct kvm_run *)seat.kvm_run;
+	} else {
+		this->kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
+			PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
+		if (UNLIKELY(this->kvm_run == MAP_FAILED)) {
+			Machine::machine_exception("Failed to map VM group seat kvm_run");
+		}
+		seat.kvm_run = this->kvm_run;
+	}
+
+	/* One-time per-seat vCPU bring-up. The AMD64 twin issues KVM_SET_CPUID2
+	   here; the ARM analogue is KVM_ARM_VCPU_INIT against the host's preferred
+	   target. It runs once per seat (KVM rejects re-init after a run the same
+	   way it rejects re-CPUID). The fork's real register/sysreg/pagetable state
+	   is applied immediately after, by setup_cow_mode() and set_registers() in
+	   the fork constructor, so INIT's reset defaults never reach the guest. */
+	if (!seat.vcpu_initialized) {
+		seat.vcpu_initialized = true;
+		struct kvm_vcpu_init init {};
+		if (ioctl(machine.fd, KVM_ARM_PREFERRED_TARGET, &init) < 0) {
+			Machine::machine_exception("KVM_ARM_PREFERRED_TARGET failed", errno);
+		}
+		if (ioctl(this->fd, KVM_ARM_VCPU_INIT, &init) < 0) {
+			Machine::machine_exception("KVM_ARM_VCPU_INIT failed", errno);
+		}
+	}
+
+	/* This vCPU object is freshly constructed with its (pooled) Machine, so the
+	   register cache is already clean; make that a stated invariant rather than
+	   an inherited one, since a stale cache would serve a sibling's registers. */
+	this->m_regs_cached = false;
+	this->m_regs_dirty = false;
+}
+
+void vCPU::detach_to_seat(VmGroupSeat& seat) noexcept
+{
+	/* Hand fd, kvm_run and timer back to the seat without closing or unmapping
+	   anything: a struct kvm consumes vCPU capacity permanently, so closing the
+	   fd would burn the seat rather than free it. The next tenant re-adopts all
+	   three in init_from_seat(). No shadow-register teardown as on AMD64 -- ARM
+	   has no lazy mapping, so there is nothing owned to delete. */
+	if (this->fd >= 0) {
+		seat.vcpu_fd   = this->fd;
+		seat.kvm_run   = this->kvm_run;
+		seat.timer_id  = this->timer_id;
+		seat.owner_tid = this->timer_tid;
+	}
+	this->fd = -1;
+	this->kvm_run = nullptr;
+	this->timer_id = nullptr;
+	this->timer_tid = 0;
+	this->m_regs_cached = false;
+	this->m_regs_dirty = false;
+}
+
 void vCPU::smp_init(int, Machine&)
 {
 	throw MachineException("SMP is not implemented on ARM64");
