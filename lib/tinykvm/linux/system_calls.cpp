@@ -2419,9 +2419,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					} else {
 						resolve |= RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV;
 					}
+					/* openat2 rejects a non-zero mode unless the open is able to
+					   create a file, so passing one unconditionally made every
+					   write-open of an *existing* path fail with EINVAL.
+					   (O_TMPFILE cannot appear here; flags is masked above.) */
 					struct open_how how {
 						.flags = __u64(flags),
-						.mode  = __u64(S_IWUSR | S_IRUSR),
+						.mode  = __u64((flags & O_CREAT) ? (S_IWUSR | S_IRUSR) : 0),
 						.resolve = resolve,
 					};
 					int fd = syscall(SYS_openat2, pfd, real_path.c_str(), &how, sizeof(how));
