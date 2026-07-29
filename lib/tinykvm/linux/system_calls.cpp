@@ -1675,6 +1675,17 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				msg_send.msg_controllen = 0;
 				msg_send.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
 
+				/* msg_namelen comes from the guest's own msghdr and addr is a
+				   128-byte stack object, so an unchecked length is a
+				   guest-controlled stack overflow. */
+				if (UNLIKELY(msg.msg_namelen > sizeof(addr)))
+				{
+					regs.sysret() = -EINVAL;
+					cpu.set_registers(regs);
+					SYSPRINT("sendmsg(fd=%d (%d), msg=0x%lX, flags=0x%X) = %lld (EINVAL, namelen too large)\n",
+							 vfd, fd, g_msg, flags, regs.sysret());
+					return;
+				}
 				if (msg.msg_namelen > 0 && msg.msg_name != 0x0) {
 					cpu.machine().copy_from_guest(&addr, reinterpret_cast<uint64_t>(msg.msg_name), msg.msg_namelen);
 					msg_send.msg_name = &addr;

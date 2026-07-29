@@ -252,3 +252,45 @@ int main() {
 
 	REQUIRE(machine.return_value() == 0);
 }
+
+TEST_CASE("sendmsg rejects an oversized msg_namelen", "[Syscalls]")
+{
+	/* The handler copied msg_namelen bytes out of the guest into a 128-byte
+	   sockaddr_storage on its own stack, with the length taken straight from
+	   the guest's msghdr and never bounded. Both the length and the bytes are
+	   guest-controlled, so this was a straightforward stack smash of the VMM. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
+
+static char payload[8192];
+
+int main() {
+	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0) return 1;
+
+	memset(payload, 0x41, sizeof(payload));
+
+	char body[8] = {0};
+	struct iovec iov = { body, sizeof(body) };
+
+	struct msghdr msg;
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_name = payload;
+	msg.msg_namelen = sizeof(payload);  /* >> sizeof(sockaddr_storage) */
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+
+	/* Must be refused, not copied. Any error is acceptable. */
+	if (sendmsg(fd, &msg, 0) >= 0) return 2;
+	return 0;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"sendmsg-namelen"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
