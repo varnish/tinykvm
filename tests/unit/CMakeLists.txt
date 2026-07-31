@@ -34,10 +34,12 @@ if (TINYKVM_ARCH STREQUAL "AMD64")
 	# by page. Before the fix it does not fail fast, it grinds -- cap it so a
 	# regression cannot wedge CI.
 	set_tests_properties(test_syscalls PROPERTIES TIMEOUT 120)
+	add_unit_test(seccomp seccomp.cpp)
 elseif (TINYKVM_ARCH STREQUAL "ARM64")
 	add_unit_test(arm64_minimal arm64_minimal.cpp)
 	add_unit_test(arm64_elf arm64_elf.cpp)
 	add_unit_test(arm64_fork arm64_fork.cpp)
 	add_unit_test(arm64_threads arm64_threads.cpp)
 	add_unit_test(arm64_signals arm64_signals.cpp)
+	add_unit_test(seccomp seccomp.cpp)
 endif()
