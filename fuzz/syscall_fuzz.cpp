@@ -169,8 +169,8 @@ static void nonblock_all_managed_fds(Machine& m)
 }
 
 /* clock_nanosleep passes the guest's timespec straight to the real
-   clock_nanosleep, so a guest can pin the host thread for years (see
-   docs/syscall-fuzzing.md -- a real issue, not a harness one). Rather than
+   clock_nanosleep, so a guest can pin the host thread for years -- a real
+   issue in the library, not a harness one. Rather than
    refuse the syscall and lose all coverage of it, clamp the *values* in guest
    memory first and then run the original handler unmodified. The fuzzer still
    chooses the pointer, so the copy_from_guest/copy_to_guest edges -- the part
@@ -593,8 +593,8 @@ extern "C" int LLVMFuzzerInitialize(int*, char***)
 	   passes MSG_NOSIGNAL on the sendmsg/sendto paths but plain
 	   write()/writev()/pwritev64() have no equivalent, so the default
 	   disposition terminates the process. That is a real finding about the
-	   library (see docs/syscall-fuzzing.md), not about this harness -- ignore it
-	   here so one trivially-reachable signal does not end every campaign. */
+	   library, not about this harness -- ignore it here so one
+	   trivially-reachable signal does not end every campaign. */
 	signal(SIGPIPE, SIG_IGN);
 
 	/* read(0, ...) must not be able to block on the fuzzer's own stdin. */
