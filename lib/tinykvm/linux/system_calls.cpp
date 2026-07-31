@@ -79,9 +79,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			ssize_t result = 0;
 			if (bufcount == 1) {
 				result = read(fd, buffers[0].ptr, buffers[0].len);
-			} else {
-				result = readv(fd, (struct iovec *)&buffers[0], bufcount);
+			} else if (bufcount > 1) {
+				result = readv(fd, (struct iovec *)buffers.data(), bufcount);
 			}
+			/* A zero-length read gathers no buffers; buffers.data() is null and
+			   must not be indexed. Result stays 0, matching read(fd, _, 0). */
 			if (UNLIKELY(result < 0)) {
 				regs.sysret() = -errno;
 			} else {
@@ -125,8 +127,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				const int fd = cpu.machine().fds().translate_writable_vfd(regs.sysarg(0));
 				if (bufcount > 1) {
 					regs.sysret() = writev(fd, (const struct iovec *)buffers.data(), bufcount);
-				} else {
+				} else if (bufcount == 1) {
 					regs.sysret() = write(fd, buffers[0].ptr, buffers[0].len);
+				} else {
+					/* A zero-length write gathers no buffers. buffers[0] would
+					   dereference null here, so answer it directly -- the fd was
+					   still validated above, as write(badfd, _, 0) must fail. */
+					regs.sysret() = 0;
 				}
 				SYSPRINT("write(fd=%d (%d), data=0x%llX, size=%zu) = %lld\n",
 					vfd, fd, regs.sysarg(1), bytes, regs.sysret());
@@ -351,7 +358,23 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			if (regs.sysarg(2) != 0) {
 				struct timespec ts {};
 				cpu.machine().copy_from_guest(&ts, regs.sysarg(2), sizeof(ts));
-				timeout = int(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+				/* tv_sec/tv_nsec come from the guest. Reject what Linux rejects,
+				   and compute in a range where tv_sec * 1000 cannot overflow --
+				   the multiply on a raw guest value was signed-overflow UB, and
+				   the int() truncation then produced an arbitrary timeout. */
+				if (UNLIKELY(ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L))
+				{
+					regs.sysret() = -EINVAL;
+					cpu.set_registers(regs);
+					SYSPRINT("ppoll(fds=0x%llX, count=%u, bad timespec) = %lld\n",
+						regs.sysarg(0), guest_count, regs.sysret());
+					return;
+				}
+				static constexpr int64_t MAX_TIMEOUT_MS = INT32_MAX;
+				const int64_t secs_ms = (ts.tv_sec > MAX_TIMEOUT_MS / 1000)
+					? MAX_TIMEOUT_MS : int64_t(ts.tv_sec) * 1000;
+				const int64_t total_ms = secs_ms + int64_t(ts.tv_nsec) / 1000000;
+				timeout = int(std::min(total_ms, MAX_TIMEOUT_MS));
 			}
 			if (auto& callback = cpu.machine().fds().poll_callback; callback) {
 				if (!callback(fds, guest_count, timeout))
@@ -441,7 +464,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					const size_t cnt =
 						cpu.machine().writable_buffers_from_range(buffers, dst, read_length);
 					// Seek to the given offset in the file and read the contents into guest memory
-					if (preadv64(real_fd, (const iovec *)&buffers[0], cnt, voff) < 0) {
+					if (preadv64(real_fd, (const iovec *)buffers.data(), cnt, voff) < 0) {
 						PRINTMMAP("preadv64 failed: %s for %zu buffers, vfd %d fd %d at offset %ld\n",
 							strerror(errno), cnt, vfd, real_fd, voff);
 						for (size_t i = 0; i < cnt; i++)
@@ -741,8 +764,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const auto bufcount =
 				cpu.machine().writable_buffers_from_range(buffers, g_buf, bytes);
 
+			/* bufcount == 0 for a zero-length read: buffers.data() is null,
+			   which preadv64 accepts with an iovec count of 0. */
 			ssize_t result =
-				preadv64(fd, (iovec *)&buffers[0], bufcount, offset);
+				preadv64(fd, (iovec *)buffers.data(), bufcount, offset);
 			if (result < 0) {
 				regs.sysret() = -errno;
 			}
@@ -767,7 +792,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			const auto bufcount =
 				cpu.machine().gather_buffers_from_range(buffers, g_buf, bytes);
 
-			if (pwritev64(fd, (const iovec *)&buffers[0], bufcount, offset) < 0) {
+			/* See pread64: buffers.data() is null when bufcount == 0. */
+			if (pwritev64(fd, (const iovec *)buffers.data(), bufcount, offset) < 0) {
 				regs.sysret() = -errno;
 			}
 			else {
@@ -1441,7 +1467,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					struct msghdr msg {};
 					msg.msg_name = nullptr;
 					msg.msg_namelen = 0;
-					msg.msg_iov = (struct iovec *)&buffers[0];
+					msg.msg_iov = (struct iovec *)buffers.data();
 					msg.msg_iovlen = bufcount;
 					msg.msg_control = nullptr;
 					msg.msg_controllen = 0;
@@ -1505,7 +1531,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					struct msghdr msg {};
 					msg.msg_name = &addr;
 					msg.msg_namelen = sizeof(addr);
-					msg.msg_iov = (struct iovec *)&buffers[0];
+					msg.msg_iov = (struct iovec *)buffers.data();
 					msg.msg_iovlen = bufcount;
 					msg.msg_control = nullptr;
 					msg.msg_controllen = 0;
@@ -1519,10 +1545,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					{
 						if (g_addrlen != 0x0) {
 							const socklen_t addrlen = msg.msg_namelen;
-							// Get a writable reference to the guest addrlen
-							socklen_t& guest_addrlen =
-								*cpu.machine().writable_memarray<socklen_t>(g_addrlen);
+							/* g_addrlen is a guest pointer with arbitrary
+							   alignment, so binding a socklen_t& to it is UB.
+							   Copy in and out instead. */
+							socklen_t guest_addrlen = 0;
+							cpu.machine().copy_from_guest(&guest_addrlen, g_addrlen, sizeof(guest_addrlen));
 							guest_addrlen = std::min(guest_addrlen, addrlen);
+							cpu.machine().copy_to_guest(g_addrlen, &guest_addrlen, sizeof(guest_addrlen));
 							// Write back the address if there is space
 							if (g_addr != 0x0 && guest_addrlen > 0) {
 								cpu.machine().copy_to_guest(g_addr, &addr, guest_addrlen);
@@ -1578,7 +1607,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				struct msghdr msg_recv {};
 				msg_recv.msg_name = &addr;
 				msg_recv.msg_namelen = sizeof(addr);
-				msg_recv.msg_iov = (struct iovec *)&buffers[0];
+				msg_recv.msg_iov = (struct iovec *)buffers.data();
 				msg_recv.msg_iovlen = bufcount;
 				msg_recv.msg_control = nullptr;
 				msg_recv.msg_controllen = 0;
@@ -1599,12 +1628,17 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					regs.sysret() = -errno;
 				} else {
 					if (msg.msg_name != nullptr && msg.msg_namelen > 0) {
-						// Write back the address if there is space
-						socklen_t& guest_addrlen = *cpu.machine().writable_memarray<socklen_t>(
-							g_msg + offsetof(struct msghdr, msg_namelen));
+						/* The guest chooses g_msg, so msg_namelen inside it has
+						   arbitrary alignment; binding a socklen_t& to it is UB.
+						   Copy in and out instead. */
+						const address_t g_namelen =
+							g_msg + offsetof(struct msghdr, msg_namelen);
+						socklen_t guest_addrlen = 0;
+						cpu.machine().copy_from_guest(&guest_addrlen, g_namelen, sizeof(guest_addrlen));
 						const address_t g_addr = (uintptr_t)msg.msg_name;
 						// Set/truncate the address length
 						guest_addrlen = std::min(guest_addrlen, msg_recv.msg_namelen);
+						cpu.machine().copy_to_guest(g_namelen, &guest_addrlen, sizeof(guest_addrlen));
 						if (g_addr != 0x0 && guest_addrlen > 0)	{
 							// Write back the address
 							cpu.machine().copy_to_guest(g_addr, &addr, guest_addrlen);
@@ -1659,12 +1693,23 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				struct msghdr msg_send {};
 				msg_send.msg_name = nullptr;
 				msg_send.msg_namelen = 0;
-				msg_send.msg_iov = (struct iovec *)&buffers[0];
+				msg_send.msg_iov = (struct iovec *)buffers.data();
 				msg_send.msg_iovlen = bufcount;
 				msg_send.msg_control = nullptr;
 				msg_send.msg_controllen = 0;
 				msg_send.msg_flags = MSG_NOSIGNAL; // Ignore SIGPIPE
 
+				/* msg_namelen comes from the guest's own msghdr and addr is a
+				   128-byte stack object, so an unchecked length is a
+				   guest-controlled stack overflow. */
+				if (UNLIKELY(msg.msg_namelen > sizeof(addr)))
+				{
+					regs.sysret() = -EINVAL;
+					cpu.set_registers(regs);
+					SYSPRINT("sendmsg(fd=%d (%d), msg=0x%lX, flags=0x%X) = %lld (EINVAL, namelen too large)\n",
+							 vfd, fd, g_msg, flags, regs.sysret());
+					return;
+				}
 				if (msg.msg_namelen > 0 && msg.msg_name != 0x0) {
 					cpu.machine().copy_from_guest(&addr, reinterpret_cast<uint64_t>(msg.msg_name), msg.msg_namelen);
 					msg_send.msg_name = &addr;
@@ -2193,7 +2238,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					regs.sysret() = -EINVAL;
 				else
 				{
-					const char *name = "tinykvm";
+					/* Copy out of a padded 16-byte buffer: reading buflen bytes
+					   straight from the literal ran off the end of it and handed
+					   the guest whatever .rodata followed. */
+					char name[16] {};
+					__builtin_strncpy(name, "tinykvm", sizeof(name) - 1);
 					cpu.machine().copy_to_guest(g_buf, name, buflen);
 					regs.sysret() = 0;
 				}
@@ -2263,10 +2312,20 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			int fd = cpu.machine().fds().translate(regs.sysarg(0));
 
 			char buffer[2048];
-			regs.sysret() = syscall(SYS_getdents64, fd, buffer, sizeof(buffer));
-			if (regs.sysret() > 0)
+			/* NB: keep the host result in a *signed* local. sysret() is __u64,
+			   so testing it directly turns a -1 error return into a ~2^64
+			   length and copies the host stack into the guest. */
+			const ssize_t result = syscall(SYS_getdents64, fd, buffer, sizeof(buffer));
+			if (result > 0)
 			{
-				cpu.machine().copy_to_guest(regs.sysarg(1), buffer, regs.sysret());
+				cpu.machine().copy_to_guest(regs.sysarg(1), buffer, result);
+				regs.sysret() = result;
+			}
+			else if (result < 0) {
+				regs.sysret() = -errno;
+			}
+			else {
+				regs.sysret() = 0;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("GETDENTS64 to vfd=%lld, fd=%d, data=0x%llX = %lld\n",
@@ -2419,9 +2478,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					} else {
 						resolve |= RESOLVE_IN_ROOT | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV;
 					}
+					/* openat2 rejects a non-zero mode unless the open is able to
+					   create a file, so passing one unconditionally made every
+					   write-open of an *existing* path fail with EINVAL.
+					   (O_TMPFILE cannot appear here; flags is masked above.) */
 					struct open_how how {
 						.flags = __u64(flags),
-						.mode  = __u64(S_IWUSR | S_IRUSR),
+						.mode  = __u64((flags & O_CREAT) ? (S_IWUSR | S_IRUSR) : 0),
 						.resolve = resolve,
 					};
 					int fd = syscall(SYS_openat2, pfd, real_path.c_str(), &how, sizeof(how));
@@ -2511,11 +2574,14 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			/* SYS eventfd2 */
 			auto& regs = cpu.registers();
 			const int real_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-			const int vfd = cpu.machine().fds().manage(real_fd, false, true);
-			if (UNLIKELY(vfd < 0)) {
+			/* manage() throws on a negative fd, so the failure has to be caught
+			   here -- testing its return value afterwards never runs. Same
+			   shape as epoll_create1() below. */
+			if (UNLIKELY(real_fd < 0)) {
 				regs.sysret() = -errno;
 			}
 			else {
+				const int vfd = cpu.machine().fds().manage(real_fd, false, true);
 				regs.sysret() = vfd;
 				// Record the eventfd2 in the socket pairs
 				cpu.machine().fds().add_socket_pair({vfd, -1, FileDescriptors::SocketType::EVENTFD});
@@ -2530,11 +2596,15 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			const int clockid = regs.sysarg(0);
 			const int real_fd = timerfd_create(clockid, TFD_CLOEXEC | TFD_NONBLOCK);
-			const int vfd = cpu.machine().fds().manage(real_fd, false, true);
-			if (UNLIKELY(vfd < 0)) {
+			/* clockid is guest-controlled, so this call really does fail, and
+			   manage() throws std::runtime_error on a negative fd -- which would
+			   escape past every embedder that catches MachineException. Check
+			   before managing, as epoll_create1() below does. */
+			if (UNLIKELY(real_fd < 0)) {
 				regs.sysret() = -errno;
 			}
 			else {
+				const int vfd = cpu.machine().fds().manage(real_fd, false, true);
 				regs.sysret() = vfd;
 				// TODO: Record the timerfd in the socket pairs
 				//cpu.machine().fds().add_socket_pair({vfd, -1, FileDescriptors::SocketType::EVENTFD});
@@ -2874,6 +2944,17 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				std::array<struct mmsghdr, 1024> guest_msgs;
 				std::array<GuestIOvec, 1024> guest_iovecs;
 				std::vector<tinykvm::Machine::Buffer> buffers;
+				/* vcnt is guest-controlled and guest_msgs is a 64KB stack
+				   object: without this bound the copy below is a
+				   guest-controlled stack overflow. (iovlen is bounded below.) */
+				if (UNLIKELY(size_t(vcnt) > guest_msgs.size()))
+				{
+					regs.sysret() = -EINVAL;
+					cpu.set_registers(regs);
+					SYSPRINT("sendmmsg(fd=%d, vlen=%d) = %lld (EINVAL, vlen too large)\n",
+							 fd, vcnt, regs.sysret());
+					return;
+				}
 				// Fetch the mmsghdrs from the guest
 				cpu.machine().copy_from_guest(guest_msgs.data(), g_buf, vcnt * sizeof(struct mmsghdr));
 				// For each mmsghdr, fetch the iovec and sockaddr
@@ -2907,7 +2988,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 						const size_t cnt =
 							cpu.machine().gather_buffers_from_range(
 								buffers, iov.iov_base, iov.iov_len);
-						ssize_t result = writev(fd, (const iovec *)&buffers[0], cnt);
+						ssize_t result = writev(fd, (const iovec *)buffers.data(), cnt);
 						if (result < 0)
 						{
 							total = -errno;
@@ -3257,12 +3338,13 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			const int flags = regs.sysarg(0);
 			const int real_fd = inotify_init1(flags);
-			const int vfd = cpu.machine().fds().manage(real_fd, false, true);
-			if (UNLIKELY(vfd < 0)) {
+			/* flags is guest-controlled: an invalid value fails here, and
+			   manage() throws on a negative fd rather than returning one. */
+			if (UNLIKELY(real_fd < 0)) {
 				regs.sysret() = -errno;
 			}
 			else {
-				regs.sysret() = vfd;
+				regs.sysret() = cpu.machine().fds().manage(real_fd, false, true);
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("inotify_init1(flags=0x%X) = %d (%lld)\n",

@@ -2,6 +2,7 @@
 **/build-*
 **/build
 **/.build
+**/.build-*
 .vscode/
 guest/interrupts
 guest/guest.elf

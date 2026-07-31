@@ -29,6 +29,11 @@ if (TINYKVM_ARCH STREQUAL "AMD64")
 	add_unit_test(reset  reset.cpp)
 	add_unit_test(timeout timeout.cpp)
 	add_unit_test(tegridy tegridy.cpp)
+	add_unit_test(syscalls syscalls.cpp)
+	# One case here asserts that a guest-controlled length is not walked page
+	# by page. Before the fix it does not fail fast, it grinds -- cap it so a
+	# regression cannot wedge CI.
+	set_tests_properties(test_syscalls PROPERTIES TIMEOUT 120)
 elseif (TINYKVM_ARCH STREQUAL "ARM64")
 	add_unit_test(arm64_minimal arm64_minimal.cpp)
 	add_unit_test(arm64_elf arm64_elf.cpp)
