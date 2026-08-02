@@ -529,3 +529,62 @@ int main() {
 	REQUIRE(machine.return_value() == 0);
 	REQUIRE(elapsed < 5.0);
 }
+
+TEST_CASE("clock_nanosleep cannot sleep the host", "[Syscalls]")
+{
+	/* The request comes straight from the guest, so passing it to the host
+	   clock_nanosleep() let a guest park the VMM thread for as long as it
+	   liked -- found by the syscall fuzzer as a hang, not a crash. SYS_nanosleep
+	   was already a no-op for exactly this reason, but modern glibc routes
+	   nanosleep() through clock_nanosleep, so that no-op covered almost nothing.
+
+	   Note that a regression here does not fail fast: the host thread is stuck
+	   inside the syscall handler, where the execution timeout does not reach it,
+	   so the test hangs until CTest's own timeout fires. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <time.h>
+#include <errno.h>
+
+int main() {
+	struct timespec req;
+
+	/* A very long relative sleep must return without blocking. */
+	req.tv_sec = 1000000; req.tv_nsec = 0;
+	const int r1 = clock_nanosleep(CLOCK_MONOTONIC, 0, &req, 0);
+
+	/* ... and so must an absolute deadline far in the future. */
+	req.tv_sec = 1L << 40; req.tv_nsec = 0;
+	const int r2 = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &req, 0);
+
+	/* Out-of-range tv_nsec is rejected the way Linux rejects it. glibc
+	   returns the error positively rather than through errno. */
+	req.tv_sec = 0; req.tv_nsec = 2000000000L;
+	const int r3 = clock_nanosleep(CLOCK_MONOTONIC, 0, &req, 0);
+
+	/* Negative tv_sec likewise. */
+	req.tv_sec = -1; req.tv_nsec = 0;
+	const int r4 = clock_nanosleep(CLOCK_MONOTONIC, 0, &req, 0);
+
+	/* TIMER_ABSTIME is the only accepted flag. */
+	req.tv_sec = 0; req.tv_nsec = 0;
+	const int r5 = clock_nanosleep(CLOCK_MONOTONIC, 0x4, &req, 0);
+
+	return (r1 == 0)
+		| ((r2 == 0)      << 1)
+		| ((r3 == EINVAL) << 2)
+		| ((r4 == EINVAL) << 3)
+		| ((r5 == EINVAL) << 4);
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"clock-nanosleep"}, env);
+
+	const auto t0 = std::chrono::steady_clock::now();
+	machine.run(30.0f);
+	const auto elapsed = std::chrono::duration<double>(
+		std::chrono::steady_clock::now() - t0).count();
+
+	REQUIRE(machine.return_value() == 0x1F);
+	REQUIRE(elapsed < 5.0);
+}

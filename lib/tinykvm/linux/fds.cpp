@@ -51,6 +51,12 @@ namespace tinykvm
 				close(entry.real_fd);
 			}
 		}
+		// Not in m_fds, and never shared with the master: forks open their
+		// own only when the embedder sets a working directory.
+		if (m_current_working_directory_fd >= 0) {
+			close(m_current_working_directory_fd);
+			m_current_working_directory_fd = AT_FDCWD;
+		}
 	}
 
 	void FileDescriptors::reset_to(const FileDescriptors& other)
@@ -465,6 +471,12 @@ namespace tinykvm
 	void FileDescriptors::set_current_working_directory(const std::string& path) noexcept
 	{
 		m_current_working_directory = path;
+		// This fd is not in m_fds, so reset_to() does not reach it. Close the
+		// previous one here or re-applying a policy leaks one fd per call.
+		if (m_current_working_directory_fd >= 0) {
+			close(m_current_working_directory_fd);
+			m_current_working_directory_fd = AT_FDCWD;
+		}
 		// Set the current working directory fd by opening the path
 		int fd = open(path.c_str(), O_RDONLY | O_DIRECTORY);
 		m_current_working_directory_fd = fd;
