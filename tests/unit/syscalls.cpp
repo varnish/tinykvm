@@ -529,3 +529,185 @@ int main() {
 	REQUIRE(machine.return_value() == 0);
 	REQUIRE(elapsed < 5.0);
 }
+
+#include <sys/stat.h>
+
+TEST_CASE("openat read-only branch must not truncate or create files", "[Syscalls]")
+{
+	/* The openat handler takes its "read-only" branch whenever O_WRONLY/O_RDWR
+	   are absent, but it preserved O_CREAT and O_TRUNC from the guest's flags
+	   and passed them straight to openat2. A guest could therefore truncate an
+	   existing file -- or create a brand-new one -- through a path that the
+	   embedder policy only ever approved for READING.
+
+	   Mutation must be denied outright rather than have the bits quietly
+	   dropped: a guest told the open succeeded would go on believing the file
+	   had been truncated or created. Creating and truncating are reached
+	   through the write branch, which consults is_writable_path(). */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+int main() {
+	/* Both paths are admitted by the READ-ONLY policy the host installs, but
+	   both opens carry mutating flags, so both must be refused. */
+	int fd = open("/truncate-me", O_RDONLY | O_TRUNC);
+	if (fd >= 0) { close(fd); return 1; }
+	if (errno != EACCES) return 2;
+
+	fd = open("/create-me", O_RDONLY | O_CREAT, 0644);
+	if (fd >= 0) { close(fd); return 3; }
+	if (errno != EACCES) return 4;
+
+	/* A plain read of the same path must still work. */
+	fd = open("/truncate-me", O_RDONLY);
+	if (fd < 0) return 5;
+	close(fd);
+	return 0;
+})M");
+
+	ScratchFile file;
+	const std::string created_path = file.path + ".created";
+	unlink(created_path.c_str());
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	/* READ-ONLY policy: there is deliberately no writable callback. */
+	machine.fds().set_open_readable_callback(
+		[&](std::string& path) {
+			if (path == "/truncate-me") { path = file.path;    return true; }
+			if (path == "/create-me")   { path = created_path; return true; }
+			return false;
+		});
+	machine.fds().set_current_working_directory("/tmp");
+	machine.setup_linux({"openat-readonly-flags"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+
+	struct stat st;
+	const bool target_statted = (stat(file.path.c_str(), &st) == 0);
+	const off_t target_size = target_statted ? st.st_size : -1;
+	const bool created_exists = (stat(created_path.c_str(), &st) == 0);
+	unlink(created_path.c_str()); /* clean up even when the bug is present */
+
+	/* The read-approved file must be untouched ... */
+	REQUIRE(target_statted);
+	REQUIRE(target_size == 4096);
+	/* ... and no new file may have appeared. */
+	REQUIRE(!created_exists);
+}
+
+TEST_CASE("fcntl(F_SETFL) must not mutate a read-only host fd", "[Syscalls]")
+{
+	/* F_SETFL changes the status flags of the underlying host fd, but it
+	   resolved the vfd with the plain translate() rather than
+	   translate_writable_vfd(), so a guest could set O_NONBLOCK on an fd
+	   opened through the read-only policy. Forks share the master's real_fd
+	   and reset_to() does not restore file status flags, so the change
+	   outlives the request that made it. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <unistd.h>
+
+int main() {
+	int fd = open("/readable", O_RDONLY);
+	if (fd < 0) return 1;
+
+	/* The fd is read-only, so this must be refused ... */
+	if (fcntl(fd, F_SETFL, O_NONBLOCK) == 0) return 2;
+
+	/* ... and the flag must not have stuck on the host fd. F_GETFL reports
+	   the host fd's O_NONBLOCK bit back to us. */
+	const int flags = fcntl(fd, F_GETFL);
+	if (flags < 0) return 3;
+	if (flags & O_NONBLOCK) return 4;
+
+	close(fd);
+	return 0;
+})M");
+
+	ScratchFile file;
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	/* READ-ONLY policy: there is deliberately no writable callback. */
+	allow_scratch_file(machine, file);
+	machine.fds().set_current_working_directory("/tmp");
+	machine.setup_linux({"fcntl-setfl-readonly"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
+
+TEST_CASE("statx on a policy-denied path must not return host stat data", "[Syscalls]")
+{
+	/* The statx handler checked is_readable_path() and stored -EPERM when the
+	   embedder policy denied the path -- but then fell through to a host
+	   statx() on the original guest path anyway, overwriting the error and
+	   copying real host stat data into the guest. Its sibling newfstatat
+	   correctly stops after the denial. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+
+int main() {
+	struct statx stx;
+	memset(&stx, 0xAA, sizeof(stx));
+
+	/* The host policy denies EVERY path, so this must fail. */
+	errno = 0;
+	long r = syscall(SYS_statx, AT_FDCWD, "/etc/passwd", 0, STATX_BASIC_STATS, &stx);
+	if (r == 0) return 1; /* host stat data was leaked to the guest */
+	if (errno != EPERM && errno != EACCES) return 2;
+	return 0;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	/* Deny everything: a correct statx can never succeed on any path. */
+	machine.fds().set_open_readable_callback(
+		[](std::string&) { return false; });
+	machine.fds().set_current_working_directory("/tmp");
+	machine.setup_linux({"statx-denied"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
+
+TEST_CASE("unlinkat reads its path and flags from the correct registers", "[Syscalls]")
+{
+	/* The handler swapped its argument registers: it read `flags` from
+	   sysarg(1) (the path pointer) and the path pointer from sysarg(2) (the
+	   flags). A plain unlinkat(AT_FDCWD, path, 0) therefore called the host
+	   unlinkat() with garbage flags (EINVAL) and never removed anything. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+
+int main() {
+	/* Perfectly legal unlinkat of a policy-approved file. */
+	errno = 0;
+	long r = syscall(SYS_unlinkat, AT_FDCWD, "/scratch", 0);
+	if (r != 0) return 1;
+	return 0;
+})M");
+
+	ScratchFile file;
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	allow_scratch_file(machine, file);
+	machine.setup_linux({"unlinkat-args"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+	/* The scratch file must really be gone (the destructor tolerates this). */
+	REQUIRE(access(file.path.c_str(), F_OK) != 0);
+}
+

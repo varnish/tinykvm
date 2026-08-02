@@ -1130,22 +1130,32 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			// int setsockopt(int sockfd, int level, int optname,
 			//                const void *optval, socklen_t optlen);
-			const int fd = cpu.machine().fds().translate(regs.sysarg(0));
 			const int level = regs.sysarg(1);
 			const int optname = regs.sysarg(2);
 			const uint64_t g_optval = regs.sysarg(3);
 			const size_t optlen = regs.sysarg(4);
-			std::array<uint8_t, 256> optval;
-			if (UNLIKELY(optlen > optval.size()))
-			{
-				regs.sysret() = -EINVAL;
-			} else {
-				cpu.machine().copy_from_guest(optval.data(), g_optval, optlen);
-				if (setsockopt(fd, level, optname, optval.data(), optlen) < 0) {
-					regs.sysret() = -errno;
-				} else {
-					regs.sysret() = 0;
+			int fd = -1;
+			try {
+				// Mutates the host socket, so it needs the writable variant.
+				fd = cpu.machine().fds().translate_writable_vfd(regs.sysarg(0));
+				std::array<uint8_t, 256> optval;
+				if (UNLIKELY(fd < 0))
+				{
+					regs.sysret() = -EBADF;
 				}
+				else if (UNLIKELY(optlen > optval.size()))
+				{
+					regs.sysret() = -EINVAL;
+				} else {
+					cpu.machine().copy_from_guest(optval.data(), g_optval, optlen);
+					if (setsockopt(fd, level, optname, optval.data(), optlen) < 0) {
+						regs.sysret() = -errno;
+					} else {
+						regs.sysret() = 0;
+					}
+				}
+			} catch (...) {
+				regs.sysret() = -EBADF;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("setsockopt(fd=%d, level=%d, optname=%d, optval=0x%lX, optlen=%zu) = %lld\n",
@@ -1825,7 +1835,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				}
 				else if (cmd == F_SETFL)
 				{
-					const int writable_fd = cpu.machine().fds().translate(vfd);
+					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
 					const int allowed_flags = O_NONBLOCK;
 					const int flags = regs.sysarg(2) & allowed_flags;
 					if (fcntl(writable_fd, F_SETFL, flags) < 0)
@@ -2102,34 +2112,45 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			// int unlinkat(int dirfd, const char *pathname, int flags);
 			const int vdirfd = regs.sysarg(0);
-			const int flags = regs.sysarg(1) | AT_SYMLINK_NOFOLLOW;
-			const uint64_t g_path = regs.sysarg(2);
+			const uint64_t g_path = regs.sysarg(1);
+			// AT_REMOVEDIR is the only flag unlinkat accepts.
+			const int flags = regs.sysarg(2) & AT_REMOVEDIR;
 			std::string path;
-			// Check if the path is writable (path can be modified)
-			if (cpu.machine().fds().is_writable_path(path))
-			{
-				int dirfd = cpu.machine().fds().current_working_directory_fd();
-				if (vdirfd != AT_FDCWD)
-				{
-					dirfd = cpu.machine().fds().translate_writable_vfd(vdirfd);
-				}
-
+			try {
 				if (g_path != 0x0)
 				{
 					path = cpu.machine().memcstring(g_path, PATH_MAX);
 				}
 
-				// Unlink the file, relative to the dirfd
-				if (unlinkat(dirfd, path.c_str(), flags) < 0) {
-					regs.sysret() = -errno;
+				if (path.empty())
+				{
+					// Linux has no AT_EMPTY_PATH for unlinkat, and the
+					// policy layer has nothing to decide about "".
+					regs.sysret() = -ENOENT;
 				}
-				else {
-					regs.sysret() = 0;
+				// Check if the path is writable (path can be modified)
+				else if (cpu.machine().fds().is_writable_path(path))
+				{
+					int dirfd = cpu.machine().fds().current_working_directory_fd();
+					if (vdirfd != AT_FDCWD)
+					{
+						dirfd = cpu.machine().fds().translate_writable_vfd(vdirfd);
+					}
+
+					// Unlink the file, relative to the dirfd
+					if (unlinkat(dirfd, path.c_str(), flags) < 0) {
+						regs.sysret() = -errno;
+					}
+					else {
+						regs.sysret() = 0;
+					}
 				}
-			}
-			else
-			{
-				regs.sysret() = -EPERM;
+				else
+				{
+					regs.sysret() = -EPERM;
+				}
+			} catch (...) {
+				regs.sysret() = -EBADF;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("unlinkat(%d, %s (0x%llX), %d) = %lld\n",
@@ -2413,6 +2434,21 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					int pfd = cpu.machine().fds().current_working_directory_fd();
 					if (vfd != AT_FDCWD) {
 						pfd = cpu.machine().fds().translate(vfd);
+					}
+					/* O_CREAT/O_TRUNC/O_APPEND mutate the host file, but only
+					   the readable-path policy is consulted on this branch.
+					   Deny rather than silently dropping the bits: may_open()
+					   adds MAY_WRITE for O_TRUNC and honours O_CREAT
+					   regardless of the O_RDONLY access mode, and a guest
+					   told the open succeeded would wrongly believe the file
+					   had been truncated or created. Mutation goes through
+					   the write branch and is_writable_path(). */
+					if (UNLIKELY(flags & (O_CREAT | O_TRUNC | O_APPEND))) {
+						regs.sysret() = -EACCES;
+						cpu.set_registers(regs);
+						SYSPRINT("OPENAT fd=%d mutating flags on a read-only open: %s\n",
+							vfd, path.c_str());
+						return;
 					}
 					real_path = path;
 					if (UNLIKELY(!cpu.machine().fds().is_readable_path(real_path))) {
@@ -3053,23 +3089,24 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
-				if (!path.empty()) {
-					if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
-						regs.sysret() = -EPERM;
-					}
-				}
-				// Translate from vfd when fd != AT_FDCWD
-				if (vfd != AT_FDCWD)
-					fd = cpu.machine().fds().translate(vfd);
-
-				struct statx vstat;
-				const int result =
-					statx(fd, path.c_str(), flags, mask, &vstat);
-				if (result == 0) {
-					cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
-					regs.sysret() = 0;
+				// An empty path means AT_EMPTY_PATH on the fd itself, which
+				// the policy has nothing to say about.
+				if (UNLIKELY(!cpu.machine().fds().is_readable_path(path) && !path.empty())) {
+					regs.sysret() = -EPERM;
 				} else {
-					regs.sysret() = -errno;
+					// Translate from vfd when fd != AT_FDCWD
+					if (vfd != AT_FDCWD)
+						fd = cpu.machine().fds().translate(vfd);
+
+					struct statx vstat;
+					const int result =
+						statx(fd, path.c_str(), flags, mask, &vstat);
+					if (result == 0) {
+						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
+						regs.sysret() = 0;
+					} else {
+						regs.sysret() = -errno;
+					}
 				}
 			} catch (...) {
 				regs.sysret() = -1;
