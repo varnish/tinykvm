@@ -529,3 +529,142 @@ int main() {
 	REQUIRE(machine.return_value() == 0);
 	REQUIRE(elapsed < 5.0);
 }
+
+TEST_CASE("dup2 onto a fresh virtual fd must succeed and not go stale", "[Syscalls]")
+{
+	/* Two bugs in one handler. dup2(vfd, new_vfd) translated new_vfd *before*
+	   dup'ing, so an unmanaged target -- the normal case, the guest picked a
+	   free descriptor -- threw and the call returned -EBADF, leaking the
+	   would-be host fd. And when new_vfd *was* managed, the handler registered
+	   new_vfd onto the host fd it had just closed instead of the fresh dup()
+	   result, so the virtual fd aliased a closed (and later recycled) host fd. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+int main() {
+	int fd = open("/scratch", O_RDONLY);
+	if (fd < 0) return 1;
+
+	/* dup2 onto an unused descriptor must succeed and return it. */
+	int rc = dup2(fd, 10);
+	if (rc != 10) return 2;
+
+	/* The new descriptor must refer to the same open file description. */
+	char c = 0;
+	if (read(10, &c, 1) != 1) return 3;
+	if (c != 'A') return 4;
+
+	/* dup2 onto an EXISTING descriptor: it must become a fresh reference to
+	   fd's file, not an alias of the host fd that was just closed. */
+	int fd2 = open("/scratch", O_RDONLY);
+	if (fd2 < 0) return 5;
+	if (dup2(fd, fd2) != fd2) return 6;
+	if (read(fd2, &c, 1) != 1) return 7;
+	if (c != 'A') return 8;
+
+	return 0;
+})M");
+
+	ScratchFile file;
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	allow_scratch_file(machine, file);
+	machine.setup_linux({"dup2-stale-fd"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
+
+
+TEST_CASE("poll with more than 256 valid fds does not throw a foreign exception", "[Syscalls]")
+{
+	/* The handler accumulated translated fds into a fixed
+	   std::array<pollfd, 256> via .at(). With more than 256 *valid* guest
+	   entries, .at() threw std::out_of_range, which escaped the handler and
+	   Machine::run() itself -- past embedders that (per the documented
+	   contract) only catch MachineException. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <poll.h>
+#include <unistd.h>
+
+#define COUNT 300
+
+static struct pollfd pfds[COUNT];
+
+int main() {
+	int pfd[2];
+	if (pipe(pfd) < 0) return 1;
+	/* Make the read end ready, so a successful poll returns immediately. */
+	if (write(pfd[1], "x", 1) != 1) return 2;
+
+	for (int i = 0; i < COUNT; i++) {
+		pfds[i].fd = pfd[0];
+		pfds[i].events = POLLIN;
+	}
+	long r = poll(pfds, COUNT, 0);
+	if (r < 0) return 3;
+	return 0;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"poll-overflow"}, env);
+
+	bool threw_machine_exception = false;
+	try {
+		machine.run(4.0f);
+	} catch (const tinykvm::MachineException&) {
+		/* A clean, documented emulation error is an acceptable outcome. */
+		threw_machine_exception = true;
+	} catch (const std::exception& e) {
+		FAIL("non-MachineException escaped machine.run(): " << e.what());
+	}
+
+	if (!threw_machine_exception) {
+		REQUIRE(machine.return_value() == 0);
+	}
+}
+
+
+TEST_CASE("futex with an unimplemented op does not throw a foreign exception", "[Syscalls]")
+{
+	/* The futex handler supports WAIT/WAKE (and the BITSET variants) and threw
+	   std::runtime_error("Unimplemented futex op: ...") for anything else.
+	   That escaped the handler and Machine::run() -- bypassing embedders that
+	   only catch MachineException, and giving the guest no error code at all.
+	   A clean -ENOSYS (or a MachineException) is the acceptable behaviour. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <linux/futex.h>
+
+static int futex_word = 0;
+
+int main() {
+	/* FUTEX_FD is not implemented by the emulation layer. */
+	long r = syscall(SYS_futex, &futex_word, FUTEX_FD, 0, (void*)0, (void*)0, 0);
+	/* A clean error return (e.g. -ENOSYS) is fine. */
+	return (r < 0) ? 0 : 1;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"futex-unimplemented-op"}, env);
+
+	bool threw_machine_exception = false;
+	try {
+		machine.run(4.0f);
+	} catch (const tinykvm::MachineException&) {
+		/* A clean, documented emulation error is an acceptable outcome. */
+		threw_machine_exception = true;
+	} catch (const std::exception& e) {
+		FAIL("non-MachineException escaped machine.run(): " << e.what());
+	}
+
+	if (!threw_machine_exception) {
+		REQUIRE(machine.return_value() == 0);
+	}
+}
