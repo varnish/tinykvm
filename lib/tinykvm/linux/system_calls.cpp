@@ -2368,24 +2368,56 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 		});
 	Machine::install_syscall_handler(
 		SYS_clock_nanosleep, [](vCPU& cpu) { // clock_nanosleep
+			/* The request is guest-controlled, so sleeping on it would let the
+			   guest park the VMM thread for as long as it likes. SYS_nanosleep
+			   is a deliberate no-op for that reason, and modern glibc routes
+			   nanosleep() here -- validate as Linux does, then do not sleep. */
 			auto& regs = cpu.registers();
-			const uint64_t g_buf = regs.sysarg(2);
-			const uint64_t g_rem = regs.sysarg(3);
-			struct timespec ts;
-			struct timespec ts_rem {};
-			cpu.machine().copy_from_guest(&ts, g_buf, sizeof(ts));
-			const int result =
-				clock_nanosleep(CLOCK_MONOTONIC, regs.sysarg(1), &ts, &ts_rem);
-			if (result < 0) {
-				regs.sysret() = -errno;
-			} else {
-				if (g_rem != 0x0)
-					cpu.machine().copy_to_guest(g_rem, &ts_rem, sizeof(ts_rem));
-				regs.sysret() = 0;
+			const uint64_t g_clockid = regs.sysarg(0);
+			const uint64_t g_flags   = regs.sysarg(1);
+			const uint64_t g_req     = regs.sysarg(2);
+
+			bool valid_clock = false;
+			switch (g_clockid) {
+			case CLOCK_REALTIME:
+			case CLOCK_MONOTONIC:
+			case CLOCK_BOOTTIME:
+			case CLOCK_PROCESS_CPUTIME_ID:
+			case CLOCK_THREAD_CPUTIME_ID:
+				valid_clock = true;
+				break;
+			default:
+				valid_clock = false;
 			}
+			/* TIMER_ABSTIME is the only flag Linux accepts here. */
+			if (UNLIKELY(!valid_clock || (g_flags & ~uint64_t(TIMER_ABSTIME)) != 0)) {
+				regs.sysret() = -EINVAL;
+				cpu.set_registers(regs);
+				SYSPRINT("clock_nanosleep(clk=%llu, flags=0x%llX, bad args) = %lld\n",
+						 (unsigned long long)g_clockid, (unsigned long long)g_flags,
+						 regs.sysret());
+				return;
+			}
+
+			struct timespec ts {};
+			cpu.machine().copy_from_guest(&ts, g_req, sizeof(ts));
+			if (UNLIKELY(ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)) {
+				regs.sysret() = -EINVAL;
+				cpu.set_registers(regs);
+				SYSPRINT("clock_nanosleep(clk=%llu, flags=0x%llX, bad timespec) = %lld\n",
+						 (unsigned long long)g_clockid, (unsigned long long)g_flags,
+						 regs.sysret());
+				return;
+			}
+
+			/* Report the sleep as completed in full. Nothing is written to the
+			   remain buffer: that is only for an interrupted sleep. */
+			regs.sysret() = 0;
 			cpu.set_registers(regs);
-			SYSPRINT("clock_nanosleep(clk=%lld, flags=%lld, req=0x%llX, rem=%lld) = %lld\n",
-					 regs.sysarg(0), regs.sysarg(1), regs.sysarg(2), regs.sysarg(3), regs.sysret());
+			SYSPRINT("clock_nanosleep(clk=%llu, flags=0x%llX, req=0x%llX, rem=0x%llX) = %lld\n",
+					 (unsigned long long)g_clockid, (unsigned long long)g_flags,
+					 (unsigned long long)g_req, (unsigned long long)regs.sysarg(3),
+					 regs.sysret());
 		});
 	Machine::install_syscall_handler(
 		SYS_exit_group, [](vCPU& cpu)
