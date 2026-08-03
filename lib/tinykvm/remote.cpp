@@ -178,9 +178,11 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 	remote_vm.cpu().get_special_registers().fs.base =
 		this->get_special_registers().fs.base;
 	// After disconnect, access is no longer serialized (don't touch remote anymore)
-	const auto our_fsbase = this->remote_disconnect();
-	if (our_fsbase == 0)
+	// NOTE: The restored FSBASE is guest-writable and may be zero, so the
+	// connection state itself decides whether the disconnect succeeded.
+	if (!this->is_remote_connected())
 		throw std::runtime_error("ipre_resume_storage: Remote disconnect failed");
+	const auto our_fsbase = this->remote_disconnect();
 
 	// 6. When returning, restore original register state
 	copy_callee_saved_registers(save_all, this->registers(), saved_gprs);
@@ -188,6 +190,14 @@ void Machine::ipre_remote_resume_now(bool save_all, std::function<void(Machine&)
 	this->registers().rip += 2; // Skip over OUT instruction
 	if (save_all)
 		this->set_fpu_registers(saved_fprs);
+	if (our_fsbase == 0) {
+		// The resume stub skips wrfsbase when the pushed value is zero, so
+		// restore a zeroed guest FSBASE here instead of leaving the remote
+		// VM's FSBASE loaded after the remote memory is unmapped again.
+		auto& local_sprs = vcpu.get_special_registers();
+		local_sprs.fs.base = 0;
+		this->set_special_registers(local_sprs);
+	}
 	this->prepare_vmresume(our_fsbase, true);
 	vcpu.stopped = false;
 }
@@ -312,8 +322,10 @@ Machine::address_t Machine::remote_activate_now()
 
 	this->remote_connect(*this->m_remote, true);
 	this->m_remote_connections++;
+	this->m_remote_active = true;
 
-	// Set current FSBASE to remote original FSBASE
+	// Remember our own FSBASE, so that it can be restored on disconnect.
+	// NOTE: This is guest-writable and may legitimately be zero.
 	vcpu.remote_original_tls_base = get_fsgs().first;
 
 	auto& remote = *this->m_remote;
@@ -356,6 +368,7 @@ Machine::address_t Machine::remote_disconnect()
 {
 	if (!this->is_remote_connected())
 		return 0;
+	this->m_remote_active = false;
 
 	auto& remote = *this->m_remote;
 	remote.m_remote = nullptr; // Clear halfway state
@@ -397,7 +410,7 @@ Machine::address_t Machine::remote_disconnect()
 }
 bool Machine::is_remote_connected() const noexcept
 {
-	return this->m_remote != nullptr && this->vcpu.remote_original_tls_base != 0;
+	return this->m_remote != nullptr && this->m_remote_active;
 }
 
 bool Machine::is_foreign_address(address_t addr) const noexcept

@@ -437,6 +437,11 @@ private:
 	mutable std::unique_ptr<FileDescriptors> m_fds = nullptr;
 
 	Machine* m_remote = nullptr;
+	/* True only while a remote connection is live (between activate and
+	   disconnect). Must not be derived from guest-visible state: the guest
+	   can write FSBASE (CR4.FSGSBASE is enabled), so using its TLS base as
+	   the connection token lets a guest skip the disconnect cleanup. */
+	bool     m_remote_active = false;
 	uint32_t m_remote_connections = 0;
 
 	std::unique_ptr<MachineProfiling> m_profiling = nullptr;
