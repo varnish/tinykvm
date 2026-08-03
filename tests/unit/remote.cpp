@@ -467,3 +467,103 @@ int main() {
 		REQUIRE(is_waiting);
 	}
 }
+
+TEST_CASE("Remote call with guest-zeroed FSBASE must not wedge fork", "[Remote]")
+{
+	// Regression test: the VMM tracks an active remote connection using
+	// guest-writable TLS state (FSBASE-relative). A guest that zeroes its
+	// own FSBASE before calling into the remote VM makes
+	// is_remote_connected() read false while the call is still active,
+	// so the disconnect path throws "Remote VM disconnect called, but
+	// not connected", leaving the vCPU cross-wired to the remote Machine.
+	// reset_to() cannot clean that up: the next ordinary remote call on
+	// the fork fails with "page_at: pt entry not user writable" and the
+	// fork is permanently wedged.
+	// The healthy behavior asserted below is: a remote call entered with
+	// FSBASE=0 completes and disconnects cleanly, and after reset_to()
+	// a second remote call succeeds (connection count reaching 2).
+	const auto storage_binary = build_and_load(R"M(
+extern long write(int, const void*, unsigned long);
+int main() {
+	return 1234;
+}
+extern void remote_hello_world() {
+	write(1, "Hello Remote World!", 19);
+}
+)M", "-Wl,-Ttext-segment=0x40400000");
+
+	// Extract storage remote symbols
+	const std::string command = "objcopy -w --extract-symbol --strip-symbol=!remote* --strip-symbol=* " + storage_binary.first + " storage.syms";
+	FILE* f = popen(command.c_str(), "r");
+	if (f == nullptr) {
+		throw std::runtime_error("Unable to extract remote symbols");
+	}
+	pclose(f);
+
+	const auto main_binary = build_and_load(R"M(
+extern void remote_hello_world();
+int main() {
+	return 2345;
+}
+extern int test_remote_fszero() {
+	__asm__ volatile("wrfsbase %0" :: "r"(0UL) : "memory");
+	remote_hello_world();
+	return 100;
+}
+extern int test_remote_normal() {
+	remote_hello_world();
+	return 100;
+}
+)M", "-Wl,--just-symbols=storage.syms");
+
+	tinykvm::Machine storage { storage_binary.second, {
+		.max_mem = 16ULL << 20, // MB
+		.vmem_base_address = 1ULL << 30, // 1GB
+	} };
+	storage.setup_linux({"storage"}, env);
+	storage.run(4.0f);
+	REQUIRE(storage.return_value() == 1234);
+
+	tinykvm::Machine machine { main_binary.second, {
+		.max_mem = MAX_MEMORY
+	} };
+	machine.setup_linux({"main"}, env);
+	machine.remote_connect(storage);
+	machine.set_remote_allow_page_faults(true);
+	REQUIRE(machine.has_remote());
+
+	machine.run(4.0f);
+	REQUIRE(machine.return_value() == 2345);
+
+	// Create a fork
+	machine.prepare_copy_on_write(MAX_COWMEM);
+	tinykvm::Machine fork(machine, {
+		.max_mem = MAX_MEMORY,
+		.max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
+	});
+	fork.set_remote_allow_page_faults(true);
+	REQUIRE(fork.has_remote());
+
+	// A remote call entered with guest FSBASE=0 must complete and
+	// disconnect cleanly, like any other remote call.
+	REQUIRE_NOTHROW(fork.vmcall("test_remote_fszero"));
+	REQUIRE(fork.return_value() == 100);
+	REQUIRE(!fork.is_remote_connected());
+	REQUIRE(fork.remote_connection_count() == 1);
+
+	// reset_to() must restore the fork to a pristine state, so a
+	// subsequent ordinary remote call succeeds and the connection
+	// count reaches 2.
+	fork.reset_to(machine, {
+		.max_mem = MAX_MEMORY,
+		.max_cow_mem = MAX_COWMEM,
+		.split_hugepages = true
+	});
+	REQUIRE(fork.has_remote());
+
+	REQUIRE_NOTHROW(fork.vmcall("test_remote_normal"));
+	REQUIRE(fork.return_value() == 100);
+	REQUIRE(!fork.is_remote_connected());
+	REQUIRE(fork.remote_connection_count() == 2);
+}
