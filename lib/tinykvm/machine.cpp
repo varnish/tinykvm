@@ -68,7 +68,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	this->vcpu.init(0, *this, options);
 
 	if (memory.has_loadable_snapshot_state()) {
-		this->m_loaded_from_snapshot = this->load_snapshot_state();
+		this->m_loaded_from_snapshot = this->load_snapshot_state(options);
 		if (this->m_loaded_from_snapshot) {
 			if (options.verbose_loader) {
 				printf("Loaded VM snapshot state\n");

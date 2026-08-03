@@ -105,7 +105,7 @@ struct SnapshotState {
 		return ret;
 	}
 };
-bool Machine::load_snapshot_state()
+bool Machine::load_snapshot_state(const MachineOptions& options)
 {
 	if (!memory.has_loadable_snapshot_state()) {
 		return false;
@@ -148,28 +148,35 @@ bool Machine::load_snapshot_state()
 		this->memory.page_tables = state.m_page_tables;
 
 		void* current = state.current;
-		// Load populate pages
-		madvise(this->memory.ptr, kernel_end_address(), MADV_WILLNEED | MADV_SEQUENTIAL);
+		// Load populate pages. A reordered snapshot has its hot set packed
+		// contiguously at the front of the file, so sequential readahead is
+		// the right hint; an unreordered snapshot's ranges are scattered.
+		const int madvise_pattern =
+			this->memory.memory_reordered ? MADV_SEQUENTIAL : MADV_RANDOM;
+		madvise(this->memory.ptr, kernel_end_address(), MADV_WILLNEED | madvise_pattern);
 		static constexpr uint64_t step = 1*1024*1024;
-		static constexpr uint64_t madvise_max_total = 32 * 1024 * 1024;
+		/* Zero means no limit: prefetch every recorded range. */
+		const uint64_t madvise_max_total = options.snapshot_prefetch_limit;
 		uint64_t madvised_total = 0;
 		int madvised_total_calls = 0;
 		for (unsigned i = 0; i < state.num_access_ranges; i++) {
+			// NOTE: Every range must be visited even when we stop prefetching,
+			// as next() is what advances the cursor into the snapshot state.
 			ColdStartAccessedRange* range = state.next<ColdStartAccessedRange>(current);
 			if (range->start >= MemoryBanks::ARENA_BASE_ADDRESS || range->start < kernel_end_address())
 				continue;
-			if (madvised_total >= madvise_max_total)
+			if (madvise_max_total != 0 && madvised_total >= madvise_max_total)
 				continue;
 			try {
 				//const size_t num_pages = ((range->end - range->start + 0xFFF) & ~0xFFFLL) / 0x1000;
 				//printf("Populating pages from 0x%lX -> 0x%lX (%zu pages)\n", range->start, range->end, num_pages);
 				for (uint64_t start = range->start; start < range->end; start += step) {
-					madvise(this->memory.ptr + start, std::min(range->end - start, step), MADV_WILLNEED | MADV_SEQUENTIAL);
+					madvise(this->memory.ptr + start, std::min(range->end - start, step), MADV_WILLNEED | madvise_pattern);
 					madvised_total += std::min(range->end - start, step);
 					madvised_total_calls++;
 					//printf("Madvised pages from 0x%lX -> 0x%lX (total madvised: %zu MiB)\n",
 					//	start, std::min(start + step, range->end), madvised_total / (1024 * 1024));
-					if (madvised_total >= madvise_max_total) {
+					if (madvise_max_total != 0 && madvised_total >= madvise_max_total) {
 						break;
 					}
 				}
@@ -323,35 +330,41 @@ std::vector<std::pair<uint64_t, uint64_t>> Machine::reorder_snapshot_memory(cons
 		translation[pi.paddr] = pi.paddr; // identity — no move
 	}
 	// Movable pages start after the fixed region.
-	// Assign addresses sequentially, but stop accepting pages if we'd
-	// exceed the allocation. Pages that don't fit are dropped — unfaulted
-	// pages at the tail are the ones most likely trimmed, since they
-	// weren't accessed during the probing request anyway.
+	// Assign addresses sequentially. Realignment (2MB/1GB leaves) and the
+	// flattening of bank pages into main memory can make the reordered
+	// footprint larger than the original one, so this can genuinely
+	// overflow. Dropping the pages that don't fit is not an option: branch
+	// (page table) pages are placed last, so overflow would take out the
+	// page tables first, leaving dangling entries or an untranslatable
+	// page table root. Fail the whole reordering instead, leaving the VM
+	// untouched — nothing has been modified at this point.
 	const uint64_t mem_limit = physbase + mem_size;
 	uint64_t cursor = FIXED_REGION_END;
-	size_t pages_placed = 0;
 	for (auto& pi : ordered) {
 		uint64_t aligned = (cursor + (pi.size - 1)) & ~(pi.size - 1);
-		if (aligned + pi.size > mem_limit)
-			break;
+		if (aligned + pi.size > mem_limit) {
+			throw MemoryException("reorder_snapshot_memory: pages do not fit in main memory after realignment",
+				aligned, pi.size, true);
+		}
 		translation[pi.paddr] = aligned;
 		cursor = aligned + pi.size;
-		pages_placed++;
 	}
-	// Trim ordered to only the pages that fit
-	const size_t pages_dropped = ordered.size() - pages_placed;
-	ordered.resize(pages_placed);
-	if (pages_dropped > 0) {
-		printf("reorder_snapshot_memory: dropped %zu pages that didn't fit after alignment\n",
-			pages_dropped);
+
+	// The page table root must have a translation, otherwise the rewired
+	// tables would be unreachable. Resolve it before anything is modified.
+	auto root_it = translation.find(this->memory.page_tables);
+	if (root_it == translation.end()) {
+		throw MemoryException("reorder_snapshot_memory: page table root was not relocated",
+			this->memory.page_tables, PAGE_SIZE);
 	}
+	const uint64_t new_root = root_it->second;
 
 	// Step 4: Copy pages to temporary buffer in new order
 	char* tmp = (char*)mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
 	if (tmp == MAP_FAILED) {
-		fprintf(stderr, "reorder_snapshot_memory: failed to allocate temp buffer, skipping\n");
-		return {};
+		throw MemoryException("reorder_snapshot_memory: failed to allocate temp buffer",
+			0, mem_size, true);
 	}
 
 	// Copy fixed region as-is (pages below FIXED_REGION_END stay in place)
@@ -371,7 +384,6 @@ std::vector<std::pair<uint64_t, uint64_t>> Machine::reorder_snapshot_memory(cons
 	}
 
 	// Step 5: Rewire page tables in the temp buffer
-	uint64_t new_root = translation.at(this->memory.page_tables);
 	rewire_page_tables(tmp, physbase, new_root, translation, true);
 
 	// Step 6: Copy back and update metadata

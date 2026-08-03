@@ -429,6 +429,14 @@ void vCPU::set_vcpu_table_at(unsigned index, int value)
 void Machine::prepare_copy_on_write(size_t max_work_mem,
 	uint64_t shared_memory_boundary, bool split_accessed_hugepages)
 {
+	/* A reordered VM (reorder_snapshot_memory) has its pages moved off the
+	   identity mapping and its page table root moved away from PT_ADDR, both
+	   of which the CoW machinery assumes: setup_cow_mode() clones the PML4 at
+	   physbase + PT_ADDR, and fork_reset() walks the baseline page table root
+	   from the same fixed address. Reordered snapshots are load-and-run only. */
+	if (UNLIKELY(this->memory.memory_reordered)) {
+		throw MachineException("Cannot prepare copy-on-write on a VM with reordered memory");
+	}
 	this->m_prepped = true;
 
 	/* Snapshot FPU state to userspace while this master's vCPU fd is still

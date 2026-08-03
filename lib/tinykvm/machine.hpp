@@ -304,7 +304,12 @@ struct Machine
 	size_t prefetch_pages(const std::vector<std::pair<uint64_t, uint64_t>>& pages);
 	/* Reorder snapshot memory so pages are sequential in fault order.
 	   Rewires page tables to reflect the new physical layout.
-	   Returns post-reorder populate pages (new paddr, size) for madvise on load. */
+	   Returns post-reorder populate pages (new paddr, size) for madvise on load.
+	   Throws if the reordered layout does not fit in main memory, leaving the
+	   VM untouched. NOTE: reordering breaks the identity mapping (vaddr ==
+	   paddr) and moves the page table root off PT_ADDR, so a reordered VM (or
+	   a snapshot made from one) is load-and-run only: prepare_copy_on_write()
+	   and thus forking will refuse it. */
 	std::vector<std::pair<uint64_t, uint64_t>> reorder_snapshot_memory(const std::vector<uint64_t>& fault_order);
 
 	/* Remote VM through address space merging */
@@ -393,7 +398,7 @@ private:
 	void remote_update_gigapage_mappings(Machine& other, bool forced = false);
 	/* Prepare for resume with a pagetable reload */
 	void prepare_vmresume(address_t fsbase = 0, bool reload_pagetables = true);
-	bool load_snapshot_state();
+	bool load_snapshot_state(const MachineOptions&);
 
 	vCPU  vcpu;
 	int   fd = 0;

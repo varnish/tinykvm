@@ -433,6 +433,11 @@ void vCPU::set_vcpu_table_at(unsigned index, int value)
 void Machine::prepare_copy_on_write(size_t max_work_mem,
 	uint64_t shared_memory_boundary, bool split_accessed_hugepages)
 {
+	/* Reordered memory breaks the identity mapping and moves the page table
+	   root, which the CoW/fork paths assume. See the AMD64 counterpart. */
+	if (UNLIKELY(this->memory.memory_reordered)) {
+		throw MachineException("Cannot prepare copy-on-write on a VM with reordered memory");
+	}
 	this->m_prepped = true;
 	this->m_prepared_fpu_regs = this->fpu_registers();
 	if (shared_memory_boundary == 0)

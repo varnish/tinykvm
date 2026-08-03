@@ -124,7 +124,7 @@ struct Arm64SnapshotState {
 
 } // namespace
 
-bool Machine::load_snapshot_state()
+bool Machine::load_snapshot_state(const MachineOptions&)
 {
 	if (!memory.has_loadable_snapshot_state()) {
 		return false;

@@ -126,6 +126,13 @@ namespace tinykvm
 		   should be created if missing, opened, or created
 		   and possibly overwritten. */
 		SnapshotMode snapshot_mode = OpenOrCreate;
+		/* When loading a VM snapshot, prefetch (MADV_WILLNEED) at most
+		   this many bytes of the access ranges recorded in the snapshot.
+		   A reordered snapshot packs its hot set contiguously at the front,
+		   so a modest cap (eg. 32MB) is enough there, while an unreordered
+		   snapshot with a large hot set wants everything prefetched.
+		   0 means no limit: prefetch every recorded range. */
+		size_t snapshot_prefetch_limit = 0;
 		/* When using hugepages, cover the given size with
 		   hugepages, unless 0, in which case the entire
 		   main memory will be covered. */
@@ -166,9 +173,14 @@ namespace tinykvm
 		bool m_is_oom = false; /* True if the exception was caused by OOM */
 	};
 
-	class RetryException: public MachineException {
+	/* Internal control-flow signal: the page walk made an unpresented
+	   (PDE64_PRESENTABLE) entry present again, and the operation must be
+	   retried. Deliberately *not* a MachineException: a broad
+	   catch (const MachineException&) somewhere up the stack would silently
+	   swallow the retry and leave the caller with a half-done page walk. */
+	class RetryException: public std::exception {
 	public:
-		RetryException() : MachineException("Retry", 0) {}
+		const char* what() const noexcept override { return "Retry"; }
 	};
 
 	template <class...> constexpr std::false_type always_false {};
