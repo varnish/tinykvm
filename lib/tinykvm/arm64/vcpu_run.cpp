@@ -129,19 +129,29 @@ void vCPU::disable_timer()
 long vCPU::run_once()
 {
 	int result;
+	int run_errno = 0;
 	{
 		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());
 		this->flush_registers();
 		result = ioctl(this->fd, KVM_RUN, 0);
+		/* Before invalidate_register_cache() or the profiler's destructor can
+		   make a syscall of their own and overwrite it. */
+		run_errno = errno;
 		this->invalidate_register_cache();
 	}
 	if (UNLIKELY(result < 0)) {
-		if (this->timer_ticks) {
+		/* Did the timer *fire*, not was one armed: timer_ticks holds the
+		   configured timeout in milliseconds, so testing it alone would relabel
+		   every KVM_RUN failure inside a timed run (an EFAULT from protected or
+		   unbacked host memory in particular) as a timeout and discard errno.
+		   See the same reasoning in the amd64 vcpu_run.cpp. */
+		const bool timer_armed = (this->timer_ticks != 0);
+		if (timer_armed && (timer_was_triggered || run_errno == EINTR)) {
 			Machine::timeout_exception("Timeout Exception", this->timer_ticks);
-		} else if (errno == EINTR) {
+		} else if (run_errno == EINTR) {
 			Machine::timeout_exception("Interrupted (signal)", 0);
 		}
-		Machine::machine_exception("KVM_RUN failed (errno)", errno);
+		Machine::machine_exception("KVM_RUN failed (errno)", run_errno);
 	}
 	if (this->timer_ticks && UNLIKELY(timer_was_triggered)) {
 		Machine::timeout_exception("Timeout Exception", this->timer_ticks);
