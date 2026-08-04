@@ -2124,8 +2124,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 
 				if (path.empty())
 				{
-					// Linux has no AT_EMPTY_PATH for unlinkat, and the
-					// policy layer has nothing to decide about "".
+					// unlinkat has no AT_EMPTY_PATH.
 					regs.sysret() = -ENOENT;
 				}
 				// Check if the path is writable (path can be modified)
@@ -2435,14 +2434,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					if (vfd != AT_FDCWD) {
 						pfd = cpu.machine().fds().translate(vfd);
 					}
-					/* O_CREAT/O_TRUNC/O_APPEND mutate the host file, but only
-					   the readable-path policy is consulted on this branch.
-					   Deny rather than silently dropping the bits: may_open()
-					   adds MAY_WRITE for O_TRUNC and honours O_CREAT
-					   regardless of the O_RDONLY access mode, and a guest
-					   told the open succeeded would wrongly believe the file
-					   had been truncated or created. Mutation goes through
-					   the write branch and is_writable_path(). */
+					/* Only the readable-path policy is consulted here, so deny
+					   the mutating flags outright: dropping them would tell the
+					   guest a file was created or truncated when it wasn't.
+					   Mutation belongs in the write branch. */
 					if (UNLIKELY(flags & (O_CREAT | O_TRUNC | O_APPEND))) {
 						regs.sysret() = -EACCES;
 						cpu.set_registers(regs);
@@ -3089,8 +3084,8 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
-				// An empty path means AT_EMPTY_PATH on the fd itself, which
-				// the policy has nothing to say about.
+				// An empty path stats the fd itself (AT_EMPTY_PATH), which
+				// the path policy has no say over.
 				if (UNLIKELY(!cpu.machine().fds().is_readable_path(path) && !path.empty())) {
 					regs.sysret() = -EPERM;
 				} else {

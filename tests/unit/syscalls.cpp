@@ -534,16 +534,10 @@ int main() {
 
 TEST_CASE("openat read-only branch must not truncate or create files", "[Syscalls]")
 {
-	/* The openat handler takes its "read-only" branch whenever O_WRONLY/O_RDWR
-	   are absent, but it preserved O_CREAT and O_TRUNC from the guest's flags
-	   and passed them straight to openat2. A guest could therefore truncate an
-	   existing file -- or create a brand-new one -- through a path that the
-	   embedder policy only ever approved for READING.
-
-	   Mutation must be denied outright rather than have the bits quietly
-	   dropped: a guest told the open succeeded would go on believing the file
-	   had been truncated or created. Creating and truncating are reached
-	   through the write branch, which consults is_writable_path(). */
+	/* An open without O_WRONLY/O_RDWR only consults the readable-path policy,
+	   so O_CREAT and O_TRUNC must not reach openat2 from that branch: they
+	   would let a read-approved path be truncated or created. They are denied
+	   rather than dropped, so the guest is not told a mutation happened. */
 	const auto binary = build_and_load(R"M(
 #define _GNU_SOURCE
 #include <errno.h>
@@ -601,12 +595,10 @@ int main() {
 
 TEST_CASE("fcntl(F_SETFL) must not mutate a read-only host fd", "[Syscalls]")
 {
-	/* F_SETFL changes the status flags of the underlying host fd, but it
-	   resolved the vfd with the plain translate() rather than
-	   translate_writable_vfd(), so a guest could set O_NONBLOCK on an fd
-	   opened through the read-only policy. Forks share the master's real_fd
-	   and reset_to() does not restore file status flags, so the change
-	   outlives the request that made it. */
+	/* F_SETFL changes the host fd's status flags, so it must resolve the vfd
+	   with translate_writable_vfd(). Forks share the master's real_fd and
+	   reset_to() does not restore status flags, so O_NONBLOCK set on a
+	   read-only fd would outlive the request that set it. */
 	const auto binary = build_and_load(R"M(
 #define _GNU_SOURCE
 #include <fcntl.h>
@@ -642,11 +634,9 @@ int main() {
 
 TEST_CASE("statx on a policy-denied path must not return host stat data", "[Syscalls]")
 {
-	/* The statx handler checked is_readable_path() and stored -EPERM when the
-	   embedder policy denied the path -- but then fell through to a host
-	   statx() on the original guest path anyway, overwriting the error and
-	   copying real host stat data into the guest. Its sibling newfstatat
-	   correctly stops after the denial. */
+	/* A path denied by is_readable_path() must stop at -EPERM: the host
+	   statx() below it would otherwise overwrite that error and copy real
+	   host stat data into the guest, as newfstatat correctly avoids. */
 	const auto binary = build_and_load(R"M(
 #define _GNU_SOURCE
 #include <errno.h>
@@ -681,10 +671,9 @@ int main() {
 
 TEST_CASE("unlinkat reads its path and flags from the correct registers", "[Syscalls]")
 {
-	/* The handler swapped its argument registers: it read `flags` from
-	   sysarg(1) (the path pointer) and the path pointer from sysarg(2) (the
-	   flags). A plain unlinkat(AT_FDCWD, path, 0) therefore called the host
-	   unlinkat() with garbage flags (EINVAL) and never removed anything. */
+	/* unlinkat(dirfd, pathname, flags): the path is sysarg(1) and the flags
+	   sysarg(2). Reading them the other way around makes every unlink fail
+	   with EINVAL and shows the policy layer an empty path. */
 	const auto binary = build_and_load(R"M(
 #define _GNU_SOURCE
 #include <errno.h>
