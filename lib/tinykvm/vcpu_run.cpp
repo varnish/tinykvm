@@ -103,25 +103,16 @@ long vCPU::run_once()
 	{
 		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());
 		result = ioctl(this->fd, KVM_RUN, 0);
-		/* Captured here, not below: the profiler's destructor runs at the end of
-		   this scope and is entitled to make syscalls of its own, any one of
-		   which would overwrite errno before it is read. */
+		// Read errno inside the scope: the profiler's destructor may
+		// make syscalls of its own and overwrite it.
 		run_errno = errno;
 	}
 	// Handle potential KVM_RUN failure or execution timeout
 	if (UNLIKELY(result < 0)) {
-		/* Whether this is a timeout is decided by whether the timer *fired*, not
-		   by whether one was armed. `timer_ticks` is the configured timeout in
-		   milliseconds (vCPU::run() sets it from its argument), so testing it
-		   alone relabels every KVM_RUN failure inside a timed run - an EFAULT
-		   from a guest touch of unbacked or protected host memory in particular -
-		   as "Timeout Exception", and discards errno with it.
-		   The timer manifests two ways, both accepted here: the SIGUSR2 handler
-		   sets the thread_local timer_was_triggered, and the signal makes KVM_RUN
-		   return EINTR. Either one, with a timer armed, is a genuine timeout;
-		   fa-serve's request deadline handling depends on it still being a
-		   MachineTimeoutException. Anything else keeps its errno and is reported
-		   as what it was. */
+		// A timeout requires the timer to have actually fired, as timer_ticks
+		// only tells us that one was armed. The timer shows up either as the
+		// SIGUSR2 handler setting timer_was_triggered, or as EINTR from
+		// KVM_RUN. Anything else keeps its errno and is reported as itself.
 		const bool timer_armed = (this->timer_ticks != 0);
 		if (timer_armed && (timer_was_triggered || run_errno == EINTR)) {
 			if constexpr (VERBOSE_TIMER) {

@@ -134,17 +134,14 @@ long vCPU::run_once()
 		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());
 		this->flush_registers();
 		result = ioctl(this->fd, KVM_RUN, 0);
-		/* Before invalidate_register_cache() or the profiler's destructor can
-		   make a syscall of their own and overwrite it. */
+		// Read errno before invalidate_register_cache() or the profiler's
+		// destructor can make syscalls of their own and overwrite it.
 		run_errno = errno;
 		this->invalidate_register_cache();
 	}
 	if (UNLIKELY(result < 0)) {
-		/* Did the timer *fire*, not was one armed: timer_ticks holds the
-		   configured timeout in milliseconds, so testing it alone would relabel
-		   every KVM_RUN failure inside a timed run (an EFAULT from protected or
-		   unbacked host memory in particular) as a timeout and discard errno.
-		   See the same reasoning in the amd64 vcpu_run.cpp. */
+		// A timeout requires the timer to have actually fired, as timer_ticks
+		// only tells us that one was armed. Anything else keeps its errno.
 		const bool timer_armed = (this->timer_ticks != 0);
 		if (timer_armed && (timer_was_triggered || run_errno == EINTR)) {
 			Machine::timeout_exception("Timeout Exception", this->timer_ticks);
