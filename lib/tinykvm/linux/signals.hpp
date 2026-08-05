@@ -49,6 +49,10 @@ struct Signals {
 	auto& per_thread(int tid) { return m_per_thread[tid]; }
 
 	Signals();
+	/* Copyable: forks inherit the master handlers, and reset_to() restores
+	   them. Explicit, as the destructor deprecates the implicit ones. */
+	Signals(const Signals&);
+	Signals& operator=(const Signals&);
 	~Signals();
 private:
 	std::array<SignalAction, 64> signals {};

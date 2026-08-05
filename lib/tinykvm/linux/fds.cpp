@@ -51,6 +51,7 @@ namespace tinykvm
 				close(entry.real_fd);
 			}
 		}
+		this->replace_working_directory_fd(AT_FDCWD);
 	}
 
 	void FileDescriptors::reset_to(const FileDescriptors& other)
@@ -63,7 +64,27 @@ namespace tinykvm
 		}
 		// Clear the current file descriptors
 		m_fds.clear();
+		// Re-establish stdin/stdout/stderr, borrowing the master's real fds
+		// instead of dup()ing three fds on every reset
+		for (int stdio_vfd = 0; stdio_vfd <= 2; stdio_vfd++) {
+			auto it = other.m_fds.find(stdio_vfd);
+			if (it != other.m_fds.end()) {
+				m_fds[stdio_vfd] = Entry{
+					.real_fd = it->second.real_fd,
+					.is_writable = it->second.is_writable,
+					.is_forked = true
+				};
+			}
+		}
 		m_next_fd = other.m_next_fd;
+		// Inherit the master working directory, so that relative paths do not
+		// resolve against the host process cwd. dup() rather than open(), so a
+		// reset cannot fail on a directory that became unreachable.
+		this->m_current_working_directory = other.m_current_working_directory;
+		this->replace_working_directory_fd(
+			other.m_current_working_directory_fd >= 0
+				? dup(other.m_current_working_directory_fd)
+				: other.m_current_working_directory_fd);
 		this->m_max_files = other.m_max_files;
 		this->m_total_fds_opened = other.m_total_fds_opened;
 		this->m_max_total_fds_opened = other.m_max_total_fds_opened;
@@ -462,12 +483,21 @@ namespace tinykvm
 
 	/// Current working directory ///
 
+	void FileDescriptors::replace_working_directory_fd(int fd) noexcept
+	{
+		// AT_FDCWD is a sentinel, not a descriptor we own
+		if (m_current_working_directory_fd >= 0) {
+			close(m_current_working_directory_fd);
+		}
+		m_current_working_directory_fd = fd;
+	}
+
 	void FileDescriptors::set_current_working_directory(const std::string& path) noexcept
 	{
 		m_current_working_directory = path;
 		// Set the current working directory fd by opening the path
 		int fd = open(path.c_str(), O_RDONLY | O_DIRECTORY);
-		m_current_working_directory_fd = fd;
+		this->replace_working_directory_fd(fd);
 		if (fd < 0) {
 			if (UNLIKELY(this->m_verbose)) {
 				fprintf(stderr, "TinyKVM: Failed to set current working directory to %s\n", path.c_str());
@@ -565,7 +595,9 @@ namespace tinykvm
 		int pair[2] = {-1, -1};
 		switch (sp.type) {
 			case SocketType::PIPE2:
-				if (pipe2(pair, 0) < 0) {
+				// Recreate with the original flags, so that a non-blocking
+				// pipe does not come back blocking
+				if (pipe2(pair, sp.flags) < 0) {
 					fprintf(stderr, "TinyKVM: Failed to create pipe2\n");
 					throw std::runtime_error("TinyKVM: Failed to create pipe2");
 				}

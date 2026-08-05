@@ -31,6 +31,8 @@ int signal_tid(vCPU& cpu)
 } // namespace
 
 Signals::Signals() = default;
+Signals::Signals(const Signals&) = default;
+Signals& Signals::operator=(const Signals&) = default;
 Signals::~Signals() = default;
 
 SignalAction& Signals::get(int sig) {

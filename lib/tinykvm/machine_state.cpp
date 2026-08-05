@@ -61,6 +61,7 @@ struct ColdStartSocketPair {
 	int vfd1;
 	int vfd2;
 	int type;
+	int flags;
 };
 
 struct SnapshotState {
@@ -214,6 +215,7 @@ bool Machine::load_snapshot_state(const MachineOptions& options)
 			sp.vfd1 = csp->vfd1;
 			sp.vfd2 = csp->vfd2;
 			sp.type = FileDescriptors::SocketType(csp->type);
+			sp.flags = csp->flags;
 			fdm.add_socket_pair(sp);
 			// Create the (real) socket pairs and manage them
 			fdm.create_socket_pairs_from(sp);
@@ -519,11 +521,13 @@ void Machine::save_snapshot_state_now(const std::vector<std::pair<uint64_t, uint
 				csp->vfd1 = -1;
 				csp->vfd2 = -1;
 				csp->type = int(FileDescriptors::INVALID);
+				csp->flags = 0;
 				continue;
 			}
 			csp->vfd1 = sp.vfd1;
 			csp->vfd2 = sp.vfd2;
 			csp->type = int(sp.type);
+			csp->flags = sp.flags;
 		}
 		// Epoll reconstruction entries
 		for (const auto& [vfd, entry] : epoll_entries) {

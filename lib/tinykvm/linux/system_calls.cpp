@@ -603,9 +603,17 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				uint64_t restorer;
 				uint64_t mask;
 			} sa {};
-			/* Old action */
+			/* Old action. SIG_DFL, SIG_IGN and the unset sentinel must read
+			   back as themselves, not as a masked handler address, so that a
+			   guest can save oldact and restore it later. */
 			if (g_oldact != 0x0) {
-				sa.handler = sigact.handler & ~0xFLL;
+				if (sigact.is_unset()) {
+					sa.handler = 0x0; /* SIG_DFL */
+				} else if (sigact.handler == 1) {
+					sa.handler = 1; /* SIG_IGN */
+				} else {
+					sa.handler = sigact.handler & ~0xFLL;
+				}
 				sa.flags   = (sigact.altstack ? SA_ONSTACK : 0x0);
 				sa.mask    = sigact.mask;
 				sa.restorer = sigact.restorer;
@@ -925,8 +933,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				pipefd[1] = vfd2;
 				cpu.machine().copy_to_guest(g_pipefd, pipefd, sizeof(pipefd));
 				regs.sysret() = 0;
-				// Record the pipe pair so it can be reconstructed in forks
-				cpu.machine().fds().add_socket_pair({vfd1, vfd2, FileDescriptors::SocketType::PIPE2});
+				// Record the pipe pair and its flags, so it can be
+				// reconstructed identically in forks
+				cpu.machine().fds().add_socket_pair(
+					{vfd1, vfd2, FileDescriptors::SocketType::PIPE2, flags});
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("pipe2(0x%llX, 0x%X) = %lld\n",

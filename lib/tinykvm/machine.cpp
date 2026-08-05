@@ -167,6 +167,10 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 		m_fds.reset(new FileDescriptors{*this});
 		m_fds->reset_to(*other.m_fds);
 	}
+	/* Inherit the master signal handlers, the way fork(2) would. */
+	if (other.m_signals != nullptr) {
+		m_signals.reset(new Signals{*other.m_signals});
+	}
 
 	/* Copy register state from the master machine. FPU state comes from the
 	   master's prepare-time snapshot rather than a live KVM_GET_FPU: when this
@@ -257,6 +261,22 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 	this->m_mmap_cache = other.m_mmap_cache;
 	this->vcpu.last_fault_address = 0;
 
+	/* The program break is guest-mutable, and would otherwise creep upward
+	   from turn to turn until SYS_brk clamps it at brk_end_address. */
+	this->m_brk_address = other.m_brk_address;
+
+	/* Restore signal handlers, so that a handler installed by the previous
+	   turn is not still entered in the next one. */
+	if (other.m_signals != nullptr) {
+		if (this->m_signals != nullptr) {
+			*this->m_signals = *other.m_signals;
+		} else {
+			this->m_signals.reset(new Signals{*other.m_signals});
+		}
+	} else {
+		this->m_signals.reset(nullptr);
+	}
+
 	if (other.has_threads() && has_threads()) {
 		this->m_mt->reset_to(*other.m_mt);
 	} else if (other.has_threads()) {
@@ -271,6 +291,16 @@ bool Machine::reset_to(const Machine& other, const MachineOptions& options)
 	/* Drop any TLB-invalidation signal left over from the previous turn so a
 	   stale page address can't be delivered to the next turn's syscall stub. */
 	this->m_pending_tlb_signal = 0;
+
+	/* Everything else is deliberately left alone:
+	   - m_userdata, m_printer, m_verbose_*, m_profiling and the FileDescriptors
+	     callbacks are the embedder's, installed on the fork, and must survive.
+	   - m_prepped/m_forked describe what this Machine is, not its state.
+	   - m_image_base, m_stack_address, m_heap_address, m_brk_end_address,
+	     m_start_address and m_kernel_end are fixed by the ELF, and only move in
+	     the reset-to-new-master path above.
+	   - m_smp: extra vCPUs outlive a reset, but every smpcall sets their
+	     registers on entry, and this fork's CR3 is fixed for its lifetime. */
 
 	if (full_reset) {
 		this->setup_cow_mode(&other);

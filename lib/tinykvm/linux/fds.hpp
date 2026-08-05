@@ -301,6 +301,9 @@ namespace tinykvm
 			int vfd1 = -1;
 			int vfd2 = -1;
 			SocketType type = INVALID;
+			/// @brief Creation flags, for the types that take them (PIPE2),
+			/// so that a reconstructed pair keeps eg. O_NONBLOCK.
+			int flags = 0;
 		};
 		void add_socket_pair(const SocketPair&);
 		const auto& get_socket_pairs() const { return m_sockets; }
@@ -327,6 +330,9 @@ namespace tinykvm
 
 		std::map<int, std::shared_ptr<EpollEntry>> m_epoll_fds;
 		std::vector<SocketPair> m_sockets;
+
+		/// @brief Install a new working-directory fd, closing the previous one.
+		void replace_working_directory_fd(int fd) noexcept;
 
 	public:
 		connect_socket_t   connect_socket_callback;
