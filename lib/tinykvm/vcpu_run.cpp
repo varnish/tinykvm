@@ -625,6 +625,26 @@ void vCPU::handle_exception(uint64_t intr)
 				"RIP  0x%lX   %s\n",
 				rip, machine().resolve(rip).c_str());
 
+				/* Scan the stack for return addresses. Optimized guests have
+				   no frame pointer to unwind, so a scan is all we can do; it
+				   over-reports, as stale slots look like frames. */
+				if (cs & 0x3) {
+					PRINTER(printer, buffer, "Stack scan from 0x%lX:\n", rsp);
+					for (unsigned i = 0; i < 128; i++) {
+						uint64_t value = 0x0;
+						try {
+							machine().unsafe_copy_from_guest(&value, rsp + i * 8, 8);
+						} catch (...) { break; }
+						/* A return address points past a call, so a symbol
+						   match at offset zero is not one. */
+						const auto sym = machine().resolve(value);
+						if (sym.empty() || sym.find(" + 0x0") != std::string::npos)
+							continue;
+						PRINTER(printer, buffer, "  [rsp+0x%-4X] 0x%lX   %s\n",
+							i * 8, value, sym.c_str());
+					}
+				}
+
 		} catch (...) {}
 
 		/* General Protection Fault */

@@ -975,7 +975,23 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			{
 				if (old_addr + new_page_len < old_addr)
 					throw MachineException("mremap: overflow");
-				cpu.machine().mmap_cache().current() = old_addr + new_page_len;
+				/* Resized in place at the top of the arena. The used-range
+				   bookkeeping must follow, or a shrunk-off tail stays marked
+				   used and collides with the next allocation. */
+				if (new_page_len < old_page_len)
+				{
+					cpu.machine().mmap_unmap(old_addr + new_page_len,
+						old_page_len - new_page_len);
+				}
+				else if (new_page_len > old_page_len)
+				{
+					cpu.machine().mmap_cache().current() = old_addr + new_page_len;
+					/* Growth is into untracked arena, so it cannot collide. */
+					if (cpu.machine().mmap_cache().track_used_ranges()) {
+						cpu.machine().mmap_cache().insert_used(
+							old_addr + old_page_len, new_page_len - old_page_len);
+					}
+				}
 				regs.sysret() = old_addr;
 			}
 			else if (flags & MREMAP_MAYMOVE)
@@ -2329,13 +2345,21 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 		SYS_sched_getaffinity, [](vCPU& cpu) { // sched_getaffinity
 			/* SYS sched_getaffinity */
 			auto& regs = cpu.registers();
-			cpu_set_t* cpuset = CPU_ALLOC(1);
-			const size_t size = CPU_ALLOC_SIZE(1);
-			CPU_ZERO_S(size, cpuset);
-			CPU_SET_S(0, size, cpuset);
-			cpu.machine().copy_to_guest(regs.sysarg(2), cpuset, size);
-			CPU_FREE(cpuset);
-			regs.sysret() = 0;
+			const size_t cpusetsize = regs.sysarg(1);
+			/* Reject sizes too small for every CPU, or not word-aligned. */
+			if (cpusetsize < sizeof(unsigned long)
+				|| (cpusetsize & (sizeof(unsigned long) - 1)) != 0)
+			{
+				regs.sysret() = -EINVAL;
+			} else {
+				/* One vCPU, so exactly one bit is set. NB: the raw syscall
+				   returns the number of bytes written, not zero. glibc zeroes
+				   the remaining cpusetsize-ret bytes of the mask. */
+				unsigned long mask = 1UL;
+				const size_t size = std::min(cpusetsize, sizeof(mask));
+				cpu.machine().copy_to_guest(regs.sysarg(2), &mask, size);
+				regs.sysret() = size;
+			}
 			cpu.set_registers(regs);
 			SYSPRINT("sched_getaffinity(pid=%lld, cpusetsize=%lld, mask=0x%llX) = %lld\n",
 					 regs.sysarg(0), regs.sysarg(1), regs.sysarg(2), regs.sysret());
@@ -2826,7 +2850,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				result = syscall(SYS_epoll_pwait2, epollfd, guest_events.data(),
 					maxevents, &ts, nullptr);
 #else
-				epoll_pwait(epollfd, guest_events.data(),
+				result = epoll_pwait(epollfd, guest_events.data(),
 					maxevents, 250, nullptr);
 #endif
 			}
@@ -2886,17 +2910,20 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			}
 			else
 			{
+				/* Nothing ready inside the polling window. Zero events is a
+				   legal outcome that callers loop on, so a guest waiting with
+				   an infinite timeout simply polls again. */
+				regs.sysret() = 0;
 				// With infinite timeout, we shouldn't exit the epoll wait
-				// loop, so we need to re-trigger the syscall when we return.
+				// loop, so let the other guest threads run before we return.
 				if ((timeout < 0 || timeout >= 5000) && cpu.machine().fds().preempt_epoll_wait()) {
-					//regs.progctr() -= 2; // Make sure we re-trigger the syscall
-#ifdef SYS_epoll_wait
-					cpu.machine().threads().suspend_and_yield(SYS_epoll_wait);
-#else
-					cpu.machine().threads().suspend_and_yield(SYS_epoll_pwait);
-#endif
-				} else {
-					regs.sysret() = 0;
+					/* NB: the argument is the value RAX is restored to when
+					   this thread resumes, ie. the syscall return value. */
+					if (cpu.machine().threads().suspend_and_yield(0)) {
+						/* `regs` aliases the live registers, which now belong
+						   to the thread we switched to. */
+						return;
+					}
 				}
 			}
 			cpu.set_registers(regs);
