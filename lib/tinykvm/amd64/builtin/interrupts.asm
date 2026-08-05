@@ -36,7 +36,8 @@ dw .vm64_except1 - .vm64_exception
 dw .vm64_dso
 .vm64_remote_return_addr:
 	dw 0x0   ;; Return address after remote call
-dd 0x0       ;; Reserved/Padding
+dw .vm64_signal_entry
+dw .vm64_signal_return
 
 ALIGN 0x10
 .kvm_wallclock:   ;; 0x2010
@@ -288,6 +289,40 @@ ALIGN 0x10
 	o64 sysret
 
 .vm64_reentrycall:
+	o64 sysret
+
+.vm64_signal_entry:
+	;; Enter a guest signal handler in usermode. Signals::enter replaced the
+	;; whole register frame instead of letting the syscall stub above run its
+	;; sysret epilogue, because that epilogue restores the interrupted RSP,
+	;; and a handler needs its own stack (SA_ONSTACK, or below the red zone).
+	;; The host has set: RCX = handler, R11 = handler RFLAGS, RDI = signal
+	;; number, RSP = the signal stack with the usermode rt_sigreturn
+	;; trampoline already written at [RSP] as the handler's return address.
+	;; Building that stack may have CoW-remapped a page, so reload CR3 here:
+	;; the stub epilogue that would normally invalidate is not running, and
+	;; there is no reserved TLB slot on this frame. RAX is zeroed rather than
+	;; left holding CR3, both to keep a guest-physical address out of
+	;; usermode and because AL is the vector-register count for varargs.
+	mov rax, cr3
+	mov cr3, rax
+	xor eax, eax
+	;; No clac needed: sysret loads RFLAGS wholesale from R11, which the host
+	;; masked AC (and DF) out of.
+	o64 sysret
+
+.vm64_signal_return:
+	;; Leave a guest signal handler. Signals::sigreturn rebuilt the whole
+	;; register frame from the ucontext the handler was given, so every GPR
+	;; is already the interrupted value and RCX/R11/RSP hold the interrupted
+	;; RIP/RFLAGS/RSP. Returning here instead of through the syscall stub
+	;; epilogue is what lets a handler alter the ucontext -- most of all RSP,
+	;; which the epilogue would restore from its own frame -- and it keeps us
+	;; from touching guest memory: this frame reserved no TLB-invalidation
+	;; slot, and everything below the interrupted RSP is the guest's red zone.
+	;; No CR3 reload either. rt_sigreturn only reads guest memory, so it
+	;; remaps nothing, and the handler's own syscalls each invalidated on
+	;; their way out.
 	o64 sysret
 
 .vm64_page_fault:

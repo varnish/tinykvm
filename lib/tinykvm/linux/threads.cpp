@@ -45,7 +45,20 @@ struct tinykvm_x86regs Thread::activate()
 	mt.machine.set_tls_base(this->fsbase);
 	// return modified GPRs
 	auto regs = mt.machine.registers();
-	regs.rsp = this->stored_regs.rsp;
+	/* A brand-new thread returns out through the *caller's* syscall-stub
+	   epilogue, which reads the TLB-invalidation slot at [rsp] and then
+	   discards it with `add rsp, 8`. The parent pushed that slot; the child's
+	   fresh stack has no such thing, so hand it an equivalent one 8 bytes
+	   below the stack top it asked for. Without this the epilogue's +8 lands
+	   the child on stack_top+8: misaligned by 8, and every `movaps` in a
+	   glibc prologue #GPs -- and the slot read would be whatever happened to
+	   sit one qword past the end of the thread stack.
+	   Thread::resume() needs no such bias: it restores a whole frame that was
+	   captured mid-stub, slot and all. */
+	const uint64_t slot = this->stored_regs.rsp - 8;
+	const uint64_t no_invalidation = 0;
+	mt.machine.copy_to_guest(slot, &no_invalidation, sizeof(no_invalidation));
+	regs.rsp = slot;
 	return regs;
 }
 void Thread::resume()
@@ -473,7 +486,7 @@ void Machine::setup_multithreading()
 
 			const int sig = cpu.registers().rdx;
 			THPRINT("tgkill(sig=%d) called from tid=%d\n", sig, tid);
-			cpu.machine().signals().send(cpu, sig);
+			cpu.machine().signals().send(cpu, sig, Signals::SI_TKILL);
 		});
 } // setup_multithreading
 

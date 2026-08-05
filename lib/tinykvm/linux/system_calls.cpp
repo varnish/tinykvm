@@ -614,7 +614,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				} else {
 					sa.handler = sigact.handler & ~0xFLL;
 				}
-				sa.flags   = (sigact.altstack ? SA_ONSTACK : 0x0);
+				sa.flags   = sigact.flags;
 				sa.mask    = sigact.mask;
 				sa.restorer = sigact.restorer;
 				cpu.machine().copy_to_guest(g_oldact, &sa, sizeof(sa));
@@ -625,7 +625,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				SYSPRINT("rt_sigaction(action handler=0x%lX  flags=0x%lX  mask=0x%lX)\n",
 					sa.handler, sa.flags, sa.mask);
 				sigact.handler  = sa.handler;
-				sigact.altstack = (sa.flags & SA_ONSTACK) != 0;
+				sigact.flags    = sa.flags;
 				sigact.mask     = sa.mask;
 				sigact.restorer = sa.restorer;
 			}
@@ -673,11 +673,24 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 		SYS_sigaltstack, [](vCPU& cpu)
 		{
 			auto& regs = cpu.registers();
+			/* Key the alternate stack by the current tid so signal delivery
+			   reads back the stack the guest configured. */
+			auto& ss = cpu.machine().signals().per_thread(cpu.machine().threads().gettid()).stack;
+
+			/* Report the old stack first: sigaltstack(NULL, &old) is how a
+			   runtime discovers whether one is already installed before
+			   claiming it. The Go runtime does this on every thread start,
+			   and reads SS_DISABLE to decide -- leaving the guest's buffer
+			   untouched would hand it whatever was on the stack. */
+			if (regs.sysarg(1) != 0x0) {
+				cpu.machine().copy_to_guest(regs.sysarg(1), &ss, sizeof(ss));
+			}
 			if (regs.sysarg(0) != 0x0) {
-				/* Key the alternate stack by the current tid so signal
-				   delivery reads back the stack the guest configured. */
-				auto& ss = cpu.machine().signals().per_thread(cpu.machine().threads().gettid()).stack;
 				cpu.machine().copy_from_guest(&ss, regs.sysarg(0), sizeof(ss));
+				/* A stack with no space is no stack: normalise it to
+				   SS_DISABLE so is_enabled() and the ucontext agree. */
+				if (ss.ss_sp == 0x0 || ss.ss_size == 0)
+					ss.ss_flags |= 2 /* SS_DISABLE */;
 
 				SYSPRINT("sigaltstack(altstack SP=0x%lX  flags=0x%X  size=0x%lX)\n",
 					ss.ss_sp, ss.ss_flags, ss.ss_size);
@@ -1084,14 +1097,6 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					 vfd, fd, new_vfd, new_fd, regs.sysret());
 		});
 #endif
-	Machine::install_syscall_handler(
-		SYS_nanosleep, [](vCPU& cpu) { // nanosleep
-			auto& regs = cpu.registers();
-			regs.sysret() = 0;
-			cpu.set_registers(regs);
-			SYSPRINT("nanosleep(...) = %lld\n",
-					 regs.sysret());
-		});
 	Machine::install_syscall_handler(
 		SYS_getpid, [](vCPU& cpu) { // GETPID
 			auto& regs = cpu.registers();
@@ -2717,6 +2722,12 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			regs.sysret() = 0;
 			cpu.set_registers(regs);
+			/* Sleeping does not burn wall-clock time here, but it must still
+			   give up the vCPU: guest threads are scheduled cooperatively, so
+			   a returns-immediately nanosleep turns any poll-with-backoff loop
+			   into a livelock that starves every other thread. The Go runtime's
+			   sysmon is exactly that loop, and it never calls anything else. */
+			cpu.machine().threads().suspend_and_yield();
 			SYSPRINT("nanosleep(...) = %lld\n", regs.sysret());
 		});
 	Machine::install_syscall_handler( // epoll_ctl
