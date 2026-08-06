@@ -29,11 +29,27 @@
  * end-of-mapping addresses and unmapped holes, because uniformly random
  * 64-bit pointers just bounce off copy_from_guest() and coverage stalls.
  *
+ * Beyond crashes and sanitizer reports, the harness checks two things an
+ * ASan/UBSan build cannot see by itself: foreign exceptions escaping a
+ * handler (strict mode) and host fds leaking across an input.
+ *
  * Environment:
  *   TINYKVM_FUZZ_STRICT=1   treat any non-MachineException escaping a
  *                           handler as a finding (abort). Off by default so
  *                           a single easily-reached std::out_of_range does
  *                           not wall off the rest of the search space.
+ *   TINYKVM_FUZZ_FDLEAK_ABORT=1
+ *                           abort on a host fd leak instead of reporting it
+ *                           and re-baselining. Off by default only because
+ *                           the tree currently leaks; turn it on once that is
+ *                           fixed, so a regression is loud.
+ *   TINYKVM_FUZZ_DENY_PATHS=1
+ *                           refuse every path instead of rewriting it into
+ *                           the sandbox directory. The default always-approve
+ *                           policy never reaches a single denial branch, so a
+ *                           handler that computes -EPERM and then runs the
+ *                           host call anyway is indistinguishable from a
+ *                           correct one. Run a share of the campaign this way.
  *   TINYKVM_FUZZ_UNSAFE=1   install the "unsafe" syscall set.
  *   TINYKVM_FUZZ_VERBOSE=1  trace every call (debugging the harness only).
  */
@@ -71,12 +87,18 @@ static Machine* g_master = nullptr;
 static Machine* g_fork   = nullptr;
 static bool g_strict  = false;
 static bool g_verbose = false;
+static bool g_deny_paths = false;
+static bool g_fdleak_abort = false;
 
 static std::string g_sandbox_dir;
 static std::string g_sandbox_ro;
 static std::string g_sandbox_rw;
 
 static std::vector<uint64_t> g_addrs;
+
+/* A 16-byte writable guest address that is deliberately kept out of g_addrs,
+   used as a private zeroed timespec for the ppoll wrapper. */
+static uint64_t g_zero_timespec = 0;
 
 /* ------------------------------------------------------------------ */
 /* Syscalls we refuse to issue.                                       */
@@ -203,6 +225,62 @@ static void install_clock_nanosleep_wrapper()
 	});
 }
 
+/* poll/ppoll block for a guest-chosen duration on a forked VM (the 1ms clamp
+   in the poll handler only applies when !is_forked()). This used to be handled
+   with a poll_callback returning false, but that callback is consulted *before*
+   the fd-translation loop, so the whole body of both handlers -- the part that
+   parses the guest's pollfd array -- was unreachable. That is where the
+   fixed-256-entry array::at() overflow lived. Clamp the timeout instead, the
+   same way clock_nanosleep is handled, so the body still runs. */
+static Machine::syscall_t g_orig_poll;
+static Machine::syscall_t g_orig_ppoll;
+
+static void install_poll_wrappers()
+{
+	g_orig_poll  = Machine::get_syscall_handler(7);   /* poll */
+	g_orig_ppoll = Machine::get_syscall_handler(271); /* ppoll */
+
+	if (g_orig_poll) {
+		Machine::install_syscall_handler(7, [](vCPU& cpu) {
+			auto regs = cpu.registers();
+			regs.sysarg(2) = 0; /* timeout in ms: return immediately */
+			cpu.machine().set_registers(regs);
+			g_orig_poll(cpu);
+		});
+	}
+
+	if (g_orig_ppoll) {
+		Machine::install_syscall_handler(271, [](vCPU& cpu) {
+			/* ppoll's timeout is a guest pointer to a timespec. A null pointer
+			   means "block forever", so point it at a zeroed timespec the
+			   fuzzer cannot see rather than leaving it null. */
+			const uint64_t g_tmo = cpu.registers().sysarg(2);
+			const struct timespec zero {};
+			if (g_tmo != 0x0) {
+				try {
+					cpu.machine().copy_to_guest(g_tmo, &zero, sizeof(zero));
+				} catch (const std::exception&) {
+					/* Unwritable pointer: leave it, the handler under test
+					   should reject it itself. */
+				}
+			} else if (g_zero_timespec != 0x0) {
+				/* A null pointer means "block forever". Point it at a private
+				   zeroed timespec instead: g_zero_timespec is deliberately not
+				   in the fuzzer's address table, and is re-zeroed here in case
+				   a wild pointer landed on it. */
+				try {
+					cpu.machine().copy_to_guest(g_zero_timespec, &zero, sizeof(zero));
+					auto regs = cpu.registers();
+					regs.sysarg(2) = g_zero_timespec;
+					cpu.machine().set_registers(regs);
+				} catch (const std::exception&) {
+				}
+			}
+			g_orig_ppoll(cpu);
+		});
+	}
+}
+
 static void install_nonblocking_wrappers()
 {
 	g_orig_socket     = Machine::get_syscall_handler(41);  /* socket */
@@ -211,6 +289,7 @@ static void install_nonblocking_wrappers()
 	g_orig_eventfd2   = Machine::get_syscall_handler(290); /* eventfd2 */
 
 	install_clock_nanosleep_wrapper();
+	install_poll_wrappers();
 
 	/* NB: the post-step must run even when the original handler throws. A
 	   handler can register both ends of a pipe and only then fail to write the
@@ -276,14 +355,23 @@ static void install_nonblocking_wrappers()
 static void install_sandbox_policy(Machine& m)
 {
 	auto& fds = m.fds();
-	fds.set_open_readable_callback([](std::string& path) {
-		path = g_sandbox_ro;
-		return true;
-	});
-	fds.set_open_writable_callback([](std::string& path) {
-		path = g_sandbox_rw;
-		return true;
-	});
+	/* In deny mode every path is refused instead of rewritten. The
+	   always-approve policy below never exercises a single denial branch, and
+	   a handler that computes -EPERM and then carries on anyway looks
+	   identical to a correct one until something is actually denied. */
+	if (g_deny_paths) {
+		fds.set_open_readable_callback([](std::string&) { return false; });
+		fds.set_open_writable_callback([](std::string&) { return false; });
+	} else {
+		fds.set_open_readable_callback([](std::string& path) {
+			path = g_sandbox_ro;
+			return true;
+		});
+		fds.set_open_writable_callback([](std::string& path) {
+			path = g_sandbox_rw;
+			return true;
+		});
+	}
 	fds.set_resolve_symlink_callback([](std::string&) { return false; });
 	fds.set_current_working_directory(g_sandbox_dir);
 
@@ -425,6 +513,9 @@ static void build_address_table(Machine& m, uint64_t scratch, uint64_t scratch_s
 	add(scratch_small);
 	add(scratch_small + 0x2000 - 4);
 
+	/* Mid-region, and pointedly not added to the table above. */
+	g_zero_timespec = scratch_small + 0x1000;
+
 	/* Out of bounds / unmapped / non-canonical. */
 	add(m.max_address() - 8);
 	add(m.max_address());
@@ -560,6 +651,53 @@ static void do_poke(Reader& r)
 	}
 }
 
+/* ------------------------------------------------------------------ */
+/* Host fd-leak detection.                                            */
+/*                                                                    */
+/* An fd the emulation layer opens but never records is invisible to   */
+/* everything else here: it does not crash, ASan and UBSan do not      */
+/* track fd counts, and the VM's own fd limit only counts fds it knows */
+/* about. It shows up only as the VMM process slowly running out of    */
+/* descriptors. Count them directly instead.                          */
+/* ------------------------------------------------------------------ */
+static size_t count_open_fds()
+{
+	DIR* d = opendir("/proc/self/fd");
+	if (d == nullptr)
+		return 0;
+	size_t n = 0;
+	while (const struct dirent* e = readdir(d)) {
+		if (e->d_name[0] != '.')
+			n++;
+	}
+	closedir(d);
+	return n ? n - 1 : 0; /* the opendir handle itself */
+}
+
+static size_t g_fd_baseline = 0;
+
+/* reset_to() releases the fork's fds, so by this point the count must be back
+   at the baseline. Slack absorbs anything the host runtime opens on its own
+   (resolver caches and the like), which is a one-off, not per-input growth. */
+static constexpr size_t FD_LEAK_SLACK = 16;
+
+static void check_fd_leak()
+{
+	if (g_fd_baseline == 0)
+		return;
+	const size_t now = count_open_fds();
+	if (now <= g_fd_baseline + FD_LEAK_SLACK)
+		return;
+
+	fprintf(stderr, "syscall_fuzz: host fd leak: %zu open, baseline %zu\n",
+		now, g_fd_baseline);
+	if (g_fdleak_abort)
+		abort();
+	/* Re-baseline so a single leaky handler does not report on every
+	   subsequent input for the rest of the campaign. */
+	g_fd_baseline = now;
+}
+
 static void reset_fork()
 {
 	try {
@@ -584,9 +722,18 @@ static void reset_fork()
 
 extern "C" int LLVMFuzzerInitialize(int*, char***)
 {
-	g_strict  = getenv("TINYKVM_FUZZ_STRICT") != nullptr;
-	g_verbose = getenv("TINYKVM_FUZZ_VERBOSE") != nullptr;
-	const bool unsafe = getenv("TINYKVM_FUZZ_UNSAFE") != nullptr;
+	/* Empty counts as unset, so a runner script can default a flag on and
+	   still let the caller turn it off with VAR= rather than unset VAR. */
+	const auto env_flag = [](const char* name) {
+		const char* v = getenv(name);
+		return v != nullptr && v[0] != '\0';
+	};
+
+	g_strict  = env_flag("TINYKVM_FUZZ_STRICT");
+	g_verbose = env_flag("TINYKVM_FUZZ_VERBOSE");
+	g_deny_paths = env_flag("TINYKVM_FUZZ_DENY_PATHS");
+	g_fdleak_abort = env_flag("TINYKVM_FUZZ_FDLEAK_ABORT");
+	const bool unsafe = env_flag("TINYKVM_FUZZ_UNSAFE");
 
 	/* The guest can get the host killed by SIGPIPE: create a pipe or
 	   socketpair, close one end, write() to the other. The emulation layer
@@ -673,8 +820,14 @@ extern "C" int LLVMFuzzerInitialize(int*, char***)
 
 	build_address_table(*g_master, scratch, scratch_small);
 
-	fprintf(stderr, "syscall_fuzz: ready. scratch=0x%lX addresses=%zu strict=%d unsafe=%d\n",
-		scratch, g_addrs.size(), int(g_strict), int(unsafe));
+	/* Taken after the master and the first fork exist, so it already includes
+	   every fd the steady state legitimately holds. */
+	g_fd_baseline = count_open_fds();
+
+	fprintf(stderr, "syscall_fuzz: ready. scratch=0x%lX addresses=%zu strict=%d unsafe=%d "
+		"deny_paths=%d fd_baseline=%zu fdleak_abort=%d\n",
+		scratch, g_addrs.size(), int(g_strict), int(unsafe),
+		int(g_deny_paths), g_fd_baseline, int(g_fdleak_abort));
 	return 0;
 }
 
@@ -691,5 +844,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t len)
 	}
 
 	reset_fork();
+	check_fd_leak();
 	return 0;
 }
