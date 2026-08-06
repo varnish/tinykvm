@@ -65,6 +65,9 @@ static std::vector<SeccompRule> runtime_rules()
 		R{SYS_lseek}, R{SYS_close}, R{SYS_fstat}, R{SYS_newfstatat},
 		R{SYS_statx}, R{SYS_fcntl}, R{SYS_dup}, R{SYS_dup3},
 		R{SYS_getdents64},
+		/* Mutating operations on already-translated fds. The fd was
+		 * approved when it was opened; these do not widen that. */
+		R{SYS_fsync}, R{SYS_fchmod}, R{SYS_ftruncate},
 		/* Path-based, mediated by is_readable_path/is_writable_path.
 		 * BPF cannot see the path; depth belongs to the emulation layer. */
 		R{SYS_openat}, R{SYS_readlinkat}, R{SYS_faccessat},
@@ -90,6 +93,11 @@ static std::vector<SeccompRule> runtime_rules()
 		/* --- Event loops --- */
 		R{SYS_epoll_create1}, R{SYS_epoll_ctl}, R{SYS_epoll_pwait},
 		R{SYS_ppoll},
+#ifdef SYS_epoll_pwait2
+		/* preempt_epoll_wait() is on by default, and that path issues
+		 * epoll_pwait2 rather than the epoll_wait the guest asked for. */
+		R{SYS_epoll_pwait2},
+#endif
 #ifdef SYS_epoll_wait
 		R{SYS_epoll_wait},
 #endif
@@ -165,7 +173,7 @@ static std::vector<SeccompRule> init_rules()
 		R{SYS_statfs}, R{SYS_fstatfs}, R{SYS_getcwd}, R{SYS_chdir},
 		R{SYS_fchdir}, R{SYS_mkdirat}, R{SYS_unlinkat}, R{SYS_renameat},
 		R{SYS_renameat2}, R{SYS_symlinkat}, R{SYS_linkat},
-		R{SYS_ftruncate}, R{SYS_fallocate}, R{SYS_copy_file_range},
+		R{SYS_fallocate}, R{SYS_copy_file_range},
 		R{SYS_sendfile}, R{SYS_flock}, R{SYS_umask}, R{SYS_memfd_create},
 		R{SYS_msync}, R{SYS_mincore}, R{SYS_mlock}, R{SYS_munlock},
 		/* unsafe_syscalls mode (setup_linux_system_calls) */
