@@ -41,6 +41,8 @@
 
 namespace tinykvm {
 static constexpr uint64_t PageMask = vMemory::PageSize() - 1;
+/* Capacity of the fixed-size host arrays used by poll/ppoll. */
+static constexpr unsigned MAX_POLL_FDS = 256;
 struct GuestIOvec
 {
 	uint64_t iov_base;
@@ -306,8 +308,16 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				if (!callback(fds, guest_count, timeout))
 					return;
 			}
-			std::array<struct pollfd, 256> host_fds;
-			std::array<unsigned, 256> host_fds_indexes;
+			if (UNLIKELY(guest_count > MAX_POLL_FDS))
+			{
+				regs.sysret() = -EINVAL;
+				cpu.set_registers(regs);
+				SYSPRINT("poll(fds=0x%llX, count=%u, timeout=%u) = %lld (EINVAL, too many fds)\n",
+					regs.sysarg(0), guest_count, unsigned(regs.sysarg(2)), regs.sysret());
+				return;
+			}
+			std::array<struct pollfd, MAX_POLL_FDS> host_fds;
+			std::array<unsigned, MAX_POLL_FDS> host_fds_indexes;
 			unsigned host_fds_count = 0;
 			for (unsigned i = 0; i < guest_count; i++)
 			{
@@ -380,8 +390,16 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				if (!callback(fds, guest_count, timeout))
 					return;
 			}
-			std::array<struct pollfd, 256> host_fds;
-			std::array<unsigned, 256> host_fds_indexes;
+			if (UNLIKELY(guest_count > MAX_POLL_FDS))
+			{
+				regs.sysret() = -EINVAL;
+				cpu.set_registers(regs);
+				SYSPRINT("ppoll(fds=0x%llX, count=%u, timeout=%d) = %lld (EINVAL, too many fds)\n",
+					regs.sysarg(0), guest_count, timeout, regs.sysret());
+				return;
+			}
+			std::array<struct pollfd, MAX_POLL_FDS> host_fds;
+			std::array<unsigned, MAX_POLL_FDS> host_fds_indexes;
 			unsigned host_fds_count = 0;
 			for (unsigned i = 0; i < guest_count; i++) {
 				const int fd = cpu.machine().fds().translate(fds[i].fd);

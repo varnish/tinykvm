@@ -702,6 +702,53 @@ int main() {
 }
 
 
+TEST_CASE("poll with more fds than the handler capacity is refused", "[Syscalls]")
+{
+	/* An nfds beyond the handler's fixed capacity must be refused, not
+	   overrun the host array. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+
+#define COUNT 300
+static struct pollfd fds[COUNT];
+
+int main() {
+	/* Regular files, so every entry translates to a valid host fd. */
+	for (int i = 0; i < COUNT; i++) {
+		const int fd = open("/scratch", O_RDONLY);
+		if (fd < 0) return 100 + i;
+		fds[i].fd = fd;
+		fds[i].events = POLLIN;
+	}
+
+	/* Either outcome is fine, as long as the VM survives to report it. */
+#ifdef SYS_poll
+	if (syscall(SYS_poll, fds, COUNT, 0) < 0 && errno != EINVAL) return 1;
+#endif
+	struct timespec ts = { 0, 0 };
+	if (syscall(SYS_ppoll, fds, COUNT, &ts, 0, 8) < 0 && errno != EINVAL) return 2;
+	return 0;
+})M");
+
+	ScratchFile file;
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	allow_scratch_file(machine, file);
+	/* Allow more open files than the handler's fixed capacity. */
+	machine.fds().set_max_files(1024);
+	machine.setup_linux({"poll-nfds"}, env);
+	REQUIRE_NOTHROW(machine.run(8.0f));
+
+	REQUIRE(machine.return_value() == 0);
+}
+
 TEST_CASE("clone stops handing out threads at the thread limit", "[Syscalls]")
 {
 	/* Past MAX_THREADS, clone must fail with EAGAIN like the real kernel. */
