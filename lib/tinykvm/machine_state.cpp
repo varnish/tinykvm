@@ -193,6 +193,10 @@ bool Machine::load_snapshot_state(const MachineOptions& options)
 
 		// Load the thread states
 		ColdStartThreads* threads = state.next<ColdStartThreads>(current);
+		if (threads->count > MultiThreading::MAX_THREADS) {
+			throw MachineException("Cold-start state has too many threads",
+				threads->count);
+		}
 		if (threads->count > 0) {
 			auto& mt = this->threads();
 			for (size_t i = 0; i < threads->count; i++) {

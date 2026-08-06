@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <tinykvm/machine.hpp>
+#include <tinykvm/linux/threads.hpp>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -700,3 +701,42 @@ int main() {
 	REQUIRE(access(file.path.c_str(), F_OK) != 0);
 }
 
+
+TEST_CASE("clone stops handing out threads at the thread limit", "[Syscalls]")
+{
+	/* Past MAX_THREADS, clone must fail with EAGAIN like the real kernel. */
+	const auto binary = build_and_load(R"M(
+#include <errno.h>
+#include <pthread.h>
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static void* worker(void* arg) {
+	(void)arg;
+	/* main() holds the lock, so workers park here and stay counted. */
+	pthread_mutex_lock(&lock);
+	pthread_mutex_unlock(&lock);
+	return 0;
+}
+int main() {
+	/* Small stacks: we're testing the count, not guest memory. */
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, 64UL * 1024);
+	pthread_mutex_lock(&lock);
+	int created = 0;
+	for (int i = 0; i < 1024; i++) {
+		pthread_t t;
+		const int r = pthread_create(&t, &attr, worker, 0);
+		if (r == EAGAIN) return created;
+		if (r != 0) return 1000 + r;
+		created++;
+	}
+	return 2000; /* the limit never kicked in */
+})M", "-pthread").second;
+
+	tinykvm::Machine machine { binary, { .max_mem = 64ul << 20 } };
+	machine.setup_linux({"thread-limit"}, env);
+	machine.run(16.0f);
+
+	/* The main thread counts towards the limit. */
+	REQUIRE(machine.return_value() == tinykvm::MultiThreading::MAX_THREADS - 1);
+}

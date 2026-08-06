@@ -300,6 +300,13 @@ void Machine::setup_multithreading()
 			const auto ctid  = regs.r10;
 			uint64_t   tls   = regs.r8;
 			const auto func  = regs.r9; /* NOTE: Only a guess */
+			if (cpu.machine().threads().at_thread_limit()) {
+				THPRINT(">>> clone: thread limit reached (%zu)\n",
+					MultiThreading::MAX_THREADS);
+				regs.rax = -EAGAIN;
+				cpu.set_registers(regs);
+				return;
+			}
 			if (stack == 0x0) {
 				// Allocate a new stack, aligned up from FSBASE to RSP
 				// We assume that RSP also contains some extra data
@@ -356,6 +363,14 @@ void Machine::setup_multithreading()
 			} args;
 			if (regs.rsi < sizeof(clone3_args)) {
 				regs.rax = -ENOSPC;
+				cpu.set_registers(regs);
+				return;
+			}
+			if (cpu.machine().threads().at_thread_limit()) {
+				THPRINT(">>> clone3: thread limit reached (%zu)\n",
+					MultiThreading::MAX_THREADS);
+				regs.rax = -EAGAIN;
+				cpu.set_registers(regs);
 				return;
 			}
 			cpu.machine().copy_from_guest(&args, regs.rdi, sizeof(clone3_args));

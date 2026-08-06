@@ -628,6 +628,13 @@ void Machine::setup_multithreading()
 			const auto ptid = regs.sysarg(2);
 			uint64_t tls = regs.sysarg(3);
 			const auto ctid = regs.sysarg(4);
+			if (cpu.machine().threads().at_thread_limit()) {
+				THPRINT(">>> clone: thread limit reached (%zu)\n",
+					MultiThreading::MAX_THREADS);
+				regs.sysret() = -EAGAIN;
+				cpu.set_registers(regs);
+				return;
+			}
 			if (stack == 0x0) {
 				static constexpr size_t STACK_SIZE = 0x200000;
 				stack = cpu.machine().mmap_allocate(STACK_SIZE) + STACK_SIZE;
@@ -664,6 +671,13 @@ void Machine::setup_multithreading()
 			} args;
 			if (regs.sysarg(1) < sizeof(clone3_args)) {
 				regs.sysret() = -ENOSPC;
+				cpu.set_registers(regs);
+				return;
+			}
+			if (cpu.machine().threads().at_thread_limit()) {
+				THPRINT(">>> clone3: thread limit reached (%zu)\n",
+					MultiThreading::MAX_THREADS);
+				regs.sysret() = -EAGAIN;
 				cpu.set_registers(regs);
 				return;
 			}

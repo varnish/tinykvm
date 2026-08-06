@@ -31,6 +31,10 @@ struct Thread {
 };
 
 struct MultiThreading {
+	/* Max live guest threads, main thread included. Emulated on one vCPU,
+	   so extra threads only cost memory. clone/clone3 return -EAGAIN here. */
+	static constexpr size_t MAX_THREADS = 64;
+
 	Thread& get_thread();
 	Thread* get_thread(int tid); /* or nullptr */
 	int gettid() { return get_thread().tid; }
@@ -57,6 +61,7 @@ struct MultiThreading {
 	void reset_to(const MultiThreading& other);
 	void set_to_and_suspend_others(int tid);
 	size_t size() const { return m_threads.size(); }
+	bool at_thread_limit() const { return m_threads.size() >= MAX_THREADS; }
 	const std::map<int, Thread>& threads() const { return m_threads; }
 
 	MultiThreading(Machine&);
