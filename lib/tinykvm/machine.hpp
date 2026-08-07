@@ -155,6 +155,21 @@ struct Machine
 		assert(m_prepped && "prepared_fpu_registers() requires prepare_copy_on_write()");
 		return m_prepared_fpu_regs;
 	}
+#if defined(TINYKVM_ARCH_ARM64)
+	/* The EL1 system registers a fork inherits from its master (MAIR_EL1,
+	   TCR_EL1, SCTLR_EL1, CPACR_EL1, VBAR_EL1), snapshotted by
+	   prepare_copy_on_write() for exactly the reason above: setup_cow_mode()
+	   used to read them back with KVM_GET_ONE_REG on the *master's* vCPU fd,
+	   which is -EIO from a process that merely inherited that fd over fork().
+	   AMD64 has no equivalent read (its analogue, get_special_registers(), is
+	   served from the synced-regs page), so this is the ARM64 half of the same
+	   contract. Frozen master => the snapshot equals a live read. */
+	using PreparedSysregs = std::array<__u64, 5>;
+	const PreparedSysregs& prepared_sysregs() const noexcept {
+		assert(m_prepped && "prepared_sysregs() requires prepare_copy_on_write()");
+		return m_prepared_sysregs;
+	}
+#endif
 	const kvm_sregs& get_special_registers() const;
 	void set_special_registers(const kvm_sregs&);
 	std::pair<__u64, __u64> get_fsgs() const;
@@ -475,6 +490,10 @@ private:
 	void* m_userdata = nullptr;
 	/* See prepared_fpu_registers(). */
 	tinykvm_fpuregs m_prepared_fpu_regs {};
+#if defined(TINYKVM_ARCH_ARM64)
+	/* See prepared_sysregs(). */
+	PreparedSysregs m_prepared_sysregs {};
+#endif
 
 	std::string_view m_binary;
 
