@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_set>
 #include <sys/epoll.h>
+#include <sys/socket.h>
 struct sockaddr_storage;
 struct pollfd;
 

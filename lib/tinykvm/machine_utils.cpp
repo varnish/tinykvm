@@ -1,7 +1,9 @@
 #include "machine.hpp"
 
 #include <algorithm>
+#include <climits>
 #include <cstring>
+#include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
