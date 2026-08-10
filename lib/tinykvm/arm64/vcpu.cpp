@@ -3,6 +3,7 @@
 #include "memory_layout.hpp"
 #include "paging.hpp"
 #include "../page_streaming.hpp"
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
@@ -562,11 +563,41 @@ void vCPU::set_vcpu_table_at(unsigned index, int value)
 	*((int*)&page[offset]) = value;
 }
 
+/* The EL1 system registers every fork inherits verbatim from its master. The
+   order is the snapshot's ABI: prepared_sysregs() is indexed by it. */
+static constexpr size_t COW_SYSREG_COUNT = 5;
+static std::array<uint64_t, COW_SYSREG_COUNT> cow_sysreg_ids()
+{
+	return {
+		sys_reg_id(3, 0, 10, 2, 0), // MAIR_EL1
+		sys_reg_id(3, 0, 2, 0, 2),  // TCR_EL1
+		sys_reg_id(3, 0, 1, 0, 0),  // SCTLR_EL1
+		sys_reg_id(3, 0, 1, 0, 2),  // CPACR_EL1
+		sys_reg_id(3, 0, 12, 0, 0), // VBAR_EL1
+	};
+}
+
 void Machine::prepare_copy_on_write(size_t max_work_mem,
 	uint64_t shared_memory_boundary, bool split_accessed_hugepages)
 {
 	this->m_prepped = true;
 	this->m_prepared_fpu_regs = this->fpu_registers();
+	/* Snapshot the CoW system registers and warm the register cache while this
+	   master's vCPU fd is still ours to ioctl. A fork built in a *different*
+	   process (process-per-VM: the worker inherits the master over fork() and
+	   creates its own VM) cannot issue vCPU ioctls against the master's fd --
+	   KVM binds a VM to the creating mm and answers -EIO otherwise -- so both
+	   setup_cow_mode() and the fork constructor's other.registers() read from
+	   userspace instead. Same contract, and same "the master is frozen after
+	   this point" justification, as m_prepared_fpu_regs. */
+	{
+		const auto ids = cow_sysreg_ids();
+		for (size_t i = 0; i < COW_SYSREG_COUNT; i++) {
+			get_one_reg(this->vcpu.fd, ids[i], this->m_prepared_sysregs[i]);
+		}
+		/* const overload: caching a read must not mark the master dirty. */
+		(void) static_cast<const vCPU&>(this->vcpu).registers();
+	}
 	if (shared_memory_boundary == 0)
 		shared_memory_boundary = UINT64_MAX;
 
@@ -591,17 +622,14 @@ void Machine::setup_cow_mode(const Machine* other)
 	memory.page_tables = clone_arm64_page_table(memory, other->memory,
 		other->memory.page_tables, 1);
 
-	const uint64_t sysregs[] {
-		sys_reg_id(3, 0, 10, 2, 0), // MAIR_EL1
-		sys_reg_id(3, 0, 2, 0, 2),  // TCR_EL1
-		sys_reg_id(3, 0, 1, 0, 0),  // SCTLR_EL1
-		sys_reg_id(3, 0, 1, 0, 2),  // CPACR_EL1
-		sys_reg_id(3, 0, 12, 0, 0), // VBAR_EL1
-	};
-	for (uint64_t reg_id : sysregs) {
-		__u64 value = 0;
-		get_one_reg(other->vcpu.fd, reg_id, value);
-		set_one_reg(this->vcpu.fd, reg_id, value);
+	/* Take the master's EL1 sysregs from its prepare-time snapshot, never from
+	   a live KVM_GET_ONE_REG on other->vcpu.fd: a worker process that inherited
+	   the master over fork() owns neither that fd's VM nor its mm, and the read
+	   fails with -EIO. See Machine::prepared_sysregs(). */
+	const auto ids = cow_sysreg_ids();
+	const auto& values = other->prepared_sysregs();
+	for (size_t i = 0; i < COW_SYSREG_COUNT; i++) {
+		set_one_reg(this->vcpu.fd, ids[i], values[i]);
 	}
 	set_one_reg(this->vcpu.fd, sys_reg_id(3, 0, 2, 0, 0), memory.page_tables);
 
