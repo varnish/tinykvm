@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <unistd.h>
 #include <vector>
 #include <tinykvm/machine.hpp>
 
