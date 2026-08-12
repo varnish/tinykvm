@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <unistd.h> /* access(), R_OK -- not pulled in transitively by GCC 16 */
 #include <tinykvm/machine.hpp>
 
 extern std::vector<uint8_t> build_and_load(const std::string& code);
