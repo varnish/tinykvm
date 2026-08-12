@@ -86,6 +86,8 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 	this->guest_cpu_index = guest_cpu_index;
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
+	/* Not a seat: everything acquired below is this vCPU's to release. */
+	this->m_seat_borrowed = false;
 
 	if (this->fd < 0) {
 		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->kvm_vcpu_id);
@@ -111,11 +113,15 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 	   pins for pooled seats, but honoured here too so a lazy master/plain fork
 	   behaves the same. */
 	if (this->kvm_run == nullptr && !options.lazy_vcpu_mmap) {
-		kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
+		auto* mapping = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 			PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
-		if (UNLIKELY(kvm_run == MAP_FAILED)) {
+		/* Assigned only on success: MAP_FAILED is not a null pointer, and
+		   ~vCPU/deinit() would take a non-null kvm_run as a live mapping and
+		   munmap((void*)-1). */
+		if (UNLIKELY(mapping == MAP_FAILED)) {
 			Machine::machine_exception("Failed to create KVM run-time mapped memory");
 		}
+		this->kvm_run = mapping;
 	}
 }
 
@@ -126,6 +132,10 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 	this->guest_cpu_index = 0;
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
+	/* Armed before anything is taken: from here on fd, kvm_run and the timer
+	   are the seat's, and ~vCPU must not close, unmap or delete any of them
+	   however this function exits. */
+	this->m_seat_borrowed = true;
 
 	/* The seat's vCPU is created when the group materializes the seat and is
 	   adopted, never created, here -- see the AMD64 twin (vcpu.cpp) for why
@@ -161,11 +171,14 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 	if (seat.kvm_run != nullptr) {
 		this->kvm_run = (struct kvm_run *)seat.kvm_run;
 	} else if (!options.lazy_vcpu_mmap) {
-		this->kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
+		auto* mapping = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 			PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
-		if (UNLIKELY(this->kvm_run == MAP_FAILED)) {
+		/* Assigned only on success, so a failure does not leave MAP_FAILED
+		   behind for the seat (and its next tenant) to adopt as a mapping. */
+		if (UNLIKELY(mapping == MAP_FAILED)) {
 			Machine::machine_exception("Failed to map VM group seat kvm_run");
 		}
+		this->kvm_run = mapping;
 		seat.kvm_run = this->kvm_run;
 	}
 
@@ -212,17 +225,20 @@ void vCPU::detach_to_seat(VmGroupSeat& seat) noexcept
 	this->timer_tid = 0;
 	this->m_regs_cached = false;
 	this->m_regs_dirty = false;
+	this->m_seat_borrowed = false;
 }
 
 void vCPU::ensure_kvm_run()
 {
 	if (LIKELY(this->kvm_run != nullptr))
 		return;
-	this->kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
+	auto* mapping = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
 		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
-	if (UNLIKELY(this->kvm_run == MAP_FAILED)) {
+	/* Assigned only on success: see init(). */
+	if (UNLIKELY(mapping == MAP_FAILED)) {
 		Machine::machine_exception("Failed to lazily map kvm_run");
 	}
+	this->kvm_run = mapping;
 	/* A pooled member's mapping belongs to its seat so the next tenant adopts
 	   it rather than re-mapping: one host VMA per seat, never per tenant. Same
 	   write-back the AMD64 lazily_map_kvm_run() does. */
@@ -246,9 +262,11 @@ void vCPU::smp_init(int, Machine&)
 	throw MachineException("SMP is not implemented on ARM64");
 }
 
+/* Idempotent, and clears every field it releases: ~vCPU calls it a second time
+   for the objects ~Machine never reaches. */
 void vCPU::deinit()
 {
-	if (this->fd > 0) {
+	if (this->fd >= 0) {
 		close(this->fd);
 		this->fd = -1;
 	}
@@ -259,6 +277,17 @@ void vCPU::deinit()
 	if (this->timer_id != nullptr) {
 		timer_delete((timer_t)this->timer_id);
 		this->timer_id = nullptr;
+		this->timer_tid = 0;
+	}
+}
+
+vCPU::~vCPU()
+{
+	/* See the declaration: this is the release path for a Machine constructor
+	   that threw after vCPU bring-up, where ~Machine (and therefore deinit())
+	   never runs. A seat's fd/kvm_run/timer are not ours to release. */
+	if (!this->m_seat_borrowed) {
+		this->deinit();
 	}
 }
 

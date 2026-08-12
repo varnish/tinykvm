@@ -439,6 +439,25 @@ private:
 	   partition. Hands the seat back on any later failure (release_seat). */
 	void pooled_fork_prepare(const Machine& other, const MachineOptions&);
 	void release_group_seat() noexcept;
+	/* Releases what a constructor has already acquired when a later step
+	   throws. ~Machine is never run for a constructor that threw, so without
+	   this the VM fd and (for a pooled fork) the group seat are leaked outright
+	   -- the seat permanently, since a struct kvm never gives vCPU capacity
+	   back. Each flag is armed as its resource is taken and the whole guard is
+	   disarmed on every successful exit, early returns included.
+
+	   The vCPU's own fd, timer and kvm_run mapping are deliberately not here:
+	   vcpu is a member, so ~vCPU runs on the throwing path and releases them
+	   itself. This guard is a ctor-body local and therefore destroyed *before*
+	   any member, which is also what makes the ordering work for a pooled
+	   fork: the seat is handed back before ~vCPU could look at it. */
+	struct CtorGuard {
+		Machine* machine = nullptr;
+		bool vm_fd = false;
+		bool group_seat = false;
+		~CtorGuard() noexcept;
+		void disarm() noexcept { this->machine = nullptr; }
+	};
 	[[noreturn]] static void machine_exception(const char*, uint64_t = 0);
 	[[noreturn]] static void timeout_exception(const char*, uint32_t = 0);
 	void smp_vcpu_broadcast(std::function<void(vCPU&)>);

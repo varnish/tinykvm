@@ -25,13 +25,20 @@ namespace tinykvm
 		   is consumed permanently by every vCPU ever created in it, so
 		   closing the fd would burn the seat instead of freeing it. */
 		void detach_to_seat(VmGroupSeat&) noexcept;
-#if !defined(TINYKVM_ARCH_ARM64)
-		/* Releases the shadow registers of a vCPU that never became mapped.
-		   deinit() is only reached from ~Machine, which is never run for a
-		   constructor that threw after vCPU init (eg. a fork that ran out of
-		   working memory in setup_cow_mode). */
+		/* Releases everything this vCPU still owns: the KVM_CREATE_VCPU fd, the
+		   POSIX execution timer, the kvm_run mapping and (AMD64) the shadow
+		   registers of a vCPU that never became mapped.
+
+		   It exists because deinit() is only reached from ~Machine, and
+		   ~Machine is never run for a *constructor* that threw after vCPU
+		   bring-up -- e.g. a fork that ran out of working memory in
+		   setup_cow_mode(), which is downstream of both KVM_CREATE_VCPU and
+		   timer_create(). deinit() clears every field it releases, so on the
+		   normal path this destructor finds nothing left to do.
+
+		   A vCPU borrowing a VM group seat (m_seat_borrowed) releases nothing:
+		   see that member. */
 		~vCPU();
-#endif
 		tinykvm_regs& registers();
 		const tinykvm_regs& registers() const;
 		void set_registers(const struct tinykvm_regs &);
@@ -96,6 +103,16 @@ namespace tinykvm
 		   (SIGEV_THREAD_ID) and vCPU::detach_to_seat(). */
 		pid_t timer_tid = 0;
 		void* timer_id = nullptr;
+		/* Set while fd, kvm_run and timer_id are on loan from a VM group seat
+		   rather than owned: init_from_seat() borrows all three and
+		   detach_to_seat() hands them back. ~vCPU releases nothing while it is
+		   set — the seat keeps all three for its next tenant, and closing the
+		   fd would burn the group's permanently-consumed vCPU capacity instead
+		   of freeing it. It is not the leak-safety mechanism for a pooled
+		   member (the constructor's seat guard is, and it runs first, before
+		   any member destructor); it is what makes ~vCPU safe if that ever
+		   stops being true. */
+		bool m_seat_borrowed = false;
 		uint64_t last_fault_address = 0;
 		uint64_t remote_return_address = 0;
 		uint64_t remote_original_tls_base = 0;

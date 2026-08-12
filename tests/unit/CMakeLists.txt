@@ -27,6 +27,12 @@ function(add_unit_test NAME)
 	)
 endfunction()
 
+# Arch-neutral: the resource-ownership rules it pins (a throwing fork
+# constructor releases what it took; a pooled one hands its seat back instead)
+# are the same on both backends, and both have their own copy of the vCPU
+# bring-up code that has to obey them.
+add_unit_test(fork_ctor_leak fork_ctor_leak.cpp)
+
 if (TINYKVM_ARCH STREQUAL "AMD64")
 	add_unit_test(basic  basic.cpp)
 	add_unit_test(elf    elf.cpp)

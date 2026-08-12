@@ -153,6 +153,8 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 	this->guest_cpu_index = guest_cpu_index;
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
+	/* Not a seat: everything acquired below is this vCPU's to release. */
+	this->m_seat_borrowed = false;
 	if (this->fd < 0) {
 		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->kvm_vcpu_id);
 		if (UNLIKELY(this->fd < 0)) {
@@ -241,6 +243,10 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 	this->guest_cpu_index = 0;
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
+	/* Armed before anything is taken: from here on fd, kvm_run and the timer
+	   are the seat's, and ~vCPU must not close, unmap or delete any of them
+	   however this function exits. */
+	this->m_seat_borrowed = true;
 
 	/* The seat's vCPU was created when the group materialized the seat, and is
 	   adopted by every tenant after that; it is never closed while the group
@@ -334,6 +340,7 @@ void vCPU::detach_to_seat(VmGroupSeat& seat) noexcept
 	this->m_shadow_regs = nullptr;
 	this->m_shadow_dirty_regs = 0;
 	this->m_initialized = false;
+	this->m_seat_borrowed = false;
 }
 
 void vCPU::init_extended_state(Machine& machine)
@@ -456,26 +463,49 @@ void vCPU::smp_init(int id, Machine& machine)
 	this->set_special_registers(sregs);
 }
 
+/* Idempotent, and clears every field it releases: ~vCPU calls it a second time
+   for the objects ~Machine never reaches. */
 void vCPU::deinit()
 {
-	if (this->fd > 0) {
+	if (this->fd >= 0) {
 		close(this->fd);
+		this->fd = -1;
 	}
 	/* A never-run lazy fork has nothing to unmap. Never unmap anywhere else
 	   than here: munmap fires an mmu-notifier invalidation to every VM
 	   registered in this address space. */
 	if (kvm_run != nullptr) {
 		munmap(kvm_run, vcpu_mmap_size);
+		kvm_run = nullptr;
+		/* They pointed into the mapping (adopt_kvm_run). */
+		this->m_regs  = nullptr;
+		this->m_sregs = nullptr;
 	}
 	delete (ShadowRegisters *)this->m_shadow_regs;
 	this->m_shadow_regs = nullptr;
+	this->m_shadow_dirty_regs = 0;
 
-	timer_delete(this->timer_id);
+	if (this->timer_id != nullptr) {
+		timer_delete((timer_t)this->timer_id);
+		this->timer_id = nullptr;
+		this->timer_tid = 0;
+	}
+	this->m_initialized = false;
 }
 
 vCPU::~vCPU()
 {
-	delete (ShadowRegisters *)this->m_shadow_regs;
+	/* See the declaration: this is the release path for a Machine constructor
+	   that threw after vCPU bring-up, where ~Machine (and therefore deinit())
+	   never runs. A seat's fd/kvm_run/timer are not ours to release. */
+	if (!this->m_seat_borrowed) {
+		this->deinit();
+	} else {
+		/* Shadow registers are the tenant's own even when the rest is
+		   borrowed, and detach_to_seat() is what normally frees them. */
+		delete (ShadowRegisters *)this->m_shadow_regs;
+		this->m_shadow_regs = nullptr;
+	}
 }
 
 const tinykvm_x86regs& vCPU::registers() const
