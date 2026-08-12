@@ -63,6 +63,7 @@ extern long quick(void) { return 42; }
 
 	/* Outer: runs the inner machine from a syscall, then spins forever. */
 	const auto outer_binary = build_and_load(R"M(
+#define _GNU_SOURCE /* syscall() -- implicit decl is an error on GCC 16 */
 #include <unistd.h>
 int main() {
 	syscall(500);
@@ -121,6 +122,7 @@ extern long quick(void) { return 42; }
 	g_inner_error.clear();
 
 	const auto outer_binary = build_and_load(R"M(
+#define _GNU_SOURCE /* syscall() -- implicit decl is an error on GCC 16 */
 #include <unistd.h>
 int main() {
 	syscall(500);
