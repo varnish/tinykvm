@@ -45,9 +45,15 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	if (options.mmap_backed_files && !options.snapshot_file.empty()) {
 		throw MachineException("Cannot have VM snapshot with mmap-backed files at the same time");
 	}
+	/* Everything from the VM fd on is leaked if a later step throws (the ELF
+	   loader is the likely one here) -- ~Machine does not run for a
+	   constructor that threw. See Machine::CtorGuard. */
+	CtorGuard guard;
 	/* vm_group only engages for forks (like lazy_vcpu_mmap): a master owns
 	   its own VM and simply passes the flag on through its fork options. */
 	this->fd = create_kvm_vm();
+	guard.machine = this;
+	guard.vm_fd = true;
 
 #if defined(TINYKVM_ARCH_ARM64)
 	if (memory.within(ARM64_STOP_MMIO_ADDR, vMemory::PageSize())) {
@@ -74,6 +80,7 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 			if (options.verbose_loader) {
 				printf("Loaded VM snapshot state\n");
 			}
+			guard.disarm(); /* Constructed: ~Machine owns it from here. */
 			return;
 		}
 		// If the file does not exist, or anything else failed, we continue
@@ -103,6 +110,8 @@ Machine::Machine(std::string_view binary, const MachineOptions& options)
 	/* Store the registers, so that Machine is ready to go */
 	this->setup_registers(regs);
 	this->set_registers(regs);
+
+	guard.disarm(); /* Constructed: ~Machine owns it from here. */
 }
 Machine::Machine(const std::vector<uint8_t>& bin, const MachineOptions& opts)
 	: Machine(bin.empty() ? std::string_view{} :
@@ -133,26 +142,26 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 		throw MachineException("Source Machine is not prepared for forking");
 	}
 
-	/* A seat is consumed permanently by the group if it is not handed back,
-	   so any failure after acquisition must return it. */
-	struct SeatGuard {
-		Machine* machine = nullptr;
-		~SeatGuard() {
-			if (UNLIKELY(machine != nullptr))
-				machine->release_group_seat();
-		}
-	} seat_guard;
+	/* A seat is consumed permanently by the group if it is not handed back and
+	   an unpooled fork's VM fd is leaked outright, so any failure after
+	   acquisition -- and every step below can throw, setup_cow_mode() running
+	   out of working memory being the usual one -- must release them.
+	   See Machine::CtorGuard. */
+	CtorGuard guard;
 
 	if (options.vm_group) {
 		/* Armed before acquisition: release_group_seat() is a no-op until a
 		   seat is actually held, and pooled_fork_prepare() can throw after
 		   taking one. */
-		seat_guard.machine = this;
+		guard.machine = this;
+		guard.group_seat = true;
 		this->pooled_fork_prepare(other, options);
 	} else {
 		/* Unfortunately we have to create a new VM because
 		   memory is tied to VMs and not vCPUs. */
 		this->fd = create_kvm_vm();
+		guard.machine = this;
+		guard.vm_fd = true;
 
 		/* Reuse pre-CoWed pagetable from the master machine */
 		this->install_memory(0, memory.vmem(), false);
@@ -200,7 +209,23 @@ Machine::Machine(const Machine& other, const MachineOptions& options)
 	this->set_registers(m_regs);
 	this->set_fpu_registers(other.prepared_fpu_registers());
 
-	seat_guard.machine = nullptr;
+	guard.disarm(); /* Constructed: ~Machine owns it from here. */
+}
+
+Machine::CtorGuard::~CtorGuard() noexcept
+{
+	if (LIKELY(this->machine == nullptr))
+		return;
+	if (this->group_seat) {
+		/* A no-op until a seat is actually held. Also detaches the vCPU from
+		   the seat, so the ~vCPU that follows this guard sees nothing of the
+		   seat's to release. */
+		this->machine->release_group_seat();
+	}
+	if (this->vm_fd && this->machine->fd >= 0) {
+		close(this->machine->fd);
+		this->machine->fd = -1;
+	}
 }
 
 void Machine::pooled_fork_prepare(const Machine& other, const MachineOptions& options)
