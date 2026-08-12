@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <tinykvm/machine.hpp>
+#include <tinykvm/smp.hpp>
 #include <cstdio>
 #include <cstring>
 #include <linux/kvm.h> /* struct kvm_sregs */
@@ -244,4 +245,136 @@ TEST_CASE("Eagerly mapped forks map at construction", "[LazyRun]")
 	} else {
 		REQUIRE(count_vcpu_mappings() == baseline);
 	}
+}
+
+/* Regression tests for the SMP x lazy-kvm_run interaction (fast-agent issue
+   #19). docs/design/create-fork-vm-pooling.md's lever C states the lazy
+   mapping is per-vCPU bookkeeping ("map = #forks that have ever run", the
+   invariant `Only forks that have run are mapped` above already locks in for
+   single-vCPU forks); this exercises the same bookkeeping once a fork itself
+   goes SMP (real multi-vCPU via Machine::smp(), not the cooperative
+   MultiThreading green threads used for guest pthread emulation).
+
+   SMP is AMD64-only in this tree today (lib/tinykvm/arm64/stubs.cpp:
+   Machine::smp() throws "SMP is not implemented on ARM64"), so this file
+   builds only under TINYKVM_ARCH=AMD64 already (see CMakeLists.txt) and
+   there is no ARM64 counterpart to add. */
+
+static std::vector<uint8_t> smp_lazy_test_binary()
+{
+	return build_and_load(R"M(
+int main() {
+}
+static volatile long counter = 0;
+extern void bump() {
+	__sync_fetch_and_add(&counter, 1);
+}
+extern long get_counter() {
+	return counter;
+})M");
+}
+
+TEST_CASE("SMP fork lazily maps its main vCPU and eagerly maps the SMP vCPUs it brings up", "[LazyRun][SMP]")
+{
+	/* Give the *master* more than one real vCPU (via Machine::smp(), not
+	   guest-level threading) before it is snapshotted. Nothing in the design
+	   doc's lever C claims a master's own vCPU history changes anything
+	   about a fork's lazy main-vCPU mapping -- a fork always starts with
+	   exactly one vCPU (guest_cpu_index 0) regardless of what the master
+	   used, so this proves that holds even when the master itself went SMP. */
+	const auto binary = smp_lazy_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"lazy_smp"}, env);
+	machine.run(4.0f);
+
+	const auto bump = machine.address_of("bump");
+	const auto get_counter = machine.address_of("get_counter");
+	REQUIRE(bump != 0x0);
+	REQUIRE(get_counter != 0x0);
+
+	{
+		const uint64_t master_stack = machine.mmap_allocate(3 * 0x4000);
+		machine.smp().timed_smpcall(2, master_stack, 0x4000, bump, 4.0f);
+		machine.smp_wait();
+		REQUIRE(machine.smp_active_count() == 0);
+	}
+
+	machine.prepare_copy_on_write(65536);
+
+	/* Baseline is captured *after* the master's own SMP run, so it already
+	   contains the master's own (always-eager) vCPU mappings -- what matters
+	   below is the delta the fork itself introduces. */
+	const size_t baseline = count_vcpu_mappings();
+
+	tinykvm::Machine fork { machine, lazy_options() };
+
+	/* (a) Construction maps nothing: not the fork's own main vCPU, and
+	   nothing about the master's SMP history forced anything either. */
+	REQUIRE(count_vcpu_mappings() == baseline);
+
+	/* First use of the fork's own main vCPU maps exactly one kvm_run page. */
+	fork.timed_vmcall(get_counter, 4.0f);
+	REQUIRE(fork.return_value() == 2); /* inherited from the master's two bumps */
+	REQUIRE(count_vcpu_mappings() == baseline + 1);
+
+	/* (b) Bring up the fork's own SMP vCPUs and use every one of them. */
+	static constexpr size_t SMP_CPUS = 3;
+	const uint64_t fork_stack = fork.mmap_allocate((SMP_CPUS + 1) * 0x4000);
+	fork.smp().timed_smpcall(SMP_CPUS, fork_stack, 0x4000, bump, 4.0f);
+	fork.smp_wait();
+	REQUIRE(fork.smp_active_count() == 0);
+
+	fork.timed_vmcall(get_counter, 4.0f);
+	REQUIRE(fork.return_value() == 2 + (long)SMP_CPUS);
+
+	/* Secondary SMP vCPUs are only ever created in order to run immediately
+	   (vCPU::smp_init maps kvm_run eagerly at creation, unlike the lazily
+	   mapped main vCPU above -- "SMP vCPUs are only ever created in order to
+	   run", per the comment at their creation site), so bringing up SMP_CPUS
+	   of them adds exactly that many mappings: one per vCPU that has ever
+	   existed on this fork, main included. */
+	REQUIRE(count_vcpu_mappings() == baseline + 1 + SMP_CPUS);
+}
+
+TEST_CASE("SMP fork teardown releases every per-vCPU kvm_run mapping", "[LazyRun][SMP]")
+{
+	const auto binary = smp_lazy_test_binary();
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"lazy_smp"}, env);
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto bump = machine.address_of("bump");
+	const auto get_counter = machine.address_of("get_counter");
+	REQUIRE(bump != 0x0);
+	REQUIRE(get_counter != 0x0);
+
+	const size_t baseline = count_vcpu_mappings();
+	static constexpr size_t SMP_CPUS = 2;
+
+	{
+		tinykvm::Machine fork { machine, lazy_options() };
+		fork.timed_vmcall(get_counter, 4.0f); /* main vCPU: +1 mapping */
+
+		const uint64_t stack = fork.mmap_allocate((SMP_CPUS + 1) * 0x4000);
+		fork.smp().timed_smpcall(SMP_CPUS, stack, 0x4000, bump, 4.0f);
+		fork.smp_wait();
+		REQUIRE(fork.smp_active_count() == 0);
+		REQUIRE(count_vcpu_mappings() == baseline + 1 + SMP_CPUS);
+
+		/* A reset recycles the same vCPUs in place -- "never unmap on park"
+		   (Term 3 in the design doc: unmapping on park would cost an O(N)
+		   invalidate fan-out plus a TLB shootdown for nothing, since the next
+		   tenant just remaps it). Every mapping this fork has ever created
+		   survives the reset. */
+		fork.reset_to(machine, lazy_options());
+		REQUIRE(count_vcpu_mappings() == baseline + 1 + SMP_CPUS);
+
+		fork.timed_vmcall(get_counter, 4.0f);
+		REQUIRE(fork.return_value() == 0); /* fresh master state: no bumps yet */
+		REQUIRE(count_vcpu_mappings() == baseline + 1 + SMP_CPUS);
+	}
+	/* Only real teardown (~Machine) releases every per-vCPU mapping the fork
+	   ever created -- main and every SMP vCPU alike. */
+	REQUIRE(count_vcpu_mappings() == baseline);
 }

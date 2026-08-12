@@ -2,6 +2,12 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <tinykvm/machine.hpp>
+#include <tinykvm/linux/threads.hpp>
+#include <cstring>
+#include <linux/kvm.h> /* struct kvm_sregs */
+#include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 extern std::vector<uint8_t> build_and_load(const std::string& code);
 static const uint64_t MAX_MEMORY = 8ul << 20; /* 8MB */
 static const uint64_t MAX_COWMEM = 3ul << 20; /* 3MB */
@@ -856,4 +862,205 @@ int func2() {
 			.reset_keep_all_work_memory = true
 		});
 	}
+}
+
+/* Regression test for the cross-process master path (fast-agent issue #18,
+   fixed on ARM64 by tinykvm#114). --process-per-vm boots one master and
+   fork()s a zygote; every worker then constructs its own TinyKVM fork of the
+   inherited master from a *different* process than the one that built it.
+   KVM binds a VM to the creating process's mm (docs/architecture/
+   process-per-vm.md, fact 1): any vCPU ioctl issued against the master's fd
+   from another process fails with -EIO. The fork constructor and reset_to()
+   must therefore never ioctl `other`'s vcpu fd -- everything they need (GPRs
+   and sregs via the synced-regs page, FPU via the prepare-time snapshot) must
+   already be readable from userspace state that crossed the fork() boundary.
+   This is exactly the property that broke on ARM64 before tinykvm#114:
+   setup_cow_mode() read five EL1 sysregs straight off the master's vcpu fd,
+   and the constructor's other.registers() could fall back to the same fd
+   whenever the register cache was cold -- both fine in-process, both -EIO
+   from a worker. The fix snapshots that state into the master at
+   prepare_copy_on_write() time, while its fd is still ioctl-able, so the
+   worker never has to touch it.
+
+   Masters "stay eager by construction": nothing about consuming a master
+   from a different process should depend on state that was lazily faulted in
+   and therefore never crossed the process boundary. Mirroring the real
+   topology precisely (run() + prepare_copy_on_write() happen once, in the
+   single-threaded parent, before the OS-level fork() -- see process-per-vm.md
+   fact 4) is what makes this a faithful regression guard rather than a
+   synthetic one. */
+TEST_CASE("Cross-process master path: a worker builds and runs its own fork", "[Fork]")
+{
+	const auto binary = build_and_load(R"M(
+int main() {
+}
+static int value = 0;
+extern int get_value() {
+	value++;
+	return value;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"fork"}, env);
+	// Everything the fork constructor needs from the master must be settled
+	// here, in the single-threaded parent, before the OS-level fork() below.
+	machine.run(4.0f);
+	machine.prepare_copy_on_write(65536);
+
+	const auto get_value = machine.address_of("get_value");
+	REQUIRE(get_value != 0x0);
+
+	struct WorkerResult {
+		bool constructed = false;
+		bool ran_ok = false;
+		bool reset_ok = false;
+		bool ran_again_ok = false;
+		long value1 = -1;
+		long value2 = -1;
+		char error[256] = {0};
+	};
+
+	int pipefd[2];
+	REQUIRE(pipe(pipefd) == 0);
+
+	fflush(nullptr);
+	const pid_t pid = fork();
+	REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		/* Worker process: never touches the parent's `machine` object again
+		   except through the state that crossed fork() -- no ioctl on the
+		   master's vcpu fd is possible here (KVM binds the VM to the
+		   creating process's mm), so any regression back to a live read of
+		   `other`'s fd fails loudly with -EIO instead of silently. */
+		close(pipefd[0]);
+		WorkerResult result{};
+		try {
+			tinykvm::Machine fork_vm { machine, {
+				.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+			}};
+			result.constructed = true;
+
+			fork_vm.timed_vmcall(get_value, 4.0f);
+			result.value1 = fork_vm.return_value();
+			result.ran_ok = (result.value1 == 1);
+
+			/* The process-per-vm worker lifecycle recycles across tenants via
+			   reset_to() (process-per-vm.md, "Worker lifetime policy") --
+			   still cross-process, still must not touch the master's fd. */
+			fork_vm.reset_to(machine, {
+				.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+			});
+			result.reset_ok = true;
+
+			fork_vm.timed_vmcall(get_value, 4.0f);
+			result.value2 = fork_vm.return_value();
+			result.ran_again_ok = (result.value2 == 1);
+		} catch (const std::exception& e) {
+			strncpy(result.error, e.what(), sizeof(result.error) - 1);
+		}
+		[[maybe_unused]] const ssize_t w = write(pipefd[1], &result, sizeof(result));
+		close(pipefd[1]);
+		_exit(0);
+	}
+
+	close(pipefd[1]);
+	WorkerResult result{};
+	const ssize_t r = read(pipefd[0], &result, sizeof(result));
+	close(pipefd[0]);
+
+	int status = 0;
+	REQUIRE(waitpid(pid, &status, 0) == pid);
+	REQUIRE(WIFEXITED(status));
+	REQUIRE(WEXITSTATUS(status) == 0);
+
+	REQUIRE(r == (ssize_t) sizeof(result));
+	INFO("worker error: " << result.error);
+	REQUIRE(result.constructed);
+	REQUIRE(result.ran_ok);
+	REQUIRE(result.value1 == 1);
+	REQUIRE(result.reset_ok);
+	REQUIRE(result.ran_again_ok);
+	REQUIRE(result.value2 == 1);
+
+	/* The master itself is unharmed: it is still forkable in the parent, and
+	   a fresh fork built here (in-process this time) behaves identically. */
+	auto fork_in_parent = tinykvm::Machine { machine, {
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+	}};
+	fork_in_parent.timed_vmcall(get_value, 4.0f);
+	REQUIRE(fork_in_parent.return_value() == 1);
+}
+
+/* Regression test for the fork-path set_tls_base seat/tid coupling (fast-agent
+   issue #20). docs/design/create-fork-vm-pooling.md (the "Correct design"
+   section under lever C) calls out threads.cpp:101 -- MultiThreading::reset_to
+   -- as a fork-construction call site that performs a read-modify-write of
+   the fork's sregs via set_tls_base(). That call only fires when the master's
+   *current* thread id differs from the default (1) every fresh
+   MultiThreading starts with, so the ordinary single-thread case (master
+   never touches threads() at all) never exercises it. This builds a master
+   whose current thread id is not 1 before it is snapshotted, then confirms
+   the fork's FS base lands correctly -- first via the C++ accessor (the
+   userspace synced-regs mirror, correct even before the fork ever runs), and
+   again via a raw KVM_GET_SREGS ioctl after running the fork once, so the
+   dirty synced-regs bits have actually been consumed into real vCPU state.
+   The seat is exercised at the host level via MultiThreading's public API
+   (tinykvm/linux/threads.hpp) rather than a fragile guest-side clone()
+   dance -- this is a fork-construction/reset invariant, not a scheduler
+   behavior, so it does not need real guest threading to expose it. */
+TEST_CASE("Fork inherits FS base from master's non-default current thread", "[Fork][Threads]")
+{
+	const auto binary = build_and_load(R"M(
+int main() {
+}
+extern int get_value() {
+	return 42;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	machine.setup_linux({"fork"}, env);
+	machine.run(4.0f);
+
+	static constexpr uint64_t TLS_MARKER = 0x0000133700001337ULL;
+	static constexpr int NON_DEFAULT_TID = 7;
+
+	/* Master's calling thread is not the default tid (1) when it is
+	   snapshotted, and its live FS base is the marker below. Setting the
+	   Thread record's own cached fsbase (not just the live register) matches
+	   what a real activate()/resume() would have left behind, and keeps this
+	   test meaningful on both arches (see the ARM64 twin in arm64_fork.cpp,
+	   whose reset_to() reads the Thread's cached field directly rather than
+	   re-reading a live sreg). */
+	auto& thread = machine.threads().create(NON_DEFAULT_TID);
+	thread.fsbase = TLS_MARKER;
+	machine.threads().set_to_and_suspend_others(NON_DEFAULT_TID);
+	machine.set_tls_base(TLS_MARKER);
+	REQUIRE(machine.threads().gettid() == NON_DEFAULT_TID);
+
+	machine.prepare_copy_on_write(65536);
+
+	auto fork = tinykvm::Machine { machine, {
+		.max_mem = MAX_MEMORY, .max_cow_mem = MAX_COWMEM
+	}};
+
+	/* The fork's own thread bookkeeping followed the master's current
+	   thread, not the default tid=1 every fresh MultiThreading starts with. */
+	REQUIRE(fork.threads().gettid() == NON_DEFAULT_TID);
+
+	/* Correct before the fork has ever run: get_special_registers() reads the
+	   mmap'd synced-regs page directly. */
+	REQUIRE(fork.get_special_registers().fs.base == TLS_MARKER);
+
+	const auto get_value = fork.address_of("get_value");
+	REQUIRE(get_value != 0x0);
+	fork.timed_vmcall(get_value, 4.0f);
+	REQUIRE(fork.return_value() == 42);
+
+	/* Strongest possible confirmation: a raw KVM_GET_SREGS ioctl, bypassing
+	   every userspace mirror, after KVM has consumed the dirty synced-regs
+	   bits into real vCPU state via the run above. */
+	struct kvm_sregs sregs {};
+	REQUIRE(ioctl(fork.cpu().fd, KVM_GET_SREGS, &sregs) == 0);
+	REQUIRE(sregs.fs.base == TLS_MARKER);
 }

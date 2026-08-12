@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <unistd.h>
 #include <vector>
 #include <unistd.h> /* access(), R_OK -- not pulled in transitively by GCC 16 */
 #include <tinykvm/machine.hpp>
