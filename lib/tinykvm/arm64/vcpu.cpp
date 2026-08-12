@@ -103,10 +103,6 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 			Machine::machine_exception("KVM_ARM_VCPU_INIT failed", errno);
 		}
 	}
-	if (this->timer_id == nullptr) {
-		this->timer_id = Machine::create_vcpu_timer();
-		this->timer_tid = gettid();
-	}
 	/* Defer the kvm_run mapping to the first run when lazy_vcpu_mmap is set:
 	   ensure_kvm_run() (run_once) creates it on demand. A fork that never runs
 	   then never pays the mapping's host VMA -- the property vm_group_vma_flat
@@ -132,9 +128,9 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 	this->guest_cpu_index = 0;
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
-	/* Armed before anything is taken: from here on fd, kvm_run and the timer
-	   are the seat's, and ~vCPU must not close, unmap or delete any of them
-	   however this function exits. */
+	/* Armed before anything is taken: from here on fd and kvm_run are the
+	   seat's, and ~vCPU must not close or unmap either however this function
+	   exits. */
 	this->m_seat_borrowed = true;
 
 	/* The seat's vCPU is created when the group materializes the seat and is
@@ -145,22 +141,11 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 	}
 	this->fd = seat.vcpu_fd;
 
-	/* Rebind the seat's execution timer to this thread when a different thread
-	   created it: the timer is thread-bound (SIGEV_THREAD_ID) but the seat is
-	   handed to whichever thread takes it next. Same reasoning, and the same
-	   cost, as the AMD64 path and Machine::migrate_to_this_thread(). */
-	const pid_t this_tid = gettid();
-	if (seat.timer_id != nullptr && seat.owner_tid != this_tid) {
-		timer_delete((timer_t)seat.timer_id);
-		seat.timer_id = nullptr;
-		seat.owner_tid = 0;
-	}
-	if (seat.timer_id == nullptr) {
-		seat.timer_id = Machine::create_vcpu_timer();
-		seat.owner_tid = this_tid;
-	}
-	this->timer_id = seat.timer_id;
-	this->timer_tid = seat.owner_tid;
+	/* No timer is adopted: the execution timer belongs to whichever thread
+	   runs this tenant, not to the seat (Machine::this_thread_vcpu_timer()).
+	   A seat used to carry one, and because the timer is thread-bound
+	   (SIGEV_THREAD_ID) every hand-off to a different thread paid a
+	   timer_delete() plus a timer_create() to rebind it. */
 
 	/* kvm_run belongs to the seat and outlives every tenant (torn down only
 	   when the group retires the seat). Adopt the seat's existing mapping if a
@@ -208,21 +193,18 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 
 void vCPU::detach_to_seat(VmGroupSeat& seat) noexcept
 {
-	/* Hand fd, kvm_run and timer back to the seat without closing or unmapping
+	/* Hand fd and kvm_run back to the seat without closing or unmapping
 	   anything: a struct kvm consumes vCPU capacity permanently, so closing the
-	   fd would burn the seat rather than free it. The next tenant re-adopts all
-	   three in init_from_seat(). No shadow-register teardown as on AMD64 -- ARM
-	   has no lazy mapping, so there is nothing owned to delete. */
+	   fd would burn the seat rather than free it. The next tenant re-adopts
+	   both in init_from_seat(). No timer, because a seat has none; and no
+	   shadow-register teardown as on AMD64 -- ARM has no lazy mapping, so
+	   there is nothing owned to delete. */
 	if (this->fd >= 0) {
 		seat.vcpu_fd   = this->fd;
 		seat.kvm_run   = this->kvm_run;
-		seat.timer_id  = this->timer_id;
-		seat.owner_tid = this->timer_tid;
 	}
 	this->fd = -1;
 	this->kvm_run = nullptr;
-	this->timer_id = nullptr;
-	this->timer_tid = 0;
 	this->m_regs_cached = false;
 	this->m_regs_dirty = false;
 	this->m_seat_borrowed = false;
@@ -274,11 +256,7 @@ void vCPU::deinit()
 		munmap(kvm_run, vcpu_mmap_size);
 		kvm_run = nullptr;
 	}
-	if (this->timer_id != nullptr) {
-		timer_delete((timer_t)this->timer_id);
-		this->timer_id = nullptr;
-		this->timer_tid = 0;
-	}
+	/* No timer to delete: it is the running thread's, not the vCPU's. */
 }
 
 vCPU::~vCPU()

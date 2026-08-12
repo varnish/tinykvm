@@ -107,7 +107,12 @@ void vCPU::run(uint32_t ticks)
 				.tv_nsec = (ticks % 1000) * 1000000L
 			}
 		};
-		timer_settime((timer_t)this->timer_id, 0, &its, nullptr);
+		/* The running thread's timer, not this vCPU's -- only one vCPU can be
+		   inside run() on a thread at a time, and the timer must be bound to
+		   the thread whose KVM_RUN it has to interrupt (SIGEV_THREAD_ID).
+		   Created on first use, here. */
+		void* const timer_id = Machine::this_thread_vcpu_timer();
+		timer_settime((timer_t)timer_id, 0, &its, nullptr);
 		if constexpr (VERBOSE_TIMER) {
 			printf("Timer %p enabled\n", timer_id);
 		}
@@ -131,7 +136,9 @@ void vCPU::disable_timer()
 		this->timer_ticks = 0;
 		struct itimerspec its;
 		__builtin_memset(&its, 0, sizeof(its));
-		timer_settime((timer_t)this->timer_id, 0, &its, nullptr);
+		/* timer_ticks != 0 means run() armed it, on this thread, in this call
+		   frame -- so this is the very timer that was armed. */
+		timer_settime((timer_t)Machine::this_thread_vcpu_timer(), 0, &its, nullptr);
 	}
 }
 
@@ -303,9 +310,11 @@ unsigned vCPU::exception_extra_offset(uint8_t)
 
 void Machine::migrate_to_this_thread()
 {
-	timer_delete((timer_t)vcpu.timer_id);
-	vcpu.timer_id = create_vcpu_timer();
-	vcpu.timer_tid = gettid();
+	/* Nothing left to do. Its whole job was re-creating the vCPU's
+	   thread-bound execution timer on the new thread; the timer now belongs to
+	   the thread that runs the vCPU (Machine::this_thread_vcpu_timer()) and is
+	   therefore always already bound correctly. Kept as a no-op because
+	   callers outside this tree wrap every thread hand-off in it. */
 }
 
 } // namespace tinykvm

@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
+#include <time.h> /* timer_delete(), for this_thread_vcpu_timer() */
 extern "C" int close(int);
 //#define KVM_VERBOSE_MEMORY
 
@@ -624,6 +625,34 @@ __attribute__ ((cold))
 void Machine::init()
 {
 	Machine::kvm_fd = kvm_open();
+}
+
+void* Machine::this_thread_vcpu_timer()
+{
+	/* Deleted on thread exit, which is the only moment a timer can be freed
+	   without knowing whether some vCPU is about to run here again. Threads
+	   that run vCPUs are long-lived worker threads, so this is one timer per
+	   worker for the process's life -- the point of the change. */
+	struct ThreadTimer {
+		void* id = nullptr;
+		/* NOT `id != nullptr`. glibc encodes a signal-notified timer_t as the
+		   bare kernel timer id, so the *first* timer a process creates is
+		   literally (timer_t)0 -- indistinguishable from "none" and, treated
+		   as such, re-created on the next call and then leaked. */
+		bool created = false;
+		~ThreadTimer() {
+			if (this->created)
+				timer_delete((timer_t)this->id);
+		}
+	};
+	thread_local ThreadTimer timer;
+	if (UNLIKELY(!timer.created)) {
+		/* Arch-specific only in where it lives; both create the same
+		   SIGEV_THREAD_ID/SIGUSR2 timer bound to the calling thread. */
+		timer.id = Machine::create_vcpu_timer();
+		timer.created = true;
+	}
+	return timer.id;
 }
 
 __attribute__ ((cold))

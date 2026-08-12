@@ -63,7 +63,12 @@ void vCPU::run(uint32_t ticks)
 				.tv_nsec = (ticks % 1000) * 1000000L
 			}
 		};
-		timer_settime(this->timer_id, 0, &its, nullptr);
+		/* The running thread's timer, not this vCPU's -- only one vCPU can be
+		   inside run() on a thread at a time, and the timer must be bound to
+		   the thread whose KVM_RUN it has to interrupt (SIGEV_THREAD_ID).
+		   Created on first use, here. */
+		void* const timer_id = Machine::this_thread_vcpu_timer();
+		timer_settime((timer_t)timer_id, 0, &its, nullptr);
 		if constexpr (VERBOSE_TIMER) {
 			printf("Timer %p enabled\n", timer_id);
 		}
@@ -89,7 +94,10 @@ void vCPU::disable_timer()
 		this->timer_ticks = 0;
 		struct itimerspec its;
 		__builtin_memset(&its, 0, sizeof(its));
-		timer_settime(this->timer_id, 0, &its, nullptr);
+		/* timer_ticks != 0 means run() armed it, on this thread, in this call
+		   frame -- so this is the very timer that was armed. */
+		void* const timer_id = Machine::this_thread_vcpu_timer();
+		timer_settime((timer_t)timer_id, 0, &its, nullptr);
 		if constexpr (VERBOSE_TIMER) {
 			printf("Timer %p disabled\n", timer_id);
 		}
@@ -105,6 +113,10 @@ long vCPU::run_once()
 	   they point at, so that no caller can hold a register reference across
 	   the transition. */
 	this->ensure_kvm_run();
+	/* And a fork may have deferred the bring-up KVM wants before its first
+	   KVM_RUN (CPUID2/XCRS/MSRS). Same reason it is here and not at
+	   construction: a warm fork that is never run must not pay for it. */
+	this->ensure_bringup();
 	{
 		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());
 		result = ioctl(this->fd, KVM_RUN, 0);
@@ -130,7 +142,7 @@ long vCPU::run_once()
 		const bool timer_armed = (this->timer_ticks != 0);
 		if (timer_armed && (timer_was_triggered || run_errno == EINTR)) {
 			if constexpr (VERBOSE_TIMER) {
-				printf("Timer %p triggered\n", timer_id);
+				printf("Timer triggered after %u ms\n", this->timer_ticks);
 			}
 			Machine::timeout_exception("Timeout Exception", this->timer_ticks);
 		} else if (run_errno == EINTR) {
@@ -661,17 +673,11 @@ unsigned vCPU::exception_extra_offset(uint8_t intr)
 
 void Machine::migrate_to_this_thread()
 {
-	timer_delete(vcpu.timer_id);
-	vcpu.timer_id = nullptr;
-	vcpu.timer_id = create_vcpu_timer();
-	vcpu.timer_tid = gettid();
-	if (UNLIKELY(this->m_seat != nullptr)) {
-		/* Keep the seat's view of its timer live: the group destructor
-		   timer_delete()s it, and the next tenant compares owner_tid
-		   against its own thread. */
-		m_seat->timer_id  = vcpu.timer_id;
-		m_seat->owner_tid = vcpu.timer_tid;
-	}
+	/* Nothing left to do. Its whole job was re-creating the vCPU's
+	   thread-bound execution timer on the new thread; the timer now belongs to
+	   the thread that runs the vCPU (Machine::this_thread_vcpu_timer()) and is
+	   therefore always already bound correctly. Kept as a no-op because
+	   callers outside this tree wrap every thread hand-off in it. */
 }
 
 } // tinykvm

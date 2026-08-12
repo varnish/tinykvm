@@ -20,20 +20,20 @@ namespace tinykvm
 		   Both arches implement this; the per-seat one-time bring-up differs
 		   (KVM_SET_CPUID2 on AMD64, KVM_ARM_VCPU_INIT on ARM64). */
 		void init_from_seat(VmGroupSeat&, Machine&, const MachineOptions&);
-		/* The anti-deinit. Hands fd, kvm_run and timer back to the seat
-		   without closing or unmapping anything: a struct kvm's vCPU capacity
-		   is consumed permanently by every vCPU ever created in it, so
-		   closing the fd would burn the seat instead of freeing it. */
+		/* The anti-deinit. Hands fd and kvm_run back to the seat without
+		   closing or unmapping anything: a struct kvm's vCPU capacity is
+		   consumed permanently by every vCPU ever created in it, so closing
+		   the fd would burn the seat instead of freeing it. */
 		void detach_to_seat(VmGroupSeat&) noexcept;
-		/* Releases everything this vCPU still owns: the KVM_CREATE_VCPU fd, the
-		   POSIX execution timer, the kvm_run mapping and (AMD64) the shadow
-		   registers of a vCPU that never became mapped.
+		/* Releases everything this vCPU still owns: the KVM_CREATE_VCPU fd,
+		   the kvm_run mapping and (AMD64) the shadow registers of a vCPU that
+		   never became mapped.
 
 		   It exists because deinit() is only reached from ~Machine, and
 		   ~Machine is never run for a *constructor* that threw after vCPU
 		   bring-up -- e.g. a fork that ran out of working memory in
-		   setup_cow_mode(), which is downstream of both KVM_CREATE_VCPU and
-		   timer_create(). deinit() clears every field it releases, so on the
+		   setup_cow_mode(), which is downstream of KVM_CREATE_VCPU.
+		   deinit() clears every field it releases, so on the
 		   normal path this destructor finds nothing left to do.
 
 		   A vCPU borrowing a VM group seat (m_seat_borrowed) releases nothing:
@@ -96,22 +96,19 @@ namespace tinykvm
 		bool m_permanent_remote_connected = false;
 		uint8_t current_exception = 0;
 		uint32_t timer_ticks = 0;
-		/* The thread timer_id below is bound to. Every assignment of
-		   timer_id must set this too: it is what lets a VM group seat tell
-		   whether the timer it is handing to its next tenant fires on the
-		   tenant's thread or on a stale one. See Machine::create_vcpu_timer()
-		   (SIGEV_THREAD_ID) and vCPU::detach_to_seat(). */
-		pid_t timer_tid = 0;
-		void* timer_id = nullptr;
-		/* Set while fd, kvm_run and timer_id are on loan from a VM group seat
-		   rather than owned: init_from_seat() borrows all three and
-		   detach_to_seat() hands them back. ~vCPU releases nothing while it is
-		   set — the seat keeps all three for its next tenant, and closing the
-		   fd would burn the group's permanently-consumed vCPU capacity instead
-		   of freeing it. It is not the leak-safety mechanism for a pooled
-		   member (the constructor's seat guard is, and it runs first, before
-		   any member destructor); it is what makes ~vCPU safe if that ever
-		   stops being true. */
+		/* NB: a vCPU owns no execution timer. The timer belongs to the thread
+		   that runs it -- Machine::this_thread_vcpu_timer() -- which is what
+		   keeps a warm pool of N never-run forks from holding N kernel
+		   k_itimers, and what removes the rebind-on-migration question
+		   entirely. */
+		/* Set while fd and kvm_run are on loan from a VM group seat rather than
+		   owned: init_from_seat() borrows both and detach_to_seat() hands them
+		   back. ~vCPU releases nothing while it is set — the seat keeps them
+		   for its next tenant, and closing the fd would burn the group's
+		   permanently-consumed vCPU capacity instead of freeing it. It is not
+		   the leak-safety mechanism for a pooled member (the constructor's seat
+		   guard is, and it runs first, before any member destructor); it is
+		   what makes ~vCPU safe if that ever stops being true. */
 		bool m_seat_borrowed = false;
 		uint64_t last_fault_address = 0;
 		uint64_t remote_return_address = 0;
@@ -133,6 +130,14 @@ namespace tinykvm
 		/* The seat-independent tail of init(): extended control registers
 		   and the SYSCALL/SYSRET MSRs, re-issued for every tenant. */
 		void init_extended_state(Machine&);
+		/* Issue the one-time bring-up KVM wants before the first KVM_RUN, if a
+		   fork deferred it (lazy_vcpu_bringup). Called on the run path only,
+		   next to ensure_kvm_run(); a no-op for anything already brought up. */
+		void ensure_bringup() {
+			if (UNLIKELY(this->m_pending_bringup))
+				this->complete_bringup();
+		}
+		void complete_bringup();
 #else
 		/* ARM has no lazy/shadow register path (registers are read via
 		   KVM_*_ONE_REG on the vCPU fd, not out of kvm_run->s.regs), so a
@@ -165,6 +170,15 @@ namespace tinykvm
 		void* m_shadow_regs = nullptr;
 		uint32_t m_shadow_dirty_regs = 0;
 		bool m_initialized = false;
+		/* This vCPU still owes KVM the bring-up its first KVM_RUN needs. See
+		   complete_bringup(); set only for forks, and only under
+		   MachineOptions::lazy_vcpu_bringup. */
+		bool m_pending_bringup = false;
+		/* ...and specifically the KVM_SET_CPUID2 half of it, which is owed at
+		   most once per vCPU fd (KVM rejects a changed CPUID once the vCPU has
+		   run, and a VM group seat's fd outlives every tenant). Meaningless
+		   unless m_pending_bringup. */
+		bool m_pending_cpuid = false;
 #endif
 
 		uint64_t vcpu_table_addr() const noexcept;

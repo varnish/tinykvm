@@ -509,9 +509,7 @@ VmGroup::~VmGroup()
 	   and an explicit KVM_SET_USER_MEMORY_REGION per slot would only add
 	   ioctls with slots_lock and an expedited SRCU sync each. */
 	for (auto& seat : m_seats) {
-		if (seat->timer_id != nullptr) {
-			timer_delete((timer_t)seat->timer_id);
-		}
+		/* No timer to delete: it is the running thread's, not the seat's. */
 		if (seat->kvm_run != nullptr) {
 			munmap(seat->kvm_run, KvmLimits::get().vcpu_mmap_size);
 		}

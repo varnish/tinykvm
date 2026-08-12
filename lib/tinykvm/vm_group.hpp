@@ -42,12 +42,12 @@ struct VmGroupSeat {
 	   can release what it did get, and is never handed out. */
 	int      vcpu_fd     = -1;
 	void*    kvm_run     = nullptr; /* nullptr while never run (lever C) */
-	void*    timer_id    = nullptr;
-	/* The thread the timer above is bound to (SIGEV_THREAD_ID/sigev_tid). A
-	   seat outlives its tenants and is not thread-bound, so a tenant that
-	   adopts the seat from another thread must rebind the timer: see
-	   vCPU::init_from_seat(). 0 while there is no timer. */
-	pid_t    owner_tid   = 0;
+	/* NB: no timer. A seat used to carry its own POSIX execution timer, and a
+	   seat handed to a different thread had to timer_delete() plus
+	   timer_create() to rebind it (the timer is thread-bound through
+	   SIGEV_THREAD_ID). The timer belongs to the thread now, not to the seat --
+	   Machine::this_thread_vcpu_timer() -- so a seat is genuinely
+	   thread-agnostic and a group of B seats holds no timers at all. */
 	bool     vcpu_initialized = false; /* KVM_SET_CPUID2 already issued */
 	uint64_t arena_gpa   = 0;       /* start of this seat's arena partition */
 	uint64_t arena_size  = 0;       /* usable bytes (stride minus guard band) */
