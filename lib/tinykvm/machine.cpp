@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
+#include <time.h> /* timer_create/settime/delete, for this_thread_vcpu_timer() */
 extern "C" int close(int);
 //#define KVM_VERBOSE_MEMORY
 
@@ -624,6 +625,110 @@ __attribute__ ((cold))
 void Machine::init()
 {
 	Machine::kvm_fd = kvm_open();
+}
+
+namespace {
+	/* Deleted on thread exit, which is the only moment a timer can be freed
+	   without knowing whether some vCPU is about to run here again. Threads
+	   that run vCPUs are long-lived worker threads, so this is one timer per
+	   worker for the process's life -- the point of the change. */
+	struct ThreadTimer {
+		void* id = nullptr;
+		/* NOT `id != nullptr`. glibc encodes a signal-notified timer_t as the
+		   bare kernel timer id, so the *first* timer a process creates is
+		   literally (timer_t)0 -- indistinguishable from "none" and, treated
+		   as such, re-created on the next call and then leaked. */
+		bool created = false;
+		/* The deadline currently armed, so that a nested run() can hand it
+		   back. Kept here rather than in the vCPU because the timer, and
+		   therefore the arming, is the thread's. */
+		uint64_t deadline_ns = 0;
+		bool armed = false;
+		~ThreadTimer() {
+			if (this->created)
+				timer_delete((timer_t)this->id);
+		}
+	};
+	/* Does not create the timer; see Machine::this_thread_vcpu_timer(). */
+	ThreadTimer& this_thread_timer() {
+		thread_local ThreadTimer timer;
+		return timer;
+	}
+	constexpr uint64_t NANOS = 1'000'000'000ULL;
+	/* Interrupt every 20ms after the deadline. This makes sure that we will
+	   eventually exit all blocking calls and at the end exit KVM_RUN to time
+	   out the request. If there is a blocking loop that doesn't exit properly,
+	   the 20ms recurring interruption should not cause too much wasted
+	   CPU-time. */
+	constexpr long RETRY_INTERVAL_NS = 20'000'000L;
+
+	/* Arm the thread's timer at an absolute CLOCK_MONOTONIC deadline. A
+	   deadline in the past is delivered immediately, which is the point: a run
+	   resumed after its budget ran out during a nested run() must time out. */
+	void arm_at(ThreadTimer& timer, uint64_t deadline_ns) {
+		const struct itimerspec its {
+			.it_interval = { .tv_sec = 0, .tv_nsec = RETRY_INTERVAL_NS },
+			.it_value = {
+				.tv_sec  = (time_t)(deadline_ns / NANOS),
+				.tv_nsec = (long)(deadline_ns % NANOS)
+			}
+		};
+		timer_settime((timer_t)timer.id, TIMER_ABSTIME, &its, nullptr);
+		timer.deadline_ns = deadline_ns;
+		timer.armed = true;
+	}
+}
+
+void* Machine::this_thread_vcpu_timer()
+{
+	ThreadTimer& timer = this_thread_timer();
+	if (UNLIKELY(!timer.created)) {
+		/* Arch-specific only in where it lives; both create the same
+		   SIGEV_THREAD_ID/SIGUSR2 timer bound to the calling thread. */
+		timer.id = Machine::create_vcpu_timer();
+		timer.created = true;
+	}
+	return timer.id;
+}
+
+VcpuTimerArming Machine::this_thread_vcpu_timer_arming()
+{
+	const ThreadTimer& timer = this_thread_timer();
+	return { timer.deadline_ns, timer.armed };
+}
+
+void Machine::arm_this_thread_vcpu_timer(uint32_t ticks)
+{
+	/* Creates the timer if this thread has never armed one. */
+	Machine::this_thread_vcpu_timer();
+
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	const uint64_t now_ns = (uint64_t)now.tv_sec * NANOS + (uint64_t)now.tv_nsec;
+	arm_at(this_thread_timer(), now_ns + (uint64_t)ticks * 1'000'000ULL);
+}
+
+void Machine::disarm_this_thread_vcpu_timer()
+{
+	ThreadTimer& timer = this_thread_timer();
+	/* Only reachable after this thread armed something, which created it. */
+	if (UNLIKELY(!timer.created))
+		return;
+	struct itimerspec its;
+	__builtin_memset(&its, 0, sizeof(its));
+	timer_settime((timer_t)timer.id, 0, &its, nullptr);
+	timer.deadline_ns = 0;
+	timer.armed = false;
+}
+
+void Machine::restore_this_thread_vcpu_timer(const VcpuTimerArming& arming)
+{
+	if (!arming.armed) {
+		Machine::disarm_this_thread_vcpu_timer();
+		return;
+	}
+	Machine::this_thread_vcpu_timer();
+	arm_at(this_thread_timer(), arming.deadline_ns);
 }
 
 __attribute__ ((cold))

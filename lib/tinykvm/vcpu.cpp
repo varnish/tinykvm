@@ -161,10 +161,11 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 			Machine::machine_exception("Failed to KVM_CREATE_VCPU");
 		}
 	}
-	if (this->timer_id == nullptr) {
-		this->timer_id = Machine::create_vcpu_timer();
-		this->timer_tid = gettid();
-	}
+	/* A fork may defer its one-time bring-up (CPUID2, XCRS, MSRS) to its first
+	   run, so a warm fork that is never run pays none of it. Masters are
+	   always brought up eagerly: they exist in order to run. */
+	const bool defer_bringup = options.lazy_vcpu_bringup && machine.is_forked();
+
 	if (!this->m_initialized) {
 		this->m_initialized = true;
 
@@ -183,9 +184,14 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 		}
 
 		/* Assign CPUID features to guest. I don't believe the guest
-		   can change of this, so we will only set it once. */
-		if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
-			Machine::machine_exception("KVM_SET_CPUID2 failed");
+		   can change of this, so we will only set it once -- which is why it
+		   is owed from inside this branch and nowhere else. */
+		this->m_pending_cpuid = true;
+		if (!defer_bringup) {
+			this->m_pending_cpuid = false;
+			if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
+				Machine::machine_exception("KVM_SET_CPUID2 failed");
+			}
 		}
 	}
 
@@ -233,7 +239,11 @@ void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const Ma
 		this->set_special_registers(master_sregs);
 	}
 
-	this->init_extended_state(machine);
+	if (defer_bringup) {
+		this->m_pending_bringup = true;
+	} else {
+		this->init_extended_state(machine);
+	}
 }
 
 void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
@@ -243,9 +253,9 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 	this->guest_cpu_index = 0;
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
-	/* Armed before anything is taken: from here on fd, kvm_run and the timer
-	   are the seat's, and ~vCPU must not close, unmap or delete any of them
-	   however this function exits. */
+	/* Armed before anything is taken: from here on fd and kvm_run are the
+	   seat's, and ~vCPU must not close or unmap either however this function
+	   exits. */
 	this->m_seat_borrowed = true;
 
 	/* The seat's vCPU was created when the group materialized the seat, and is
@@ -259,29 +269,10 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 	}
 	this->fd = seat.vcpu_fd;
 
-	/* The seat's timer is bound to the thread that created it (SIGEV_THREAD_ID
-	   with sigev_tid), but the seat itself is not thread-bound: any thread may
-	   be handed it next. Adopting a foreign-thread timer would break two ways
-	   at once - this tenant's execution timeout would never interrupt its
-	   KVM_RUN (an infinite guest loop would hang forever), and the 20ms
-	   re-arm interval would keep firing at the *original* thread, setting its
-	   thread_local timer_was_triggered and timing out whichever innocent
-	   sibling happens to be running there. So rebind on adoption, paying
-	   exactly what Machine::migrate_to_this_thread() pays. */
-	const pid_t this_tid = gettid();
-	if (seat.timer_id != nullptr && seat.owner_tid != this_tid) {
-		timer_delete((timer_t)seat.timer_id);
-		/* Cleared before the create, so a throw cannot leave the seat (and
-		   thus the group destructor) holding a deleted timer. */
-		seat.timer_id = nullptr;
-		seat.owner_tid = 0;
-	}
-	if (seat.timer_id == nullptr) {
-		seat.timer_id = Machine::create_vcpu_timer();
-		seat.owner_tid = this_tid;
-	}
-	this->timer_id = seat.timer_id;
-	this->timer_tid = seat.owner_tid;
+	/* No timer is adopted: the execution timer belongs to whichever thread
+	   runs this tenant, not to the seat (Machine::this_thread_vcpu_timer()).
+	   A seat used to carry one, which meant every hand-off to a different
+	   thread paid a timer_delete() plus a timer_create() to rebind it. */
 
 	this->m_initialized = true;
 	if (seat.kvm_run != nullptr) {
@@ -296,15 +287,70 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 		seat.kvm_run = this->kvm_run;
 	}
 
-	if (!seat.vcpu_initialized) {
-		seat.vcpu_initialized = true;
-		/* Assign CPUID features to guest. Once per seat: KVM rejects a
-		   changed CPUID after the vCPU has run. */
+	/* Pooled machines are always forks, so they inherit the master's special
+	   registers instead of building their own (see init()). What is left is
+	   the bring-up KVM wants before the first KVM_RUN -- deferred to exactly
+	   that point under lazy_vcpu_bringup, so a seat taken and handed straight
+	   back never pays it. CPUID2 is owed once per *seat*, not per tenant. */
+	this->m_pending_cpuid = !seat.vcpu_initialized;
+	this->m_pending_bringup = true;
+	if (!options.lazy_vcpu_bringup) {
+		this->complete_bringup();
+	}
+}
+
+void vCPU::detach_to_seat(VmGroupSeat& seat) noexcept
+{
+	if (this->fd >= 0) {
+		seat.vcpu_fd  = this->fd;
+		seat.kvm_run  = this->kvm_run;
+	}
+	this->fd = -1;
+	this->kvm_run = nullptr;
+	this->m_regs = nullptr;
+	this->m_sregs = nullptr;
+	delete (ShadowRegisters *)this->m_shadow_regs;
+	this->m_shadow_regs = nullptr;
+	this->m_shadow_dirty_regs = 0;
+	this->m_initialized = false;
+	this->m_seat_borrowed = false;
+	/* Not carried to the seat: whether KVM_SET_CPUID2 has been issued on this
+	   fd is seat.vcpu_initialized's business, and the rest of the bring-up is
+	   re-issued per tenant anyway. */
+	this->m_pending_bringup = false;
+	this->m_pending_cpuid = false;
+}
+
+/* The one-time bring-up KVM wants before this vCPU's first KVM_RUN. Called
+   from construction as before, or -- under lazy_vcpu_bringup, and for forks
+   only -- from the run path, so that a warm fork created and recycled without
+   ever running pays none of it. KVM_SET_CPUID2 is the expensive member of the
+   set; the other two are here because they belong to the same "ready to run"
+   step and are just as pointless on a fork that never runs.
+
+   The split between the two flags mirrors what construction did eagerly:
+   CPUID2 exactly once per vCPU fd (KVM rejects a changed CPUID after the vCPU
+   has run, and a group seat's fd outlives its tenants), XCRS/MSRS re-issued
+   for every tenant. Order matters: XCR0 is validated against the guest CPUID,
+   so CPUID2 goes first. */
+void vCPU::complete_bringup()
+{
+	this->m_pending_bringup = false;
+	auto* seat = this->machine().m_seat;
+
+	if (this->m_pending_cpuid) {
+		this->m_pending_cpuid = false;
+		if (seat != nullptr) {
+			/* Claimed here rather than at construction, so a seat taken and
+			   handed back unrun leaves it for its next tenant. */
+			seat->vcpu_initialized = true;
+		}
 		if (ioctl(this->fd, KVM_SET_CPUID2, &kvm_cpuid) < 0) {
 			Machine::machine_exception("KVM_SET_CPUID2 failed");
 		}
-	} else {
-		/* The previous tenant may have halted. Parity with smp_init(). */
+	} else if (seat != nullptr) {
+		/* A seat whose CPUID is already set has had a previous tenant, and
+		   that tenant may have halted. Parity with smp_init(). */
 		const kvm_mp_state state {
 			.mp_state = KVM_MP_STATE_RUNNABLE
 		};
@@ -313,34 +359,7 @@ void vCPU::init_from_seat(VmGroupSeat& seat, Machine& machine,
 		}
 	}
 
-	/* Pooled machines are always forks, so they inherit the master's special
-	   registers instead of building their own (see init()). */
-	this->init_extended_state(machine);
-}
-
-void vCPU::detach_to_seat(VmGroupSeat& seat) noexcept
-{
-	if (this->fd >= 0) {
-		seat.vcpu_fd  = this->fd;
-		seat.kvm_run  = this->kvm_run;
-		/* The live timer, and the thread it is actually bound to - which is
-		   not necessarily this thread: Machine::migrate_to_this_thread() may
-		   have rebound it elsewhere, and destruction may happen on a third
-		   thread entirely. The next tenant compares against this. */
-		seat.timer_id  = this->timer_id;
-		seat.owner_tid = this->timer_tid;
-	}
-	this->fd = -1;
-	this->kvm_run = nullptr;
-	this->timer_id = nullptr;
-	this->timer_tid = 0;
-	this->m_regs = nullptr;
-	this->m_sregs = nullptr;
-	delete (ShadowRegisters *)this->m_shadow_regs;
-	this->m_shadow_regs = nullptr;
-	this->m_shadow_dirty_regs = 0;
-	this->m_initialized = false;
-	this->m_seat_borrowed = false;
+	this->init_extended_state(this->machine());
 }
 
 void vCPU::init_extended_state(Machine& machine)
@@ -410,8 +429,6 @@ void vCPU::smp_init(int id, Machine& machine)
 	if (UNLIKELY(this->fd < 0)) {
 		Machine::machine_exception("Failed to KVM_CREATE_VCPU");
 	}
-	this->timer_id = Machine::create_vcpu_timer();
-	this->timer_tid = gettid();
 
 	/* SMP vCPUs are only ever created in order to run, and so they are
 	   always mapped eagerly. */
@@ -484,12 +501,7 @@ void vCPU::deinit()
 	delete (ShadowRegisters *)this->m_shadow_regs;
 	this->m_shadow_regs = nullptr;
 	this->m_shadow_dirty_regs = 0;
-
-	if (this->timer_id != nullptr) {
-		timer_delete((timer_t)this->timer_id);
-		this->timer_id = nullptr;
-		this->timer_tid = 0;
-	}
+	/* No timer to delete: it is the running thread's, not the vCPU's. */
 	this->m_initialized = false;
 }
 

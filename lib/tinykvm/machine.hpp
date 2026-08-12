@@ -404,7 +404,14 @@ struct Machine
 	}
 
 	/* Migrates the VM to the current thread. Allows creating in
-	   one thread, and using it in another. */
+	   one thread, and using it in another.
+
+	   Now a no-op, kept because callers outside this tree call it around every
+	   thread hand-off: the only thing it ever did was re-create the vCPU's
+	   thread-bound execution timer, and the timer is no longer the vCPU's --
+	   it belongs to the thread that runs it. See
+	   Machine::this_thread_vcpu_timer(). Calling it is still correct and still
+	   documents the hand-off; it just costs nothing now. */
 	void migrate_to_this_thread();
 	/* Store non-memory VM state to the already existing cold
 	   start state area in memory. Any failure will throw an
@@ -552,6 +559,40 @@ private:
 	static int create_kvm_vm();
 	static int kvm_fd;
 	static void* create_vcpu_timer();
+	/* The calling thread's execution timer, created on first use and deleted
+	   when the thread exits. Every vCPU that runs on this thread arms and
+	   disarms this one timer.
+
+	   It used to be one timer per vCPU, created eagerly during construction --
+	   so a pool of N warm forks cost N timer_create()s and N kernel k_itimers
+	   that nothing was using, and a VM group seat handed to a different thread
+	   had to timer_delete() and re-create its own (the timer is thread-bound
+	   through SIGEV_THREAD_ID, and one bound to a foreign thread both fails to
+	   interrupt this thread's KVM_RUN and times out whichever innocent sibling
+	   is running over there). Per-thread ownership makes that whole rebind
+	   question disappear: the timer is created by, and bound to, the thread
+	   that uses it, always.
+
+	   Nothing is lost by the sharing, because the timeout signal was already
+	   per-thread and not per-vCPU: the SIGUSR2 handler sets a thread_local
+	   timer_was_triggered, and vCPU::run() clears it on entry.
+
+	   One vCPU per thread is the common case but not the only one: a syscall
+	   handler may run a *second* machine, nesting one run() inside another on
+	   the same thread. Because the timer is shared, the inner run() must put
+	   the outer's deadline back when it leaves -- see VcpuTimerArming and
+	   vCPU::run(). */
+	static void* this_thread_vcpu_timer();
+	/* What is armed on this thread right now, for an inner run() to restore.
+	   Deliberately does not create the timer: a thread that never arms one
+	   must not acquire one just by asking. */
+	static VcpuTimerArming this_thread_vcpu_timer_arming();
+	/* Arm the calling thread's timer `ticks` milliseconds from now. */
+	static void arm_this_thread_vcpu_timer(uint32_t ticks);
+	/* Disarm it, and record that nothing is armed. */
+	static void disarm_this_thread_vcpu_timer();
+	/* Re-arm a deadline taken from this_thread_vcpu_timer_arming(). */
+	static void restore_this_thread_vcpu_timer(const VcpuTimerArming&);
 	friend struct vCPU;
 	friend struct VmGroup;
 	friend struct VmGroupSet;

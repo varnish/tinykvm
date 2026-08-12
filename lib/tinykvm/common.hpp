@@ -30,6 +30,14 @@ static constexpr inline uint64_t PageMask() {
 #define TINYKVM_LAZY_VCPU_MMAP_DEFAULT false
 #endif
 
+/* Default for MachineOptions::lazy_vcpu_bringup. Build with
+   -DTINYKVM_LAZY_VCPU_BRINGUP_DEFAULT=true to defer every fork's vCPU
+   bring-up, which is how the unit test suite is A/B'ed against the eager
+   path. */
+#ifndef TINYKVM_LAZY_VCPU_BRINGUP_DEFAULT
+#define TINYKVM_LAZY_VCPU_BRINGUP_DEFAULT false
+#endif
+
 /* Default for MachineOptions::vm_group. Build with
    -DTINYKVM_VM_GROUP_DEFAULT=true to pool every fork, which is how the
    unit test suite is A/B'ed against the one-VM-per-fork path. */
@@ -207,6 +215,18 @@ namespace tinykvm
 		   constructed in a process that inherited it over fork().
 		   (AMD64 only.) */
 		bool lazy_vcpu_mmap = TINYKVM_LAZY_VCPU_MMAP_DEFAULT;
+		/* When enabled, a forked VM defers the one-time vCPU bring-up KVM
+		   wants before the first KVM_RUN -- KVM_SET_CPUID2, which dominates
+		   it, plus KVM_SET_XCRS and KVM_SET_MSRS -- from construction to that
+		   first run, exactly as lazy_vcpu_mmap defers the kvm_run mapping. A
+		   fork created and recycled without ever running (warm-pool churn)
+		   then pays none of them, and under VM pooling a seat handed straight
+		   back keeps its CPUID owed for the next tenant instead of spending
+		   it. Only forks are affected: a master exists in order to run.
+		   (AMD64 only. The ARM64 analogue, KVM_ARM_VCPU_INIT, is already once
+		   per VM group seat rather than once per fork, and there is no
+		   XCRS/MSRS equivalent, so there is nothing per-fork left to defer.) */
+		bool lazy_vcpu_bringup = TINYKVM_LAZY_VCPU_BRINGUP_DEFAULT;
 		/* Pool this fork into a shared struct kvm with up to vm_group_size
 		   siblings of the same master, instead of creating a VM of its own.
 		   Removes the per-fork KVM_CREATE_VM, and with it both the

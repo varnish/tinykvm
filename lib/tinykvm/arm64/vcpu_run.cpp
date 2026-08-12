@@ -95,21 +95,25 @@ void vCPU::run(uint32_t ticks)
 	   tables. */
 	this->flush_pending_guest_tlb();
 
+	/* The execution timer belongs to this thread, and is shared by every vCPU
+	   that runs on it, so a run() nested inside another -- a syscall handler
+	   that runs a second machine, or the deferred TLB flush above -- must put
+	   the outer run's deadline back on its way out instead of disarming it. See
+	   the AMD64 vCPU::run() and VcpuTimerArming. */
+	const VcpuTimerArming outer_arming =
+		Machine::this_thread_vcpu_timer_arming();
+	const bool outer_triggered = timer_was_triggered;
+	const uint32_t outer_ticks = this->timer_ticks;
+
 	timer_was_triggered = false;
 	this->timer_ticks = ticks;
 	if (timer_ticks != 0) {
-		const struct itimerspec its {
-			.it_interval = {
-				.tv_sec = 0, .tv_nsec = 20'000'000L
-			},
-			.it_value = {
-				.tv_sec = ticks / 1000,
-				.tv_nsec = (ticks % 1000) * 1000000L
-			}
-		};
-		timer_settime((timer_t)this->timer_id, 0, &its, nullptr);
+		/* The running thread's timer, not this vCPU's: it must be bound to the
+		   thread whose KVM_RUN it has to interrupt (SIGEV_THREAD_ID). Created
+		   on first use, here. */
+		Machine::arm_this_thread_vcpu_timer(ticks);
 		if constexpr (VERBOSE_TIMER) {
-			printf("Timer %p enabled\n", timer_id);
+			printf("Timer enabled for %u ms\n", ticks);
 		}
 	}
 
@@ -118,10 +122,28 @@ void vCPU::run(uint32_t ticks)
 		while(run_once());
 	} catch (...) {
 		disable_timer();
+		this->restore_outer_timer(outer_arming, outer_triggered, outer_ticks);
 		throw;
 	}
 
 	disable_timer();
+	this->restore_outer_timer(outer_arming, outer_triggered, outer_ticks);
+}
+
+void vCPU::restore_outer_timer(const VcpuTimerArming& outer_arming,
+	bool outer_triggered, uint32_t outer_ticks)
+{
+	if (LIKELY(!outer_arming.armed))
+		return;
+	timer_was_triggered = outer_triggered;
+	/* Zero unless the outer run is on this same vCPU -- which for ARM64 is the
+	   deferred TLB flush above, though that one runs before timer_ticks is set
+	   and so has nothing of its own to lose. */
+	this->timer_ticks = outer_ticks;
+	/* Last: a restored deadline that has already passed is delivered during this
+	   call, and the handler's write to timer_was_triggered must not be the one
+	   overwritten above. */
+	Machine::restore_this_thread_vcpu_timer(outer_arming);
 }
 
 void vCPU::disable_timer()
@@ -129,9 +151,9 @@ void vCPU::disable_timer()
 	timer_was_triggered = false;
 	if (timer_ticks != 0) {
 		this->timer_ticks = 0;
-		struct itimerspec its;
-		__builtin_memset(&its, 0, sizeof(its));
-		timer_settime((timer_t)this->timer_id, 0, &its, nullptr);
+		/* timer_ticks != 0 means run() armed it, on this thread, in this call
+		   frame -- so this is the very timer that was armed. */
+		Machine::disarm_this_thread_vcpu_timer();
 	}
 }
 
@@ -303,9 +325,11 @@ unsigned vCPU::exception_extra_offset(uint8_t)
 
 void Machine::migrate_to_this_thread()
 {
-	timer_delete((timer_t)vcpu.timer_id);
-	vcpu.timer_id = create_vcpu_timer();
-	vcpu.timer_tid = gettid();
+	/* Nothing left to do. Its whole job was re-creating the vCPU's
+	   thread-bound execution timer on the new thread; the timer now belongs to
+	   the thread that runs the vCPU (Machine::this_thread_vcpu_timer()) and is
+	   therefore always already bound correctly. Kept as a no-op because
+	   callers outside this tree wrap every thread hand-off in it. */
 }
 
 } // namespace tinykvm
