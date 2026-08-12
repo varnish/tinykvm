@@ -467,6 +467,21 @@ WritablePage writable_page_at(vMemory& memory, uint64_t addr, uint64_t verify_fl
 		// host or guest now needs to write to.
 		if (((e2 & DESC_CLONEABLE) || !is_writable(e2)) && memory.split_hugepages)
 			split_l2_block(memory, e2);
+		else if (!is_writable(e2) && (e2 & DESC_CLONEABLE) == 0
+				&& !memory.machine.is_forked()) {
+			// A present, read-only, non-cloneable block on the identity-mapped
+			// master (same case as the L3 promote below): splitting is not an
+			// option here -- a master has no bank pages for the L3 table.
+			// Promote the whole block in place; makecow re-marks it
+			// copy-on-write at snapshot.
+			e2 &= ~DESC_AP_RO;
+			auto* data = memory.page_at(e2 & DESC_ADDR_MASK);
+			return WritablePage{
+				.page = (char*)data + (addr & (L2_BLOCK_SIZE - 1)),
+				.entry = e2,
+				.size = L2_BLOCK_SIZE,
+			};
+		}
 		else if (!has_flags(e2, verify_flags) || !is_writable(e2))
 			memory_exception("writable_page_at: l2 entry not writable", addr, e2);
 		else {
