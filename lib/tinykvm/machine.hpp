@@ -575,11 +575,24 @@ private:
 
 	   Nothing is lost by the sharing, because the timeout signal was already
 	   per-thread and not per-vCPU: the SIGUSR2 handler sets a thread_local
-	   timer_was_triggered, and vCPU::run() clears it on entry. Only one vCPU
-	   can be inside run() on a thread at a time -- a vCPU is affine to the
-	   thread running it -- and a nested run() on the same thread already
-	   clobbered that flag before this change. */
+	   timer_was_triggered, and vCPU::run() clears it on entry.
+
+	   One vCPU per thread is the common case but not the only one: a syscall
+	   handler may run a *second* machine, nesting one run() inside another on
+	   the same thread. Because the timer is shared, the inner run() must put
+	   the outer's deadline back when it leaves -- see VcpuTimerArming and
+	   vCPU::run(). */
 	static void* this_thread_vcpu_timer();
+	/* What is armed on this thread right now, for an inner run() to restore.
+	   Deliberately does not create the timer: a thread that never arms one
+	   must not acquire one just by asking. */
+	static VcpuTimerArming this_thread_vcpu_timer_arming();
+	/* Arm the calling thread's timer `ticks` milliseconds from now. */
+	static void arm_this_thread_vcpu_timer(uint32_t ticks);
+	/* Disarm it, and record that nothing is armed. */
+	static void disarm_this_thread_vcpu_timer();
+	/* Re-arm a deadline taken from this_thread_vcpu_timer_arming(). */
+	static void restore_this_thread_vcpu_timer(const VcpuTimerArming&);
 	friend struct vCPU;
 	friend struct VmGroup;
 	friend struct VmGroupSet;

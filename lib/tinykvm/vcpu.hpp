@@ -9,6 +9,18 @@ namespace tinykvm
 	struct Machine;
 	struct VmGroupSeat;
 
+	/* An armed execution deadline on a thread. Absolute (the timer runs on
+	   CLOCK_MONOTONIC) rather than a remaining duration, so that a run whose
+	   deadline is saved and restored across a nested run() keeps counting down
+	   through it -- the budget is the guest's wall-clock allowance, and it
+	   behaved this way when every vCPU still owned a timer of its own. A
+	   restored deadline that has already passed fires immediately, which is
+	   what a blown budget should do. See Machine::this_thread_vcpu_timer(). */
+	struct VcpuTimerArming {
+		uint64_t deadline_ns = 0; /* CLOCK_MONOTONIC; only if armed */
+		bool     armed = false;
+	};
+
 	struct vCPU
 	{
 		void init(int kvm_vcpu_id, int guest_cpu_index, Machine&, const MachineOptions&);
@@ -56,6 +68,17 @@ namespace tinykvm
 		long run_once();
 		void stop() { stopped = true; }
 		void disable_timer();
+		/* Put back the timer state an outer run() on this thread had, if this
+		   run was nested inside one: the armed deadline, the pending-timeout
+		   flag, and timer_ticks. The last matters when the nesting is on the
+		   *same* vCPU (Machine::ipre_remote_resume_now() runs one from inside a
+		   syscall handler): timer_ticks is the field run_once() classifies a
+		   timeout by and disable_timer() disarms on, so an inner run that
+		   zeroed it would leave the outer unable to recognise its own timeout
+		   and unable to disarm afterwards. Both arches implement it; run()
+		   calls it on every exit path. */
+		void restore_outer_timer(const VcpuTimerArming&, bool outer_triggered,
+			uint32_t outer_ticks);
 		std::string_view io_data() const;
 
 		bool is_usermode() const;

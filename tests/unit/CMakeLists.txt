@@ -38,6 +38,11 @@ add_unit_test(fork_ctor_leak fork_ctor_leak.cpp)
 # explicit rebind logic for.
 add_unit_test(vcpu_timer vcpu_timer.cpp)
 
+# And arch-neutral for the same reason: a run() nested inside another shares the
+# thread's one timer with it, so it has to restore the outer deadline rather than
+# disarm it. Both backends have their own copy of run().
+add_unit_test(nested_timer nested_timer.cpp)
+
 if (TINYKVM_ARCH STREQUAL "AMD64")
 	add_unit_test(basic  basic.cpp)
 	add_unit_test(elf    elf.cpp)

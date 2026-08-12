@@ -44,33 +44,30 @@ bool vCPU::timed_out() const
 
 void vCPU::run(uint32_t ticks)
 {
+	/* The execution timer belongs to this thread, and is shared by every vCPU
+	   that runs on it. A run() nested inside another -- a syscall handler that
+	   runs a second machine -- would therefore disarm, on its way out, the very
+	   deadline protecting the run below it on the stack, leaving that one to
+	   spin in KVM_RUN forever. So save whatever the outer run armed and put it
+	   back before returning. Absolute deadlines (see VcpuTimerArming), so the
+	   outer budget keeps counting down across the inner run.
+
+	   Cheap in the common, un-nested case: a thread-local read here and a
+	   not-armed branch at the end, no extra system call. */
+	const VcpuTimerArming outer_arming =
+		Machine::this_thread_vcpu_timer_arming();
+	const bool outer_triggered = timer_was_triggered;
+	const uint32_t outer_ticks = this->timer_ticks;
+
 	timer_was_triggered = false;
 	this->timer_ticks = ticks;
 	if (timer_ticks != 0) {
-		const struct itimerspec its {
-			/* Interrupt every 20ms after timeout. This makes sure
-			   that we will eventually exit all blocking calls and
-			   at the end exit KVM_RUN to timeout the request. If
-			   there is a blocking loop that doesn't exit properly,
-			   the 20ms recurring interruption should not cause too
-			   much wasted CPU-time. */
-			.it_interval = {
-				.tv_sec = 0, .tv_nsec = 20'000'000L
-			},
-			/* The execution timeout. */
-			.it_value = {
-				.tv_sec = ticks / 1000,
-				.tv_nsec = (ticks % 1000) * 1000000L
-			}
-		};
-		/* The running thread's timer, not this vCPU's -- only one vCPU can be
-		   inside run() on a thread at a time, and the timer must be bound to
-		   the thread whose KVM_RUN it has to interrupt (SIGEV_THREAD_ID).
-		   Created on first use, here. */
-		void* const timer_id = Machine::this_thread_vcpu_timer();
-		timer_settime((timer_t)timer_id, 0, &its, nullptr);
+		/* The running thread's timer, not this vCPU's: it must be bound to the
+		   thread whose KVM_RUN it has to interrupt (SIGEV_THREAD_ID). Created
+		   on first use, here. */
+		Machine::arm_this_thread_vcpu_timer(ticks);
 		if constexpr (VERBOSE_TIMER) {
-			printf("Timer %p enabled\n", timer_id);
+			printf("Timer enabled for %u ms\n", ticks);
 		}
 	}
 
@@ -82,24 +79,42 @@ void vCPU::run(uint32_t ticks)
 		while(run_once());
 	} catch (...) {
 		disable_timer();
+		this->restore_outer_timer(outer_arming, outer_triggered, outer_ticks);
 		throw;
 	}
 
 	disable_timer();
+	this->restore_outer_timer(outer_arming, outer_triggered, outer_ticks);
+}
+void vCPU::restore_outer_timer(const VcpuTimerArming& outer_arming,
+	bool outer_triggered, uint32_t outer_ticks)
+{
+	/* Nothing to restore unless an outer run() on this thread had a deadline
+	   armed, i.e. unless this run was nested inside one. Leaving the flag
+	   cleared otherwise is what an un-nested run has always done -- a late
+	   signal from the 20ms retry interval must not be reported as a timeout by
+	   timed_out() after the run it belonged to has already finished. */
+	if (LIKELY(!outer_arming.armed))
+		return;
+	timer_was_triggered = outer_triggered;
+	/* Zero unless the outer run is on this same vCPU, in which case this is the
+	   timeout it was configured with. */
+	this->timer_ticks = outer_ticks;
+	/* Last: a restored deadline that has already passed is delivered during this
+	   call, and the handler's write to timer_was_triggered must not be the one
+	   overwritten above. */
+	Machine::restore_this_thread_vcpu_timer(outer_arming);
 }
 void vCPU::disable_timer()
 {
 	timer_was_triggered = false;
 	if (timer_ticks != 0) {
 		this->timer_ticks = 0;
-		struct itimerspec its;
-		__builtin_memset(&its, 0, sizeof(its));
 		/* timer_ticks != 0 means run() armed it, on this thread, in this call
 		   frame -- so this is the very timer that was armed. */
-		void* const timer_id = Machine::this_thread_vcpu_timer();
-		timer_settime((timer_t)timer_id, 0, &its, nullptr);
+		Machine::disarm_this_thread_vcpu_timer();
 		if constexpr (VERBOSE_TIMER) {
-			printf("Timer %p disabled\n", timer_id);
+			printf("Timer disabled\n");
 		}
 	}
 }
