@@ -156,3 +156,107 @@ TEST_CASE("Extra rules extend the allowlist", "[Seccomp]")
 	REQUIRE(WIFEXITED(status));
 	REQUIRE(WEXITSTATUS(status) == 0);
 }
+
+/* --------------------------------------------------------------------- */
+/* Regression tests for runtime-allowlist omissions. The syscall          */
+/* emulation layer (linux/system_calls.cpp) legitimately performs these   */
+/* host syscalls on behalf of an ordinary guest, but the Runtime filter   */
+/* does not allow them, so the VMM process is killed by SIGSYS. Each test */
+/* asserts the correct behavior (guest completes under the filter) and    */
+/* currently FAILS: the child dies with SIGSYS.                           */
+/* --------------------------------------------------------------------- */
+
+TEST_CASE("Runtime filter allows guest epoll_wait", "[Seccomp]")
+{
+	/* The emulated epoll_wait handler waits on the host with
+	   SYS_epoll_pwait2 (system_calls.cpp), which is missing from the
+	   runtime allowlist (only epoll_wait/epoll_pwait are listed). */
+	const auto binary = build_and_load(R"M(
+#include <sys/epoll.h>
+int main() {
+	int e = epoll_create1(0);
+	if (e < 0) return 10;
+	struct epoll_event ev[4];
+	int r = epoll_wait(e, ev, 4, 0);
+	return (r >= 0) ? 42 : 11;
+})M");
+
+	const int status = run_in_child([&] {
+		tinykvm::install_seccomp_filter(tinykvm::SeccompPhase::Runtime);
+		tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+		machine.setup_linux({"seccomp"}, env);
+		machine.run(4.0f);
+		_exit(machine.return_value() == 42 ? 0 : 1);
+	});
+	REQUIRE(WIFEXITED(status));
+	REQUIRE(WEXITSTATUS(status) == 0);
+}
+
+TEST_CASE("Runtime filter allows guest fsync", "[Seccomp]")
+{
+	/* The emulated fsync handler passes the call through to the host fd,
+	   but SYS_fsync is missing from the runtime allowlist. */
+	const auto binary = build_and_load(R"M(
+#include <unistd.h>
+int main() {
+	fsync(1); /* result does not matter; the host call must be allowed */
+	return 43;
+})M");
+
+	const int status = run_in_child([&] {
+		tinykvm::install_seccomp_filter(tinykvm::SeccompPhase::Runtime);
+		tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+		machine.setup_linux({"seccomp"}, env);
+		machine.run(4.0f);
+		_exit(machine.return_value() == 43 ? 0 : 1);
+	});
+	REQUIRE(WIFEXITED(status));
+	REQUIRE(WEXITSTATUS(status) == 0);
+}
+
+TEST_CASE("Runtime filter allows guest fchmod", "[Seccomp]")
+{
+	/* The emulated fchmod handler passes the call through to the host fd,
+	   but SYS_fchmod is missing from the runtime allowlist. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <sys/stat.h>
+int main() {
+	fchmod(1, 0); /* result does not matter; the host call must be allowed */
+	return 44;
+})M");
+
+	const int status = run_in_child([&] {
+		tinykvm::install_seccomp_filter(tinykvm::SeccompPhase::Runtime);
+		tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+		machine.setup_linux({"seccomp"}, env);
+		machine.run(4.0f);
+		_exit(machine.return_value() == 44 ? 0 : 1);
+	});
+	REQUIRE(WIFEXITED(status));
+	REQUIRE(WEXITSTATUS(status) == 0);
+}
+
+TEST_CASE("Runtime filter allows guest ftruncate", "[Seccomp]")
+{
+	/* The emulated ftruncate handler passes the call through to the host
+	   fd, but SYS_ftruncate is only in the init-phase allowlist, not the
+	   runtime one. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <unistd.h>
+int main() {
+	ftruncate(1, 0); /* result does not matter; the host call must be allowed */
+	return 45;
+})M");
+
+	const int status = run_in_child([&] {
+		tinykvm::install_seccomp_filter(tinykvm::SeccompPhase::Runtime);
+		tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+		machine.setup_linux({"seccomp"}, env);
+		machine.run(4.0f);
+		_exit(machine.return_value() == 45 ? 0 : 1);
+	});
+	REQUIRE(WIFEXITED(status));
+	REQUIRE(WEXITSTATUS(status) == 0);
+}
