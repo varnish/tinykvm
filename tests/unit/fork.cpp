@@ -52,6 +52,9 @@ extern void prints_hello_world() {
 		output_is_hello_world = (text == "Hello World!");
 	});
 	REQUIRE(fork.banked_memory_pages() > 0);
+	// A fork's main vCPU is always guest-visible CPU 0, independent of its
+	// KVM_CREATE_VCPU id (they only diverge under VM pooling).
+	REQUIRE(fork.cpu().guest_cpu_index == 0);
 	const auto n = fork.banked_memory_pages();
 
 	// write syscall not called yet

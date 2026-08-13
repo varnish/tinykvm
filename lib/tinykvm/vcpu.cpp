@@ -47,6 +47,12 @@ struct ksigevent
 };
 
 namespace tinykvm {
+	/* Userspace register storage for a vCPU whose kvm_run page is not mapped
+	   yet. See vCPU::init() and vCPU::lazily_map_kvm_run(). */
+	struct ShadowRegisters {
+		struct kvm_regs  regs {};
+		struct kvm_sregs sregs {};
+	};
 	static struct kvm_xcrs master_xregs;
 	static struct {
 		__u32 nent;
@@ -85,13 +91,57 @@ void* Machine::create_vcpu_timer()
 	return timer_id;
 }
 
-void vCPU::init(int id, Machine& machine, const MachineOptions& options)
+void vCPU::map_kvm_run()
 {
-	this->cpu_id = id;
+	auto* mapping = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
+		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
+	if (UNLIKELY(mapping == MAP_FAILED)) {
+		Machine::machine_exception("Failed to create KVM run-time mapped memory");
+	}
+	this->kvm_run = mapping;
+
+	/* We only want GPRs and SREGS for now. */
+	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
+#ifdef TINYKVM_USE_SYNCED_SREGS
+	kvm_run->kvm_valid_regs |= KVM_SYNC_X86_SREGS;
+#endif
+
+	/* The synced-registers area is the canonical register storage now. */
+	this->m_regs  = &kvm_run->s.regs.regs;
+	this->m_sregs = &kvm_run->s.regs.sregs;
+}
+
+void vCPU::lazily_map_kvm_run()
+{
+	/* First run of a fork that deferred its kvm_run mapping: create the
+	   mapping, hand the shadow registers to KVM (both GPRs and SREGS must be
+	   marked dirty, or the guest would enter with eg. CR3=0), and re-point
+	   the register accessors at the mapping, permanently.
+
+	   INVARIANT: this pointer flip happens on the run path only. No caller
+	   may hold on to a registers() or get_special_registers() reference
+	   across a run, or it would keep writing to the freed shadow. */
+	auto* shadow = (ShadowRegisters *)this->m_shadow_regs;
+	this->map_kvm_run();
+
+	if (shadow != nullptr) {
+		kvm_run->s.regs.regs  = shadow->regs;
+		kvm_run->s.regs.sregs = shadow->sregs;
+		kvm_run->kvm_dirty_regs |= this->m_shadow_dirty_regs;
+		this->m_shadow_regs = nullptr;
+		this->m_shadow_dirty_regs = 0;
+		delete shadow;
+	}
+}
+
+void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const MachineOptions& options)
+{
+	this->kvm_vcpu_id = kvm_vcpu_id;
+	this->guest_cpu_index = guest_cpu_index;
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
 	if (this->fd < 0) {
-		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
+		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->kvm_vcpu_id);
 		if (UNLIKELY(this->fd < 0)) {
 			Machine::machine_exception("Failed to KVM_CREATE_VCPU");
 		}
@@ -99,18 +149,22 @@ void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 	if (this->timer_id == nullptr) {
 		this->timer_id = Machine::create_vcpu_timer();
 	}
-	if (this->kvm_run == nullptr) {
-		kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
-			PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
-		if (UNLIKELY(kvm_run == MAP_FAILED)) {
-			Machine::machine_exception("Failed to create KVM run-time mapped memory");
-		}
+	if (!this->m_initialized) {
+		this->m_initialized = true;
 
-		/* We only want GPRs and SREGS for now. */
-		kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
-#ifdef TINYKVM_USE_SYNCED_SREGS
-		kvm_run->kvm_valid_regs |= KVM_SYNC_X86_SREGS;
-#endif
+		/* A fork may defer the kvm_run mapping to its first run, keeping
+		   parked forks out of this address space's VMA count. Masters are
+		   always mapped eagerly: fork construction reads the master's
+		   registers through the mapping, from a process that may have only
+		   inherited the master over fork(). See lazily_map_kvm_run(). */
+		if (options.lazy_vcpu_mmap && machine.is_forked()) {
+			auto* shadow = new ShadowRegisters {};
+			this->m_shadow_regs = shadow;
+			this->m_regs  = &shadow->regs;
+			this->m_sregs = &shadow->sregs;
+		} else {
+			this->map_kvm_run();
+		}
 
 		/* Assign CPUID features to guest. I don't believe the guest
 		   can change of this, so we will only set it once. */
@@ -216,8 +270,11 @@ void vCPU::init(int id, Machine& machine, const MachineOptions& options)
 
 void vCPU::smp_init(int id, Machine& machine)
 {
-	this->cpu_id = id;
-	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
+	/* SMP vCPUs keep both roles equal: id is dense per-machine today, and a
+	   machine's own SMP vCPUs get guest indices 1..k. Pooling refuses SMP. */
+	this->kvm_vcpu_id = id;
+	this->guest_cpu_index = id;
+	this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->kvm_vcpu_id);
 	this->m_machine = &machine;
 	auto& memory = machine.main_memory();
 	memory.smp_guards_enabled = true; // Enable pagetable locking
@@ -227,16 +284,10 @@ void vCPU::smp_init(int id, Machine& machine)
 	}
 	this->timer_id = Machine::create_vcpu_timer();
 
-	kvm_run = (struct kvm_run*) ::mmap(NULL, vcpu_mmap_size,
-		PROT_READ | PROT_WRITE, MAP_SHARED, this->fd, 0);
-	if (UNLIKELY(kvm_run == MAP_FAILED)) {
-		Machine::machine_exception("Failed to create KVM run-time mapped memory");
-	}
-	/* We only want GPRs and SREGS for now. */
-	kvm_run->kvm_valid_regs = KVM_SYNC_X86_REGS;
-#ifdef TINYKVM_USE_SYNCED_SREGS
-	kvm_run->kvm_valid_regs |= KVM_SYNC_X86_SREGS;
-#endif
+	/* SMP vCPUs are only ever created in order to run, and so they are
+	   always mapped eagerly. */
+	this->m_initialized = true;
+	this->map_kvm_run();
 
 	const kvm_mp_state state {
 		.mp_state = KVM_MP_STATE_RUNNABLE
@@ -288,26 +339,39 @@ void vCPU::deinit()
 	if (this->fd > 0) {
 		close(this->fd);
 	}
+	/* A never-run lazy fork has nothing to unmap. Never unmap anywhere else
+	   than here: munmap fires an mmu-notifier invalidation to every VM
+	   registered in this address space. */
 	if (kvm_run != nullptr) {
 		munmap(kvm_run, vcpu_mmap_size);
 	}
+	delete (ShadowRegisters *)this->m_shadow_regs;
+	this->m_shadow_regs = nullptr;
 
 	timer_delete(this->timer_id);
 }
 
+vCPU::~vCPU()
+{
+	delete (ShadowRegisters *)this->m_shadow_regs;
+}
+
 const tinykvm_x86regs& vCPU::registers() const
 {
-	return *(tinykvm_x86regs *)&this->kvm_run->s.regs.regs;
+	return *(tinykvm_x86regs *)this->m_regs;
 }
 tinykvm_x86regs& vCPU::registers()
 {
-	return *(tinykvm_x86regs *)&this->kvm_run->s.regs.regs;
+	return *(tinykvm_x86regs *)this->m_regs;
 }
 void vCPU::set_registers(const struct tinykvm_x86regs& regs)
 {
-	this->kvm_run->kvm_dirty_regs |= KVM_SYNC_X86_REGS;
+	if (LIKELY(this->kvm_run != nullptr))
+		this->kvm_run->kvm_dirty_regs |= KVM_SYNC_X86_REGS;
+	else
+		this->m_shadow_dirty_regs |= KVM_SYNC_X86_REGS;
 	auto* src_regs = (struct kvm_regs *) &regs;
-	auto* dest_regs = &this->kvm_run->s.regs.regs;
+	auto* dest_regs = this->m_regs;
 	/* Only assign if there is a mismatch. */
 	if (src_regs != dest_regs)
 		*dest_regs = *src_regs;
@@ -329,27 +393,30 @@ void vCPU::set_fpu_registers(const struct tinykvm_fpuregs& regs)
 const kvm_sregs& vCPU::get_special_registers() const
 {
 #ifndef TINYKVM_USE_SYNCED_SREGS
-	if (ioctl(this->fd, KVM_GET_SREGS, &this->kvm_run->s.regs.sregs) < 0) {
+	if (ioctl(this->fd, KVM_GET_SREGS, this->m_sregs) < 0) {
 		Machine::machine_exception("KVM_GET_SREGS failed");
 	}
 #endif
-	return this->kvm_run->s.regs.sregs;
+	return *this->m_sregs;
 }
 kvm_sregs& vCPU::get_special_registers()
 {
 #ifndef TINYKVM_USE_SYNCED_SREGS
-	if (ioctl(this->fd, KVM_GET_SREGS, &this->kvm_run->s.regs.sregs) < 0) {
+	if (ioctl(this->fd, KVM_GET_SREGS, this->m_sregs) < 0) {
 		Machine::machine_exception("KVM_GET_SREGS failed");
 	}
 #endif
-	return this->kvm_run->s.regs.sregs;
+	return *this->m_sregs;
 }
 void vCPU::set_special_registers(const kvm_sregs& sregs)
 {
 #ifdef TINYKVM_USE_SYNCED_SREGS
-	this->kvm_run->kvm_dirty_regs |= KVM_SYNC_X86_SREGS;
+	if (LIKELY(this->kvm_run != nullptr))
+		this->kvm_run->kvm_dirty_regs |= KVM_SYNC_X86_SREGS;
+	else
+		this->m_shadow_dirty_regs |= KVM_SYNC_X86_SREGS;
 
-	auto* dest_regs = &this->kvm_run->s.regs.sregs;
+	auto* dest_regs = this->m_sregs;
 	/* Only assign if there is a mismatch. */
 	if (dest_regs != &sregs)
 		*dest_regs = sregs;
@@ -411,7 +478,7 @@ void Machine::set_tls_base(__u64 baseaddr)
 uint64_t vCPU::vcpu_table_addr() const noexcept
 {
 	return usercode_header().translated_vm_cpuid(machine().memory)
-		+ sizeof(PerVCPUTable) * this->cpu_id;
+		+ sizeof(PerVCPUTable) * this->guest_cpu_index;
 }
 void vCPU::set_vcpu_table_at(unsigned index, int value)
 {

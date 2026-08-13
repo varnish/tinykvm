@@ -76,14 +76,15 @@ void* Machine::create_vcpu_timer()
 	return timer_id;
 }
 
-void vCPU::init(int id, Machine& machine, const MachineOptions&)
+void vCPU::init(int kvm_vcpu_id, int guest_cpu_index, Machine& machine, const MachineOptions&)
 {
-	this->cpu_id = id;
+	this->kvm_vcpu_id = kvm_vcpu_id;
+	this->guest_cpu_index = guest_cpu_index;
 	this->last_fault_address = 0;
 	this->m_machine = &machine;
 
 	if (this->fd < 0) {
-		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->cpu_id);
+		this->fd = ioctl(machine.fd, KVM_CREATE_VCPU, this->kvm_vcpu_id);
 		if (UNLIKELY(this->fd < 0)) {
 			Machine::machine_exception("Failed to KVM_CREATE_VCPU");
 		}
@@ -417,7 +418,7 @@ void Machine::set_tls_base(__u64 baseaddr)
 uint64_t vCPU::vcpu_table_addr() const noexcept
 {
 	return machine().memory.physbase + VCPU_TABLE_ADDR
-		+ sizeof(PerVCPUTable) * this->cpu_id;
+		+ sizeof(PerVCPUTable) * this->guest_cpu_index;
 }
 
 void vCPU::set_vcpu_table_at(unsigned index, int value)
