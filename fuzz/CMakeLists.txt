@@ -25,8 +25,9 @@ function(add_fuzzer NAME SOURCE MODE)
 	target_compile_definitions(${NAME} PRIVATE ${MODE}=1)
 endfunction()
 
-add_fuzzer(elffuzzer     fuzz.cpp         FUZZ_ELF)
-add_fuzzer(syscallfuzzer syscall_fuzz.cpp FUZZ_SYSCALLS)
+add_fuzzer(elffuzzer     fuzz.cpp             FUZZ_ELF)
+add_fuzzer(elfsymfuzzer  elf_symbols_fuzz.cpp FUZZ_ELF_SYMBOLS)
+add_fuzzer(syscallfuzzer syscall_fuzz.cpp     FUZZ_SYSCALLS)
 
 # The syscall fuzzer needs a real, fully-initialized master VM to fork from,
 # so it loads a small static guest ELF built here. It is an ordinary Linux
