@@ -35,18 +35,12 @@ static const std::vector<std::string> env {
 	"LC_TYPE=C", "LC_ALL=C", "USER=root"
 };
 
-/* Whether a *pooled* fork can be made to execute here. On ARM64 it cannot, on
-   this project's test host: the nested KVM_RUN that arm64_flush_guest_tlb()
-   issues for a pooled member's deferred TTBR0 flush never returns. That is
-   pre-existing and reproduces on the unmodified branch -- it is not something
-   the timer has any part in -- so the cases that need a pooled fork to *run*
-   are left to the AMD64 lane. Pooled construction and seat reuse, which is
-   where a seat used to acquire and rebind a timer, are checked on both. */
-#if defined(TINYKVM_ARCH_ARM64)
-static constexpr bool POOLED_CAN_RUN = false;
-#else
+/* Whether a *pooled* fork can be made to execute here. It can, on both
+   backends, since the ARM64 arena span learned to stop below the MMIO exit
+   window (fast-agent#94): a default-sized group's arena used to bury the
+   window under its memslot, turning every exit into a silent RAM write and
+   wedging the deferred TLB-flush run forever. arm64_vm_group.cpp pins that. */
 static constexpr bool POOLED_CAN_RUN = true;
-#endif
 
 static void require_kvm()
 {

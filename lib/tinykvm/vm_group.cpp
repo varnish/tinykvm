@@ -1,6 +1,9 @@
 #include "vm_group.hpp"
 
 #include "machine.hpp"
+#if defined(TINYKVM_ARCH_ARM64)
+#include "arm64/memory_layout.hpp"
+#endif
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
@@ -237,7 +240,28 @@ VmGroup::VmGroup(const Machine& master, const MachineOptions& options,
 				base_slots);
 		}
 	}
-	const uint64_t span_wall = ARENA_SPAN_LIMIT / m_arena_stride;
+	uint64_t span_wall = ARENA_SPAN_LIMIT / m_arena_stride;
+#if defined(TINYKVM_ARCH_ARM64)
+	/* 5. ARM64 only: the guest exit protocol is GPA-based - stores to the MMIO
+	   window at ARM64_STOP_MMIO_ADDR are what STOP, syscall delivery and fault
+	   reporting are made of, and KVM only exits for them while no memslot backs
+	   that range. The arena grows upward from 2 GB and the window sits at
+	   3.75 GB, so an arena span past 1.75 GB would put backed memory over it:
+	   under PerGroup unconditionally (the group's one slot covers guard bands
+	   and unmaterialized seats alike), under PerSeat whenever the window lands
+	   inside a seat's usable partition rather than its band. Every exit a
+	   member makes then completes as a silent RAM write - observed as the
+	   deferred TLB-flush stub's STOP store falling through, the vCPU running
+	   off the stub into zeroes, UDF-ing into the sync vector whose fatal-report
+	   store is swallowed too, and parking at `b .` with DAIF masked inside a
+	   ticks=0 KVM_RUN that nothing can interrupt (fast-agent#94). AMD64 needs
+	   no such wall: its arena base (0x70'0000'0000) has nothing above it, and
+	   its exit protocol is not a guest-physical range. */
+	if (m_arena_base < ARM64_STOP_MMIO_ADDR) {
+		span_wall = std::min(span_wall,
+			(ARM64_STOP_MMIO_ADDR - m_arena_base) / m_arena_stride);
+	}
+#endif
 	if (UNLIKELY(span_wall == 0)) {
 		Machine::machine_exception("VM group working memory exceeds the whole arena range",
 			m_arena_stride);
