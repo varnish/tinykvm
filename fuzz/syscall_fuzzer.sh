@@ -6,6 +6,21 @@
 #
 # Findings land in ./.build-syscall/crashes/. Fork mode is on so a crash does
 # not end the campaign -- each one is saved and the run continues.
+#
+# Two knobs worth alternating across runs, because neither condition crashes
+# on its own and so neither is visible to a plain sanitizer campaign:
+#
+#   TINYKVM_FUZZ_STRICT=1       a non-MachineException escaping a handler is a
+#                               finding. Not the default yet: the tree still
+#                               has reachable ones, and under -fork each would
+#                               be saved as a duplicate artifact.
+#   TINYKVM_FUZZ_FDLEAK_ABORT=1 a host fd leak is a finding. Same reason.
+#   TINYKVM_FUZZ_DENY_PATHS=1   refuse every path instead of rewriting it into
+#                               the sandbox. The default always-approve policy
+#                               never reaches a denial branch.
+#
+# Both STRICT and FDLEAK_ABORT should become the default here once the
+# findings they currently trip over are fixed.
 set -e
 
 cd "$(dirname "$0")"
