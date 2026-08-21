@@ -99,20 +99,34 @@ void vCPU::disable_timer()
 long vCPU::run_once()
 {
 	int result;
+	int run_errno = 0;
+	/* A fork may have deferred its kvm_run mapping until now. This is the
+	   only place where the register accessors are allowed to change what
+	   they point at, so that no caller can hold a register reference across
+	   the transition. */
+	this->ensure_kvm_run();
 	{
 		ScopedProfiler<MachineProfiling::VCpuRun> prof(machine().profiling());
 		result = ioctl(this->fd, KVM_RUN, 0);
+		// Read errno inside the scope: the profiler's destructor may
+		// make syscalls of its own and overwrite it.
+		run_errno = errno;
 	}
 	// Handle potential KVM_RUN failure or execution timeout
 	if (UNLIKELY(result < 0)) {
-		if (this->timer_ticks) {
+		// A timeout requires the timer to have actually fired, as timer_ticks
+		// only tells us that one was armed. The timer shows up either as the
+		// SIGUSR2 handler setting timer_was_triggered, or as EINTR from
+		// KVM_RUN. Anything else keeps its errno and is reported as itself.
+		const bool timer_armed = (this->timer_ticks != 0);
+		if (timer_armed && (timer_was_triggered || run_errno == EINTR)) {
 			if constexpr (VERBOSE_TIMER) {
 				printf("Timer %p triggered\n", timer_id);
 			}
 			Machine::timeout_exception("Timeout Exception", this->timer_ticks);
-		} else if (errno == EINTR) {
+		} else if (run_errno == EINTR) {
 			Machine::timeout_exception("Interrupted (signal)", 0);
-		} else if (errno == EFAULT) {
+		} else if (run_errno == EFAULT) {
 #ifdef KVM_EXIT_MEMORY_FAULT
 			if (kvm_run->exit_reason == KVM_EXIT_MEMORY_FAULT) {
 				// This is a memory fault, we can throw a MemoryException
@@ -123,7 +137,7 @@ long vCPU::run_once()
 #endif
 			Machine::machine_exception("KVM_RUN failed with EFAULT, but exit_reason is unknown\n", kvm_run->exit_reason);
 		} else {
-			Machine::machine_exception("KVM_RUN failed (errno)", errno);
+			Machine::machine_exception("KVM_RUN failed (errno)", run_errno);
 		}
 	} else if (this->timer_ticks) {
 		// Occasionally we miss timer interruptions, and we must catch it via TLS.
@@ -140,7 +154,7 @@ long vCPU::run_once()
 		sregs.cr3 != machine().memory.page_tables
 		|| sregs.gdt.base != memory.physbase + GDT_ADDR
 		|| sregs.idt.base != memory.physbase + IDT_ADDR
-		|| (this->cpu_id == 0 && sregs.tr.base != memory.physbase + TSS_ADDR)
+		|| (this->guest_cpu_index == 0 && sregs.tr.base != memory.physbase + TSS_ADDR)
 		))) {
 		this->print_registers();
 		if (sregs.cr3 != machine().memory.page_tables)
@@ -615,6 +629,26 @@ void vCPU::handle_exception(uint64_t intr)
 			PRINTER(printer, buffer,
 				"RIP  0x%lX   %s\n",
 				rip, machine().resolve(rip).c_str());
+
+				/* Scan the stack for return addresses. Optimized guests have
+				   no frame pointer to unwind, so a scan is all we can do; it
+				   over-reports, as stale slots look like frames. */
+				if (cs & 0x3) {
+					PRINTER(printer, buffer, "Stack scan from 0x%lX:\n", rsp);
+					for (unsigned i = 0; i < 128; i++) {
+						uint64_t value = 0x0;
+						try {
+							machine().unsafe_copy_from_guest(&value, rsp + i * 8, 8);
+						} catch (...) { break; }
+						/* A return address points past a call, so a symbol
+						   match at offset zero is not one. */
+						const auto sym = machine().resolve(value);
+						if (sym.empty() || sym.find(" + 0x0") != std::string::npos)
+							continue;
+						PRINTER(printer, buffer, "  [rsp+0x%-4X] 0x%lX   %s\n",
+							i * 8, value, sym.c_str());
+					}
+				}
 
 		} catch (...) {}
 

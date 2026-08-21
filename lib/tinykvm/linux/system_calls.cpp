@@ -41,6 +41,8 @@
 
 namespace tinykvm {
 static constexpr uint64_t PageMask = vMemory::PageSize() - 1;
+/* Capacity of the fixed-size host arrays used by poll/ppoll. */
+static constexpr unsigned MAX_POLL_FDS = 256;
 struct GuestIOvec
 {
 	uint64_t iov_base;
@@ -306,8 +308,16 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				if (!callback(fds, guest_count, timeout))
 					return;
 			}
-			std::array<struct pollfd, 256> host_fds;
-			std::array<unsigned, 256> host_fds_indexes;
+			if (UNLIKELY(guest_count > MAX_POLL_FDS))
+			{
+				regs.sysret() = -EINVAL;
+				cpu.set_registers(regs);
+				SYSPRINT("poll(fds=0x%llX, count=%u, timeout=%u) = %lld (EINVAL, too many fds)\n",
+					regs.sysarg(0), guest_count, unsigned(regs.sysarg(2)), regs.sysret());
+				return;
+			}
+			std::array<struct pollfd, MAX_POLL_FDS> host_fds;
+			std::array<unsigned, MAX_POLL_FDS> host_fds_indexes;
 			unsigned host_fds_count = 0;
 			for (unsigned i = 0; i < guest_count; i++)
 			{
@@ -380,8 +390,16 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				if (!callback(fds, guest_count, timeout))
 					return;
 			}
-			std::array<struct pollfd, 256> host_fds;
-			std::array<unsigned, 256> host_fds_indexes;
+			if (UNLIKELY(guest_count > MAX_POLL_FDS))
+			{
+				regs.sysret() = -EINVAL;
+				cpu.set_registers(regs);
+				SYSPRINT("ppoll(fds=0x%llX, count=%u, timeout=%d) = %lld (EINVAL, too many fds)\n",
+					regs.sysarg(0), guest_count, timeout, regs.sysret());
+				return;
+			}
+			std::array<struct pollfd, MAX_POLL_FDS> host_fds;
+			std::array<unsigned, MAX_POLL_FDS> host_fds_indexes;
 			unsigned host_fds_count = 0;
 			for (unsigned i = 0; i < guest_count; i++) {
 				const int fd = cpu.machine().fds().translate(fds[i].fd);
@@ -603,10 +621,18 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				uint64_t restorer;
 				uint64_t mask;
 			} sa {};
-			/* Old action */
+			/* Old action. SIG_DFL, SIG_IGN and the unset sentinel must read
+			   back as themselves, not as a masked handler address, so that a
+			   guest can save oldact and restore it later. */
 			if (g_oldact != 0x0) {
-				sa.handler = sigact.handler & ~0xFLL;
-				sa.flags   = (sigact.altstack ? SA_ONSTACK : 0x0);
+				if (sigact.is_unset()) {
+					sa.handler = 0x0; /* SIG_DFL */
+				} else if (sigact.handler == 1) {
+					sa.handler = 1; /* SIG_IGN */
+				} else {
+					sa.handler = sigact.handler & ~0xFLL;
+				}
+				sa.flags   = sigact.flags;
 				sa.mask    = sigact.mask;
 				sa.restorer = sigact.restorer;
 				cpu.machine().copy_to_guest(g_oldact, &sa, sizeof(sa));
@@ -617,7 +643,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				SYSPRINT("rt_sigaction(action handler=0x%lX  flags=0x%lX  mask=0x%lX)\n",
 					sa.handler, sa.flags, sa.mask);
 				sigact.handler  = sa.handler;
-				sigact.altstack = (sa.flags & SA_ONSTACK) != 0;
+				sigact.flags    = sa.flags;
 				sigact.mask     = sa.mask;
 				sigact.restorer = sa.restorer;
 			}
@@ -665,11 +691,24 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 		SYS_sigaltstack, [](vCPU& cpu)
 		{
 			auto& regs = cpu.registers();
+			/* Key the alternate stack by the current tid so signal delivery
+			   reads back the stack the guest configured. */
+			auto& ss = cpu.machine().signals().per_thread(cpu.machine().threads().gettid()).stack;
+
+			/* Report the old stack first: sigaltstack(NULL, &old) is how a
+			   runtime discovers whether one is already installed before
+			   claiming it. The Go runtime does this on every thread start,
+			   and reads SS_DISABLE to decide -- leaving the guest's buffer
+			   untouched would hand it whatever was on the stack. */
+			if (regs.sysarg(1) != 0x0) {
+				cpu.machine().copy_to_guest(regs.sysarg(1), &ss, sizeof(ss));
+			}
 			if (regs.sysarg(0) != 0x0) {
-				/* Key the alternate stack by the current tid so signal
-				   delivery reads back the stack the guest configured. */
-				auto& ss = cpu.machine().signals().per_thread(cpu.machine().threads().gettid()).stack;
 				cpu.machine().copy_from_guest(&ss, regs.sysarg(0), sizeof(ss));
+				/* A stack with no space is no stack: normalise it to
+				   SS_DISABLE so is_enabled() and the ucontext agree. */
+				if (ss.ss_sp == 0x0 || ss.ss_size == 0)
+					ss.ss_flags |= 2 /* SS_DISABLE */;
 
 				SYSPRINT("sigaltstack(altstack SP=0x%lX  flags=0x%X  size=0x%lX)\n",
 					ss.ss_sp, ss.ss_flags, ss.ss_size);
@@ -925,8 +964,10 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				pipefd[1] = vfd2;
 				cpu.machine().copy_to_guest(g_pipefd, pipefd, sizeof(pipefd));
 				regs.sysret() = 0;
-				// Record the pipe pair so it can be reconstructed in forks
-				cpu.machine().fds().add_socket_pair({vfd1, vfd2, FileDescriptors::SocketType::PIPE2});
+				// Record the pipe pair and its flags, so it can be
+				// reconstructed identically in forks
+				cpu.machine().fds().add_socket_pair(
+					{vfd1, vfd2, FileDescriptors::SocketType::PIPE2, flags});
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("pipe2(0x%llX, 0x%X) = %lld\n",
@@ -952,7 +993,23 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			{
 				if (old_addr + new_page_len < old_addr)
 					throw MachineException("mremap: overflow");
-				cpu.machine().mmap_cache().current() = old_addr + new_page_len;
+				/* Resized in place at the top of the arena. The used-range
+				   bookkeeping must follow, or a shrunk-off tail stays marked
+				   used and collides with the next allocation. */
+				if (new_page_len < old_page_len)
+				{
+					cpu.machine().mmap_unmap(old_addr + new_page_len,
+						old_page_len - new_page_len);
+				}
+				else if (new_page_len > old_page_len)
+				{
+					cpu.machine().mmap_cache().current() = old_addr + new_page_len;
+					/* Growth is into untracked arena, so it cannot collide. */
+					if (cpu.machine().mmap_cache().track_used_ranges()) {
+						cpu.machine().mmap_cache().insert_used(
+							old_addr + old_page_len, new_page_len - old_page_len);
+					}
+				}
 				regs.sysret() = old_addr;
 			}
 			else if (flags & MREMAP_MAYMOVE)
@@ -1075,14 +1132,6 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 		});
 #endif
 	Machine::install_syscall_handler(
-		SYS_nanosleep, [](vCPU& cpu) { // nanosleep
-			auto& regs = cpu.registers();
-			regs.sysret() = 0;
-			cpu.set_registers(regs);
-			SYSPRINT("nanosleep(...) = %lld\n",
-					 regs.sysret());
-		});
-	Machine::install_syscall_handler(
 		SYS_getpid, [](vCPU& cpu) { // GETPID
 			auto& regs = cpu.registers();
 			regs.sysret() = 0; // Changing to PID=1 breaks Golang!?
@@ -1130,22 +1179,32 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			// int setsockopt(int sockfd, int level, int optname,
 			//                const void *optval, socklen_t optlen);
-			const int fd = cpu.machine().fds().translate(regs.sysarg(0));
 			const int level = regs.sysarg(1);
 			const int optname = regs.sysarg(2);
 			const uint64_t g_optval = regs.sysarg(3);
 			const size_t optlen = regs.sysarg(4);
-			std::array<uint8_t, 256> optval;
-			if (UNLIKELY(optlen > optval.size()))
-			{
-				regs.sysret() = -EINVAL;
-			} else {
-				cpu.machine().copy_from_guest(optval.data(), g_optval, optlen);
-				if (setsockopt(fd, level, optname, optval.data(), optlen) < 0) {
-					regs.sysret() = -errno;
-				} else {
-					regs.sysret() = 0;
+			int fd = -1;
+			try {
+				// Mutates the host socket, so it needs the writable variant.
+				fd = cpu.machine().fds().translate_writable_vfd(regs.sysarg(0));
+				std::array<uint8_t, 256> optval;
+				if (UNLIKELY(fd < 0))
+				{
+					regs.sysret() = -EBADF;
 				}
+				else if (UNLIKELY(optlen > optval.size()))
+				{
+					regs.sysret() = -EINVAL;
+				} else {
+					cpu.machine().copy_from_guest(optval.data(), g_optval, optlen);
+					if (setsockopt(fd, level, optname, optval.data(), optlen) < 0) {
+						regs.sysret() = -errno;
+					} else {
+						regs.sysret() = 0;
+					}
+				}
+			} catch (...) {
+				regs.sysret() = -EBADF;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("setsockopt(fd=%d, level=%d, optname=%d, optval=0x%lX, optlen=%zu) = %lld\n",
@@ -1825,7 +1884,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				}
 				else if (cmd == F_SETFL)
 				{
-					const int writable_fd = cpu.machine().fds().translate(vfd);
+					const int writable_fd = cpu.machine().fds().translate_writable_vfd(vfd);
 					const int allowed_flags = O_NONBLOCK;
 					const int flags = regs.sysarg(2) & allowed_flags;
 					if (fcntl(writable_fd, F_SETFL, flags) < 0)
@@ -2102,34 +2161,44 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			// int unlinkat(int dirfd, const char *pathname, int flags);
 			const int vdirfd = regs.sysarg(0);
-			const int flags = regs.sysarg(1) | AT_SYMLINK_NOFOLLOW;
-			const uint64_t g_path = regs.sysarg(2);
+			const uint64_t g_path = regs.sysarg(1);
+			// AT_REMOVEDIR is the only flag unlinkat accepts.
+			const int flags = regs.sysarg(2) & AT_REMOVEDIR;
 			std::string path;
-			// Check if the path is writable (path can be modified)
-			if (cpu.machine().fds().is_writable_path(path))
-			{
-				int dirfd = cpu.machine().fds().current_working_directory_fd();
-				if (vdirfd != AT_FDCWD)
-				{
-					dirfd = cpu.machine().fds().translate_writable_vfd(vdirfd);
-				}
-
+			try {
 				if (g_path != 0x0)
 				{
 					path = cpu.machine().memcstring(g_path, PATH_MAX);
 				}
 
-				// Unlink the file, relative to the dirfd
-				if (unlinkat(dirfd, path.c_str(), flags) < 0) {
-					regs.sysret() = -errno;
+				if (path.empty())
+				{
+					// unlinkat has no AT_EMPTY_PATH.
+					regs.sysret() = -ENOENT;
 				}
-				else {
-					regs.sysret() = 0;
+				// Check if the path is writable (path can be modified)
+				else if (cpu.machine().fds().is_writable_path(path))
+				{
+					int dirfd = cpu.machine().fds().current_working_directory_fd();
+					if (vdirfd != AT_FDCWD)
+					{
+						dirfd = cpu.machine().fds().translate_writable_vfd(vdirfd);
+					}
+
+					// Unlink the file, relative to the dirfd
+					if (unlinkat(dirfd, path.c_str(), flags) < 0) {
+						regs.sysret() = -errno;
+					}
+					else {
+						regs.sysret() = 0;
+					}
 				}
-			}
-			else
-			{
-				regs.sysret() = -EPERM;
+				else
+				{
+					regs.sysret() = -EPERM;
+				}
+			} catch (...) {
+				regs.sysret() = -EBADF;
 			}
 			cpu.set_registers(regs);
 			SYSPRINT("unlinkat(%d, %s (0x%llX), %d) = %lld\n",
@@ -2294,13 +2363,21 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 		SYS_sched_getaffinity, [](vCPU& cpu) { // sched_getaffinity
 			/* SYS sched_getaffinity */
 			auto& regs = cpu.registers();
-			cpu_set_t* cpuset = CPU_ALLOC(1);
-			const size_t size = CPU_ALLOC_SIZE(1);
-			CPU_ZERO_S(size, cpuset);
-			CPU_SET_S(0, size, cpuset);
-			cpu.machine().copy_to_guest(regs.sysarg(2), cpuset, size);
-			CPU_FREE(cpuset);
-			regs.sysret() = 0;
+			const size_t cpusetsize = regs.sysarg(1);
+			/* Reject sizes too small for every CPU, or not word-aligned. */
+			if (cpusetsize < sizeof(unsigned long)
+				|| (cpusetsize & (sizeof(unsigned long) - 1)) != 0)
+			{
+				regs.sysret() = -EINVAL;
+			} else {
+				/* One vCPU, so exactly one bit is set. NB: the raw syscall
+				   returns the number of bytes written, not zero. glibc zeroes
+				   the remaining cpusetsize-ret bytes of the mask. */
+				unsigned long mask = 1UL;
+				const size_t size = std::min(cpusetsize, sizeof(mask));
+				cpu.machine().copy_to_guest(regs.sysarg(2), &mask, size);
+				regs.sysret() = size;
+			}
 			cpu.set_registers(regs);
 			SYSPRINT("sched_getaffinity(pid=%lld, cpusetsize=%lld, mask=0x%llX) = %lld\n",
 					 regs.sysarg(0), regs.sysarg(1), regs.sysarg(2), regs.sysret());
@@ -2414,6 +2491,11 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			   remain buffer: that is only for an interrupted sleep. */
 			regs.sysret() = 0;
 			cpu.set_registers(regs);
+			/* Same as SYS_nanosleep: not sleeping still has to give up the
+			   vCPU, or a poll-with-backoff loop starves every other guest
+			   thread. glibc routes nanosleep() here, so this is where that
+			   matters in practice. */
+			cpu.machine().threads().suspend_and_yield();
 			SYSPRINT("clock_nanosleep(clk=%llu, flags=0x%llX, req=0x%llX, rem=0x%llX) = %lld\n",
 					 (unsigned long long)g_clockid, (unsigned long long)g_flags,
 					 (unsigned long long)g_req, (unsigned long long)regs.sysarg(3),
@@ -2445,6 +2527,17 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 					int pfd = cpu.machine().fds().current_working_directory_fd();
 					if (vfd != AT_FDCWD) {
 						pfd = cpu.machine().fds().translate(vfd);
+					}
+					/* Only the readable-path policy is consulted here, so deny
+					   the mutating flags outright: dropping them would tell the
+					   guest a file was created or truncated when it wasn't.
+					   Mutation belongs in the write branch. */
+					if (UNLIKELY(flags & (O_CREAT | O_TRUNC | O_APPEND))) {
+						regs.sysret() = -EACCES;
+						cpu.set_registers(regs);
+						SYSPRINT("OPENAT fd=%d mutating flags on a read-only open: %s\n",
+							vfd, path.c_str());
+						return;
 					}
 					real_path = path;
 					if (UNLIKELY(!cpu.machine().fds().is_readable_path(real_path))) {
@@ -2708,6 +2801,12 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			auto& regs = cpu.registers();
 			regs.sysret() = 0;
 			cpu.set_registers(regs);
+			/* Sleeping does not burn wall-clock time here, but it must still
+			   give up the vCPU: guest threads are scheduled cooperatively, so
+			   a returns-immediately nanosleep turns any poll-with-backoff loop
+			   into a livelock that starves every other thread. The Go runtime's
+			   sysmon is exactly that loop, and it never calls anything else. */
+			cpu.machine().threads().suspend_and_yield();
 			SYSPRINT("nanosleep(...) = %lld\n", regs.sysret());
 		});
 	Machine::install_syscall_handler( // epoll_ctl
@@ -2806,7 +2905,7 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 				result = syscall(SYS_epoll_pwait2, epollfd, guest_events.data(),
 					maxevents, &ts, nullptr);
 #else
-				epoll_pwait(epollfd, guest_events.data(),
+				result = epoll_pwait(epollfd, guest_events.data(),
 					maxevents, 250, nullptr);
 #endif
 			}
@@ -2866,17 +2965,20 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 			}
 			else
 			{
+				/* Nothing ready inside the polling window. Zero events is a
+				   legal outcome that callers loop on, so a guest waiting with
+				   an infinite timeout simply polls again. */
+				regs.sysret() = 0;
 				// With infinite timeout, we shouldn't exit the epoll wait
-				// loop, so we need to re-trigger the syscall when we return.
+				// loop, so let the other guest threads run before we return.
 				if ((timeout < 0 || timeout >= 5000) && cpu.machine().fds().preempt_epoll_wait()) {
-					//regs.progctr() -= 2; // Make sure we re-trigger the syscall
-#ifdef SYS_epoll_wait
-					cpu.machine().threads().suspend_and_yield(SYS_epoll_wait);
-#else
-					cpu.machine().threads().suspend_and_yield(SYS_epoll_pwait);
-#endif
-				} else {
-					regs.sysret() = 0;
+					/* NB: the argument is the value RAX is restored to when
+					   this thread resumes, ie. the syscall return value. */
+					if (cpu.machine().threads().suspend_and_yield(0)) {
+						/* `regs` aliases the live registers, which now belong
+						   to the thread we switched to. */
+						return;
+					}
 				}
 			}
 			cpu.set_registers(regs);
@@ -3085,23 +3187,24 @@ void Machine::setup_linux_system_calls(bool unsafe_syscalls)
 
 			try {
 				path = cpu.machine().memcstring(vpath, PATH_MAX);
-				if (!path.empty()) {
-					if (UNLIKELY(!cpu.machine().fds().is_readable_path(path))) {
-						regs.sysret() = -EPERM;
-					}
-				}
-				// Translate from vfd when fd != AT_FDCWD
-				if (vfd != AT_FDCWD)
-					fd = cpu.machine().fds().translate(vfd);
-
-				struct statx vstat;
-				const int result =
-					statx(fd, path.c_str(), flags, mask, &vstat);
-				if (result == 0) {
-					cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
-					regs.sysret() = 0;
+				// An empty path stats the fd itself (AT_EMPTY_PATH), which
+				// the path policy has no say over.
+				if (UNLIKELY(!cpu.machine().fds().is_readable_path(path) && !path.empty())) {
+					regs.sysret() = -EPERM;
 				} else {
-					regs.sysret() = -errno;
+					// Translate from vfd when fd != AT_FDCWD
+					if (vfd != AT_FDCWD)
+						fd = cpu.machine().fds().translate(vfd);
+
+					struct statx vstat;
+					const int result =
+						statx(fd, path.c_str(), flags, mask, &vstat);
+					if (result == 0) {
+						cpu.machine().copy_to_guest(buffer, &vstat, sizeof(vstat));
+						regs.sysret() = 0;
+					} else {
+						regs.sysret() = -errno;
+					}
 				}
 			} catch (...) {
 				regs.sysret() = -1;

@@ -5,6 +5,7 @@ dw .vm64_rexit
 dw .vm64_preserving_entry
 dw .vm64_remote_disconnect
 dd .vm64_cpuid
+dw .vm64_sigreturn
 
 ALIGN 0x10
 ;; The entry function, jumps to real function
@@ -57,6 +58,22 @@ ALIGN 0x10
 	pop r11
 	pop rax
 	ret  ;; RAX replaced with return value
+
+.vm64_sigreturn:
+	;; Fallback signal restorer, used only when the guest's sigaction carried
+	;; no SA_RESTORER; otherwise Signals::enter writes the guest's own
+	;; sa_restorer as the handler's return address. rt_sigreturn rebuilds the
+	;; frame from the ucontext, so the syscall below never returns and RSP is
+	;; never unwound by this code.
+	;; Encoding matters: `mov rax, 15` must assemble to the 7-byte
+	;; 48 c7 c0 0f 00 00 00 followed by 0f 05, because that exact byte string
+	;; is how libgcc's unwinder and glibc's backtrace() recognise a signal
+	;; frame's return address. The 5-byte `mov eax, 15` would work as a
+	;; syscall but make backtraces stop at the handler, so pin the encoding
+	;; with `strict dword` (nasm shortens a bare `mov rax, 15` to that).
+	mov rax, strict dword 15  ;; SYS_rt_sigreturn
+	syscall
+	ud2          ;; Unreachable: the frame was replaced
 
 %macro  vcputable 1 
 	dd %1

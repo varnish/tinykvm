@@ -7,7 +7,11 @@
 #include "load_file.hpp"
 
 #include <tinykvm/rsp_client.hpp>
-#define GUEST_MEMORY   0x80000000  /* 2GB memory */
+/* Main memory is MAP_NORESERVE: an address-space ceiling, not a commitment,
+   as only touched pages are backed. Keep it generous, as guests that reserve
+   huge PROT_NONE arenas up front push later mmaps past max_mem, where they
+   fault on first touch. */
+#define GUEST_MEMORY   (32ULL << 30)  /* 32GB address space */
 #define GUEST_WORK_MEM 1024UL * 1024*1024 /* MB working mem */
 
 inline timespec time_now();
@@ -48,6 +52,15 @@ int main(int argc, char** argv)
 	std::string guest_program_path; // Absolute path
 	binary = load_file(filename);
 
+	// Absolute path, for matching against /proc/self/fd and for resolving
+	// the guest's /proc/self/exe symlink.
+	char abs_path[PATH_MAX];
+	if (realpath(filename.c_str(), abs_path) == nullptr) {
+		fprintf(stderr, "Error resolving absolute path of '%s'\n", filename.c_str());
+		exit(1);
+	}
+	guest_program_path = abs_path;
+
 	const tinykvm::DynamicElf dyn_elf = tinykvm::is_dynamic_elf(
 		std::string_view{(const char*)binary.data(), binary.size()});
 	if (dyn_elf.is_dynamic) {
@@ -57,19 +70,24 @@ int main(int argc, char** argv)
 		static const std::string ld_linux_so = "/lib64/ld-linux-x86-64.so.2";
 		binary = load_file(ld_linux_so);
 		args.push_back(ld_linux_so);
-
-		// Absolute path for matching against /proc/self/fd
-		char abs_path[PATH_MAX];
-		if (realpath(filename.c_str(), abs_path) == nullptr) {
-			fprintf(stderr, "Error resolving absolute path of '%s'\n", filename.c_str());
-			exit(1);
-		}
-		guest_program_path = abs_path;
 	}
 
 	for (int i = 1; i < argc; i++)
 	{
 		args.push_back(argv[i]);
+	}
+
+	/* Pass the host environment through to the guest, so eg. RUST_BACKTRACE=1
+	   works. */
+	std::vector<std::string> env {"LC_TYPE=C", "LC_ALL=C", "USER=root"};
+	for (char** e = environ; *e != nullptr; e++)
+	{
+		std::string_view entry{*e};
+		/* Keep the defaults set above. */
+		if (entry.starts_with("LC_TYPE=") || entry.starts_with("LC_ALL=")
+			|| entry.starts_with("USER="))
+			continue;
+		env.push_back(std::string(entry));
 	}
 
 	tinykvm::Machine::init();
@@ -114,33 +132,36 @@ int main(int argc, char** argv)
 	};
 	tinykvm::Machine master_vm {binary, options};
 	//master_vm.print_pagetables();
+	master_vm.set_verbose_system_calls(getenv("VERBOSE") != nullptr);
+	master_vm.set_verbose_mmap_syscalls(getenv("VERBOSE_MMAP") != nullptr);
 	uint64_t guest_program_base = 0;
-	if (dyn_elf.is_dynamic) {
-		static const std::vector<std::string> allowed_readable_paths({
-			argv[1],
-			// Add all common standard libraries to the list of allowed readable paths
-			"/lib64/ld-linux-x86-64.so.2",
-			"/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
-			"/lib/x86_64-linux-gnu/libgcc_s.so.1",
-			"/lib/x86_64-linux-gnu/libc.so.6",
-			"/lib/x86_64-linux-gnu/libm.so.6",
-			"/lib/x86_64-linux-gnu/libpthread.so.0",
-			"/lib/x86_64-linux-gnu/libdl.so.2",
-			"/lib/x86_64-linux-gnu/libstdc++.so.6",
-			"/lib/x86_64-linux-gnu/librt.so.1",
-			"/lib/x86_64-linux-gnu/libz.so.1",
-			"/lib/x86_64-linux-gnu/libexpat.so.1",
-			"/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v2/libstdc++.so.6",
-			"/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v3/libstdc++.so.6",
-			"/lib/x86_64-linux-gnu/glibc-hwcaps/x86-64-v4/libstdc++.so.6",
-		});
-		master_vm.fds().set_open_readable_callback(
-			[&] (std::string& path) -> bool {
-				return std::find(allowed_readable_paths.begin(),
-					allowed_readable_paths.end(), path) != allowed_readable_paths.end();
-			}
-		);
 
+	/* simplekvm runs with the safeties off: the guest may open any path the
+	   host user can, for reading and writing, and symlinks resolve against the
+	   host filesystem. Embedders need a real policy here, see storage.cpp. */
+	master_vm.fds().set_open_readable_callback(
+		[] (std::string&) -> bool { return true; });
+	master_vm.fds().set_open_writable_callback(
+		[] (std::string&) -> bool { return true; });
+	master_vm.fds().set_resolve_symlink_callback(
+		[&] (std::string& path) -> bool {
+			/* Point /proc/self/exe at the real program, so that eg. Rust
+			   backtraces can find their own symbols. */
+			if (path == "/proc/self/exe") {
+				path = guest_program_path;
+				return true;
+			}
+			char resolved[PATH_MAX];
+			const ssize_t len = readlink(path.c_str(), resolved, sizeof(resolved) - 1);
+			if (len <= 0)
+				return false;
+			resolved[len] = '\0';
+			path = resolved;
+			return true;
+		}
+	);
+
+	if (dyn_elf.is_dynamic) {
 		// Match /proc/self/fd/<fd> to see if it points to our guest program
 		master_vm.set_mmap_callback(
 			[&] (tinykvm::vCPU& cpu, uint64_t, size_t, int, int, int fd, uint64_t offset)
@@ -162,9 +183,7 @@ int main(int argc, char** argv)
 		);
 	}
 
-	master_vm.setup_linux(
-		args,
-		{"LC_TYPE=C", "LC_ALL=C", "USER=root"});
+	master_vm.setup_linux(args, env);
 
 	/* Remote debugger session */
 	if (getenv("DEBUG"))
@@ -200,6 +219,10 @@ int main(int argc, char** argv)
 	} catch (const tinykvm::MachineException& me) {
 		master_vm.print_registers();
 		fprintf(stderr, "Machine exception: %s  Data: 0x%lX\n", me.what(), me.data());
+		if (getenv("BT")) {
+			master_vm.print_remote_gdb_backtrace(filename,
+				{.command = "bt", .verbose = false, .quit = true});
+		}
 		throw;
 	} catch (...) {
 		master_vm.print_registers();

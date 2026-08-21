@@ -20,11 +20,20 @@ struct iasm_header {
 	uint16_t vm64_except_size;
 	uint16_t vm64_dso;
 	uint16_t vm64_remote_return_addr;
-	uint32_t reserved1;
+	uint16_t vm64_signal_entry;
+	uint16_t vm64_signal_return;
 
 	uint64_t translated_vm_syscall(const vMemory& memory) const noexcept
 	{
 		return memory.physbase + INTR_ASM_ADDR + vm64_syscall;
+	}
+	uint64_t translated_vm_signal_entry(const vMemory& memory) const noexcept
+	{
+		return memory.physbase + INTR_ASM_ADDR + vm64_signal_entry;
+	}
+	uint64_t translated_vm_signal_return(const vMemory& memory) const noexcept
+	{
+		return memory.physbase + INTR_ASM_ADDR + vm64_signal_return;
 	}
 };
 const iasm_header& interrupt_header();

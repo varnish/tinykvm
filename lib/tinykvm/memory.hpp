@@ -45,7 +45,11 @@ struct vMemory {
 	/* Set when reorder_snapshot_memory has moved pages, breaking
 	   the identity mapping (vaddr == paddr), so any physical address
 	   must be resolved through the page tables rather than assumed
-	   equal to the virtual one. Carried across snapshot save/restore. */
+	   equal to the virtual one. Carried across snapshot save/restore.
+	   Such a VM is load-and-run only: prepare_copy_on_write() rejects it,
+	   because CoW mode and fork_reset() both assume the page table root
+	   sits at the fixed physbase + PT_ADDR. It also selects the readahead
+	   pattern used when prefetching a snapshot on load. */
 	bool   memory_reordered = false;
 	/* Split into small pages (4K) when reaching a leaf hugepage. */
 	bool   split_hugepages = true;
@@ -76,7 +80,7 @@ struct vMemory {
 	uint64_t* page_at(uint64_t addr) const;
 	/* Safe */
 	bool safely_within(uint64_t addr, size_t asize) const noexcept {
-		return (addr >= safebase) && (addr + asize <= physbase + this->size);
+		return (addr >= safebase) && (addr + asize <= physbase + this->size) && (addr <= addr + asize);
 	}
 	const char* safely_at(uint64_t addr, size_t asize) const;
 	char* safely_at(uint64_t addr, size_t asize);

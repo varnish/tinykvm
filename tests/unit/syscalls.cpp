@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <tinykvm/machine.hpp>
+#include <tinykvm/linux/threads.hpp>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -587,4 +588,261 @@ int main() {
 
 	REQUIRE(machine.return_value() == 0x1F);
 	REQUIRE(elapsed < 5.0);
+}
+
+#include <sys/stat.h>
+
+TEST_CASE("openat read-only branch must not truncate or create files", "[Syscalls]")
+{
+	/* An open without O_WRONLY/O_RDWR only consults the readable-path policy,
+	   so O_CREAT and O_TRUNC must not reach openat2 from that branch: they
+	   would let a read-approved path be truncated or created. They are denied
+	   rather than dropped, so the guest is not told a mutation happened. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+int main() {
+	/* Both paths are admitted by the READ-ONLY policy the host installs, but
+	   both opens carry mutating flags, so both must be refused. */
+	int fd = open("/truncate-me", O_RDONLY | O_TRUNC);
+	if (fd >= 0) { close(fd); return 1; }
+	if (errno != EACCES) return 2;
+
+	fd = open("/create-me", O_RDONLY | O_CREAT, 0644);
+	if (fd >= 0) { close(fd); return 3; }
+	if (errno != EACCES) return 4;
+
+	/* A plain read of the same path must still work. */
+	fd = open("/truncate-me", O_RDONLY);
+	if (fd < 0) return 5;
+	close(fd);
+	return 0;
+})M");
+
+	ScratchFile file;
+	const std::string created_path = file.path + ".created";
+	unlink(created_path.c_str());
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	/* READ-ONLY policy: there is deliberately no writable callback. */
+	machine.fds().set_open_readable_callback(
+		[&](std::string& path) {
+			if (path == "/truncate-me") { path = file.path;    return true; }
+			if (path == "/create-me")   { path = created_path; return true; }
+			return false;
+		});
+	machine.fds().set_current_working_directory("/tmp");
+	machine.setup_linux({"openat-readonly-flags"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+
+	struct stat st;
+	const bool target_statted = (stat(file.path.c_str(), &st) == 0);
+	const off_t target_size = target_statted ? st.st_size : -1;
+	const bool created_exists = (stat(created_path.c_str(), &st) == 0);
+	unlink(created_path.c_str()); /* clean up even when the bug is present */
+
+	/* The read-approved file must be untouched ... */
+	REQUIRE(target_statted);
+	REQUIRE(target_size == 4096);
+	/* ... and no new file may have appeared. */
+	REQUIRE(!created_exists);
+}
+
+TEST_CASE("fcntl(F_SETFL) must not mutate a read-only host fd", "[Syscalls]")
+{
+	/* F_SETFL changes the host fd's status flags, so it must resolve the vfd
+	   with translate_writable_vfd(). Forks share the master's real_fd and
+	   reset_to() does not restore status flags, so O_NONBLOCK set on a
+	   read-only fd would outlive the request that set it. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <unistd.h>
+
+int main() {
+	int fd = open("/readable", O_RDONLY);
+	if (fd < 0) return 1;
+
+	/* The fd is read-only, so this must be refused ... */
+	if (fcntl(fd, F_SETFL, O_NONBLOCK) == 0) return 2;
+
+	/* ... and the flag must not have stuck on the host fd. F_GETFL reports
+	   the host fd's O_NONBLOCK bit back to us. */
+	const int flags = fcntl(fd, F_GETFL);
+	if (flags < 0) return 3;
+	if (flags & O_NONBLOCK) return 4;
+
+	close(fd);
+	return 0;
+})M");
+
+	ScratchFile file;
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	/* READ-ONLY policy: there is deliberately no writable callback. */
+	allow_scratch_file(machine, file);
+	machine.fds().set_current_working_directory("/tmp");
+	machine.setup_linux({"fcntl-setfl-readonly"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
+
+TEST_CASE("statx on a policy-denied path must not return host stat data", "[Syscalls]")
+{
+	/* A path denied by is_readable_path() must stop at -EPERM: the host
+	   statx() below it would otherwise overwrite that error and copy real
+	   host stat data into the guest, as newfstatat correctly avoids. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+
+int main() {
+	struct statx stx;
+	memset(&stx, 0xAA, sizeof(stx));
+
+	/* The host policy denies EVERY path, so this must fail. */
+	errno = 0;
+	long r = syscall(SYS_statx, AT_FDCWD, "/etc/passwd", 0, STATX_BASIC_STATS, &stx);
+	if (r == 0) return 1; /* host stat data was leaked to the guest */
+	if (errno != EPERM && errno != EACCES) return 2;
+	return 0;
+})M");
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	/* Deny everything: a correct statx can never succeed on any path. */
+	machine.fds().set_open_readable_callback(
+		[](std::string&) { return false; });
+	machine.fds().set_current_working_directory("/tmp");
+	machine.setup_linux({"statx-denied"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+}
+
+TEST_CASE("unlinkat reads its path and flags from the correct registers", "[Syscalls]")
+{
+	/* unlinkat(dirfd, pathname, flags): the path is sysarg(1) and the flags
+	   sysarg(2). Reading them the other way around makes every unlink fail
+	   with EINVAL and shows the policy layer an empty path. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+
+int main() {
+	/* Perfectly legal unlinkat of a policy-approved file. */
+	errno = 0;
+	long r = syscall(SYS_unlinkat, AT_FDCWD, "/scratch", 0);
+	if (r != 0) return 1;
+	return 0;
+})M");
+
+	ScratchFile file;
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	allow_scratch_file(machine, file);
+	machine.setup_linux({"unlinkat-args"}, env);
+	machine.run(4.0f);
+
+	REQUIRE(machine.return_value() == 0);
+	/* The scratch file must really be gone (the destructor tolerates this). */
+	REQUIRE(access(file.path.c_str(), F_OK) != 0);
+}
+
+
+TEST_CASE("poll with more fds than the handler capacity is refused", "[Syscalls]")
+{
+	/* An nfds beyond the handler's fixed capacity must be refused, not
+	   overrun the host array. */
+	const auto binary = build_and_load(R"M(
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+
+#define COUNT 300
+static struct pollfd fds[COUNT];
+
+int main() {
+	/* Regular files, so every entry translates to a valid host fd. */
+	for (int i = 0; i < COUNT; i++) {
+		const int fd = open("/scratch", O_RDONLY);
+		if (fd < 0) return 100 + i;
+		fds[i].fd = fd;
+		fds[i].events = POLLIN;
+	}
+
+	/* Either outcome is fine, as long as the VM survives to report it. */
+#ifdef SYS_poll
+	if (syscall(SYS_poll, fds, COUNT, 0) < 0 && errno != EINVAL) return 1;
+#endif
+	struct timespec ts = { 0, 0 };
+	if (syscall(SYS_ppoll, fds, COUNT, &ts, 0, 8) < 0 && errno != EINVAL) return 2;
+	return 0;
+})M");
+
+	ScratchFile file;
+
+	tinykvm::Machine machine { binary, { .max_mem = MAX_MEMORY } };
+	allow_scratch_file(machine, file);
+	/* Allow more open files than the handler's fixed capacity. */
+	machine.fds().set_max_files(1024);
+	machine.setup_linux({"poll-nfds"}, env);
+	REQUIRE_NOTHROW(machine.run(8.0f));
+
+	REQUIRE(machine.return_value() == 0);
+}
+
+TEST_CASE("clone stops handing out threads at the thread limit", "[Syscalls]")
+{
+	/* Past MAX_THREADS, clone must fail with EAGAIN like the real kernel. */
+	const auto binary = build_and_load(R"M(
+#include <errno.h>
+#include <pthread.h>
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static void* worker(void* arg) {
+	(void)arg;
+	/* main() holds the lock, so workers park here and stay counted. */
+	pthread_mutex_lock(&lock);
+	pthread_mutex_unlock(&lock);
+	return 0;
+}
+int main() {
+	/* Small stacks: we're testing the count, not guest memory. */
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, 64UL * 1024);
+	pthread_mutex_lock(&lock);
+	int created = 0;
+	for (int i = 0; i < 1024; i++) {
+		pthread_t t;
+		const int r = pthread_create(&t, &attr, worker, 0);
+		if (r == EAGAIN) return created;
+		if (r != 0) return 1000 + r;
+		created++;
+	}
+	return 2000; /* the limit never kicked in */
+})M", "-pthread").second;
+
+	tinykvm::Machine machine { binary, { .max_mem = 64ul << 20 } };
+	machine.setup_linux({"thread-limit"}, env);
+	machine.run(16.0f);
+
+	/* The main thread counts towards the limit. */
+	REQUIRE(machine.return_value() == tinykvm::MultiThreading::MAX_THREADS - 1);
 }

@@ -45,7 +45,20 @@ struct tinykvm_x86regs Thread::activate()
 	mt.machine.set_tls_base(this->fsbase);
 	// return modified GPRs
 	auto regs = mt.machine.registers();
-	regs.rsp = this->stored_regs.rsp;
+	/* A brand-new thread returns out through the *caller's* syscall-stub
+	   epilogue, which reads the TLB-invalidation slot at [rsp] and then
+	   discards it with `add rsp, 8`. The parent pushed that slot; the child's
+	   fresh stack has no such thing, so hand it an equivalent one 8 bytes
+	   below the stack top it asked for. Without this the epilogue's +8 lands
+	   the child on stack_top+8: misaligned by 8, and every `movaps` in a
+	   glibc prologue #GPs -- and the slot read would be whatever happened to
+	   sit one qword past the end of the thread stack.
+	   Thread::resume() needs no such bias: it restores a whole frame that was
+	   captured mid-stub, slot and all. */
+	const uint64_t slot = this->stored_regs.rsp - 8;
+	const uint64_t no_invalidation = 0;
+	mt.machine.copy_to_guest(slot, &no_invalidation, sizeof(no_invalidation));
+	regs.rsp = slot;
 	return regs;
 }
 void Thread::resume()
@@ -287,6 +300,13 @@ void Machine::setup_multithreading()
 			const auto ctid  = regs.r10;
 			uint64_t   tls   = regs.r8;
 			const auto func  = regs.r9; /* NOTE: Only a guess */
+			if (cpu.machine().threads().at_thread_limit()) {
+				THPRINT(">>> clone: thread limit reached (%zu)\n",
+					MultiThreading::MAX_THREADS);
+				regs.rax = -EAGAIN;
+				cpu.set_registers(regs);
+				return;
+			}
 			if (stack == 0x0) {
 				// Allocate a new stack, aligned up from FSBASE to RSP
 				// We assume that RSP also contains some extra data
@@ -343,6 +363,14 @@ void Machine::setup_multithreading()
 			} args;
 			if (regs.rsi < sizeof(clone3_args)) {
 				regs.rax = -ENOSPC;
+				cpu.set_registers(regs);
+				return;
+			}
+			if (cpu.machine().threads().at_thread_limit()) {
+				THPRINT(">>> clone3: thread limit reached (%zu)\n",
+					MultiThreading::MAX_THREADS);
+				regs.rax = -EAGAIN;
+				cpu.set_registers(regs);
 				return;
 			}
 			cpu.machine().copy_from_guest(&args, regs.rdi, sizeof(clone3_args));
@@ -473,7 +501,7 @@ void Machine::setup_multithreading()
 
 			const int sig = cpu.registers().rdx;
 			THPRINT("tgkill(sig=%d) called from tid=%d\n", sig, tid);
-			cpu.machine().signals().send(cpu, sig);
+			cpu.machine().signals().send(cpu, sig, Signals::SI_TKILL);
 		});
 } // setup_multithreading
 

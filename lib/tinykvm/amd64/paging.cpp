@@ -57,6 +57,22 @@ inline bool is_flagged_page(uint64_t flags, uint64_t entry) {
 	return (entry & flags) == flags;
 }
 
+/* While snapshot profiling is active (make_unpresented_with_callback) present
+   entries are temporarily marked PDE64_PRESENTABLE with PDE64_PRESENT cleared,
+   so that the guest faults on first touch. The entry keeps its address and all
+   other flags, so the page is still there and host-side reads must be able to
+   walk it. Reading does not present the entry or invoke the presentable
+   callback, so the recorded fault order is left alone: a page the host reads
+   but the guest never touches stays out of the profile.
+   Only for reads — writable_page_at() presents the entry and retries instead. */
+static inline bool is_readable_page(uint64_t flags, uint64_t entry) {
+	if (is_flagged_page(flags, entry))
+		return true;
+	if ((entry & PDE64_PRESENTABLE) == 0)
+		return false;
+	return is_flagged_page(flags & ~(uint64_t)PDE64_PRESENT, entry);
+}
+
 static void add_remappings(vMemory& memory,
 	const VirtualRemapping& remapping,
 	uint64_t* pml4,
@@ -934,15 +950,15 @@ char * readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags, ui
 	CLPRINT("Resolving a readable page for 0x%lX\n", addr);
 	auto* pml4 = memory.page_at(root ? root : memory.page_tables);
 	const uint64_t i = (addr >> 39) & 511;
-	if (is_flagged_page(flags, pml4[i])) {
+	if (is_readable_page(flags, pml4[i])) {
 		const auto [pdpt_base, pdpt_mem, pdpt_size] = pdpt_from_index(i, pml4);
 		auto* pdpt = memory.page_at(pdpt_mem);
 		const uint64_t j = index_from_pdpt_entry(addr);
-		if (is_flagged_page(flags, pdpt[j])) {
+		if (is_readable_page(flags, pdpt[j])) {
 			const auto [pd_base, pd_mem, pd_size] = pd_from_index(j, pdpt_base, pdpt);
 			auto* pd = memory.page_at(pd_mem);
 			const uint64_t k = index_from_pd_entry(addr);
-			if (is_flagged_page(flags, pd[k])) {
+			if (is_readable_page(flags, pd[k])) {
 				const auto [pt_base, pt_mem, pt_size] = pt_from_index(k, pd_base, pd);
 				const uint64_t e = index_from_pt_entry(addr);
 				auto* pt = memory.page_at(pt_mem);
@@ -955,7 +971,7 @@ char * readable_page_at(const vMemory& memory, uint64_t addr, uint64_t flags, ui
 					return data;
 				}
 
-				if (is_flagged_page(flags, pt[e])) { // 4KB page
+				if (is_readable_page(flags, pt[e])) { // 4KB page
 					const auto [pte_base, pte_mem, pte_size] = pte_from_index(e, pt_base, pt);
 					auto* data = memory.page_at(pte_mem);
 					CLPRINT("-> Returning 4k data: %p\n", data);
