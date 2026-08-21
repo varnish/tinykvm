@@ -1,5 +1,8 @@
 #include "api.hpp"
 
+#include <stdlib.h>
+extern "C" void* malloc(size_t);
+extern "C" void free(void*);
 #include <immintrin.h>
 
 inline bool ____is__aligned(const void* buffer, const int align) noexcept {
